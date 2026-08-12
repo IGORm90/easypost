@@ -13,8 +13,16 @@ parameters:
         # tests/Pest.php binds it correctly at runtime via pest()->extend()->use()->in().
         # Known, accepted Larastan limitation (larastan/larastan#2275, closed as not planned;
         # pestphp/pest#796). Scoped to tests/* only — app and database code is unaffected.
+        # Matches both message shapes PHPStan actually emits (verified by construction,
+        # see task-2-report.md): a plain "...TestCall::method()." when $this is typed as
+        # just Pest\PendingCalls\TestCall, and a union "...TestCall|Pest\Support\
+        # HigherOrderTapProxy::method()." (either order) when the call is on test()'s
+        # HigherOrderTapProxy|TestCall return type. The alternation inside each class-name
+        # group is real PCRE alternation (bare `|`); the pipe *between* class names is a
+        # literal character (escaped as `\|`) because PHPStan renders union types with a
+        # literal "|" in the message text.
         -
-            message: '#^Call to an undefined method Pest\\PendingCalls\\TestCall(\|Pest\\Support\\HigherOrderTapProxy)?::\w+\(\)\.$#'
+            message: '#^Call to an undefined method (?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy)(?:\|(?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy))*::\w+\(\)\.$#'
             path: tests/*
         # App\Models\Organization and App\Models\User (with the organization_user pivot) are
         # introduced in Task 5. The actingAsMember() helper in tests/Pest.php references them
