@@ -4,11 +4,11 @@
 
 **Goal:** Собрать минимально жизнеспособный планировщик постов в соцсети: аккаунты и организации → подключение 5 каналов → календарь и редактор постов → медиа-библиотека → фоновая публикация с ретраями → централизованные лимиты тарифов (без приёма оплаты).
 
-**Architecture:** Монолит Laravel 11 (PHP 8.3) отдаёт REST API под `/api` и одностраничное Vue 3 SPA с одного домена. Аутентификация — Sanctum в cookie-режиме (SPA), без JWT. Вся работа с соцсетями изолирована за `SocialProviderInterface` + реестр провайдеров: платформо-специфичной логики вне классов провайдеров нет. Отложенная публикация — Laravel Queue (Redis) + Horizon вместо Temporal: джоба ставится с `delay` до `publish_date`, идемпотентность обеспечивается state-machine поста и уникальностью джобы по `post_group`. Тариф хранится полем `organizations.plan` и проставляется вручную/сидером; проверки лимитов живут в `PlanLimitService` + middleware, а не в контроллерах.
+**Architecture:** Монолит Laravel 13 (PHP 8.3) отдаёт REST API под `/api` и одностраничное Vue 3 SPA с одного домена. Аутентификация — Sanctum в cookie-режиме (SPA), без JWT. Вся работа с соцсетями изолирована за `SocialProviderInterface` + реестр провайдеров: платформо-специфичной логики вне классов провайдеров нет. Отложенная публикация — Laravel Queue (Redis) + Horizon вместо Temporal: джоба ставится с `delay` до `publish_date`, идемпотентность обеспечивается state-machine поста и уникальностью джобы по `post_group`. Тариф хранится полем `organizations.plan` и проставляется вручную/сидером; проверки лимитов живут в `PlanLimitService` + middleware, а не в контроллерах.
 
 **Платежи вне этой итерации.** Cashier, Stripe Checkout, портал, вебхуки, промокоды, trial-биллинг — исключены сознательно. Точка врезки на будущее одна: `PlanRegistry::forOrganization()` (Task 35) — сейчас читает колонку, позже начнёт читать подписку Cashier. Всё остальное кода платежей не касается.
 
-**Tech Stack:** Laravel 11, PHP 8.3, PostgreSQL 17, Redis 7, Horizon, Sanctum, Laravel Socialite, Pest 3, Larastan (PHPStan level 6), Laravel Pint; Vue 3 + Vite + Pinia + Vue Router 4 + Tailwind 3 + FullCalendar 6 + Vitest; Docker Compose (nginx, php-fpm, node, postgres, redis, horizon, scheduler, minio, mailpit).
+**Tech Stack:** Laravel 13, PHP 8.3, PostgreSQL 17, Redis 7, Horizon, Sanctum, Laravel Socialite, Pest 3, Larastan (PHPStan level 6), Laravel Pint; Vue 3 + Vite + Pinia + Vue Router 4 + Tailwind 3 + FullCalendar 6 + Vitest; Docker Compose (nginx, php-fpm, node, postgres, redis, horizon, scheduler, minio, mailpit).
 
 **Spec:** `LARAVEL_REWRITE_PLAN.md` (часть B, этапы 0–5; из этапа 10 берётся только enforcement лимитов). Дизайн-палитра: `color.md` — единственный источник цветовых значений.
 
@@ -18,7 +18,7 @@
 
 Эти требования действуют для **каждой** задачи ниже — считайте их частью списка требований любой задачи.
 
-- **PHP 8.3+**, **Laravel 11.x**, **PostgreSQL 17**, **Redis 7**. Никаких пакетов, требующих PHP < 8.2.
+- **PHP 8.3+**, **Laravel 13.x** (ветки 11.x и ранние 12.x непропатчены: CVE-2026-48019 CRLF в правиле `email` и path confusion в signed URL — фикс только в 12.60+/13.10+; `composer audit` обязан быть чистым, подавлять его запрещено), **PostgreSQL 17**, **Redis 7**. Никаких пакетов, требующих PHP < 8.2.
 - **Первичные ключи — ULID** (`HasUlids`, колонка `char(26)`), не автоинкремент. Внешние ключи — `char(26)`.
 - **Все деньги** — целые копейки/центы (`bigInteger`), никаких `float`.
 - **Все даты в БД — UTC** (`timestamptz`). Пользовательская таймзона хранится в `users.timezone` и применяется только на отображении и в подборе слотов.
@@ -143,7 +143,7 @@ M4 можно вести параллельно с M3 после задачи 20
 
 **Files:**
 - Create: `docker/compose.yaml`, `docker/php/Dockerfile`, `docker/php/php.ini`, `docker/nginx/default.conf`, `Makefile`, `.env.example`
-- Create: скелет Laravel 11 в корне (`composer create-project laravel/laravel:^11.0 .`)
+- Create: скелет Laravel 13 в корне (`composer create-project laravel/laravel:^13.0 .`)
 
 **Interfaces:**
 - Produces: `make up`, `make down`, `make sh`, `make test`, `make migrate` — этими командами пользуются все последующие задачи.
@@ -151,7 +151,7 @@ M4 можно вести параллельно с M3 после задачи 20
 - [ ] **Step 1: Создать скелет Laravel**
 
 ```bash
-composer create-project laravel/laravel:^11.0 app-tmp && rsync -a app-tmp/ ./ && rm -rf app-tmp
+composer create-project laravel/laravel:^13.0 app-tmp && rsync -a app-tmp/ ./ && rm -rf app-tmp
 composer require laravel/sanctum laravel/horizon laravel/socialite predis/predis
 composer require --dev pestphp/pest pestphp/pest-plugin-laravel larastan/larastan laravel/pint
 ```
