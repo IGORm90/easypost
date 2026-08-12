@@ -36,7 +36,9 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: secret
     ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      - "./postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro"
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]

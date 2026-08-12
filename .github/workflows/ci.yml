@@ -13,13 +13,17 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: app
+          # Tests run against their own database (see phpunit.xml DB_DATABASE),
+          # matching the app_test database provisioned locally by
+          # docker/postgres/init-test-db.sql — no shared "app" data to protect
+          # in CI's ephemeral service container, so it's created directly.
+          POSTGRES_DB: app_test
           POSTGRES_USER: app
           POSTGRES_PASSWORD: secret
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U app -d app"
+          --health-cmd "pg_isready -U app -d app_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -37,7 +41,7 @@ jobs:
       DB_CONNECTION: pgsql
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
-      DB_DATABASE: app
+      DB_DATABASE: app_test
       DB_USERNAME: app
       DB_PASSWORD: secret
       REDIS_HOST: 127.0.0.1
