@@ -1,0 +1,25 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - app
+        - database
+        - tests
+    ignoreErrors:
+        # Larastan cannot statically resolve $this (or the return value of the global test()/it()
+        # functions) inside Pest closures to the underlying Illuminate test case, even though
+        # tests/Pest.php binds it correctly at runtime via pest()->extend()->use()->in().
+        # Known, accepted Larastan limitation (larastan/larastan#2275, closed as not planned;
+        # pestphp/pest#796). Scoped to tests/* only — app and database code is unaffected.
+        -
+            message: '#^Call to an undefined method Pest\\PendingCalls\\TestCall(\|Pest\\Support\\HigherOrderTapProxy)?::\w+\(\)\.$#'
+            path: tests/*
+        # App\Models\Organization and App\Models\User (with the organization_user pivot) are
+        # introduced in Task 5. The actingAsMember() helper in tests/Pest.php references them
+        # ahead of time so it is ready for Task 5+; PHP resolves class names lazily, so the
+        # helper is harmless while unused. Remove this ignore once Task 5 lands the models.
+        -
+            identifier: class.notFound
+            path: tests/Pest.php
