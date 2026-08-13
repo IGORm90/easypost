@@ -4,9 +4,11 @@ import { useI18n } from 'vue-i18n';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Toast from '../../components/ui/Toast.vue';
 import Input from '../../components/ui/Input.vue';
+import Button from '../../components/ui/Button.vue';
 import CalendarGrid from '../../components/calendar/CalendarGrid.vue';
 import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewSwitcher.vue';
 import TagFilter from '../../components/calendar/TagFilter.vue';
+import PostEditorModal from '../../components/editor/PostEditorModal.vue';
 import { usePostsStore, type CalendarTag } from '../../stores/posts';
 import { useAuthStore } from '../../stores/auth';
 import { useOrganizationStore } from '../../stores/organization';
@@ -118,15 +120,28 @@ function onGridError(): void {
     notice.value = { text: t('calendar.toast.removeError'), variant: 'danger' };
 }
 
+// Task 25's editor. `editorGroupId === null` composes a brand-new post
+// (opened from the "New post" button below); a non-null id edits the
+// group `onEdit()` was called with (a calendar card click).
+const editorOpen = ref(false);
+const editorGroupId = ref<string | null>(null);
+
 function onEdit(groupId: string): void {
-    // Seam for Task 25 (post editor modal): this task's brief explicitly
-    // excludes building the editor. Clicking a card already reaches this
-    // handler with the right group id and, until Task 25 opens a real
-    // modal here, tells the user why nothing happened instead of
-    // silently doing nothing (a click with no visible effect reads as a
-    // bug, not as "not built yet").
-    void groupId;
-    notice.value = { text: t('calendar.editorPlaceholder'), variant: 'neutral' };
+    editorGroupId.value = groupId;
+    editorOpen.value = true;
+}
+
+function onNewPost(): void {
+    editorGroupId.value = null;
+    editorOpen.value = true;
+}
+
+function onEditorSaved(): void {
+    // Re-run the same load() this page already uses for a filter/range
+    // change — the saved group may be new, moved, or have changed
+    // channels, so a full refetch of the current range is simpler and
+    // safer than trying to patch a single entry in place.
+    load();
 }
 </script>
 
@@ -138,7 +153,10 @@ function onEdit(groupId: string): void {
                     <h1 class="text-lg font-semibold text-text">{{ t('calendar.title') }}</h1>
                     <span v-if="loading" class="text-xs text-muted">{{ t('ui.loading') }}</span>
                 </div>
-                <ViewSwitcher v-model="view" />
+                <div class="flex items-center gap-3">
+                    <ViewSwitcher v-model="view" />
+                    <Button variant="primary" @click="onNewPost">{{ t('calendar.newPost') }}</Button>
+                </div>
             </div>
 
             <div class="flex flex-wrap items-end gap-4">
@@ -167,5 +185,12 @@ function onEdit(groupId: string): void {
                 @error="onGridError"
             />
         </div>
+
+        <PostEditorModal
+            :open="editorOpen"
+            :group-id="editorGroupId"
+            @close="editorOpen = false"
+            @saved="onEditorSaved"
+        />
     </AppLayout>
 </template>

@@ -210,7 +210,54 @@
             "moveError": "Could not reschedule the post. Please try again.",
             "removeError": "Could not remove the post. Please try again."
         },
-        "editorPlaceholder": "The post editor arrives in a later task."
+        "newPost": "New post"
+    },
+    "editor": {
+        "titleNew": "New post",
+        "titleEdit": "Edit post",
+        "locked": "This post has already gone out and can no longer be edited. Duplicate it instead to send a similar post.",
+        "networkError": "Could not reach the server. Nothing was lost — check your connection and try again.",
+        "commonContent": "Shared text",
+        "commonContentPlaceholder": "Write once, then vary it per channel on its own tab below.",
+        "signature": "Signature",
+        "noSignature": "No signature",
+        "tags": "Tags",
+        "picker": {
+            "sets": "Channel sets",
+            "channels": "Channels",
+            "empty": "Connect a channel first to be able to post."
+        },
+        "schedule": {
+            "findSlotFor": "Find a slot for",
+            "chooseChannel": "Choose a channel",
+            "findSlot": "Find free slot",
+            "findSlotError": "Could not find a free slot. Please try again.",
+            "publishDate": "Publish date"
+        },
+        "actions": {
+            "saveDraft": "Save draft",
+            "schedule": "Schedule",
+            "publishNow": "Publish now"
+        },
+        "thread": {
+            "rootLabel": "Post text",
+            "rootLabelFor": "Post text ({name})",
+            "replyLabel": "Reply {n}",
+            "add": "Add to thread",
+            "remove": "Remove"
+        },
+        "counter": {
+            "over": "(over by {n})"
+        },
+        "hints": {
+            "threadUnsupported": "This channel does not support threads — only a single message can be sent.",
+            "threadTooLong": "A thread on this channel can have at most {max} messages.",
+            "mediaLimits": "Up to {images} images and {videos} videos per message.",
+            "altTextRequired": "Images require alt text on this channel."
+        },
+        "tabs": {
+            "hasError": "This channel has a validation problem"
+        }
     },
     "integrations": {
         "callback": {
