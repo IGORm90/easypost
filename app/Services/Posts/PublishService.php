@@ -75,17 +75,42 @@ use Illuminate\Support\Facades\DB;
  *    `PublishPostJob`'s `ShouldBeUnique` (keyed on the group id), which
  *    stops a second instance of the job from ever being enqueued while
  *    one is in flight — the same reasoning `RefreshIntegrationTokenJob`
- *    documents for `Integration`. This class adds a second, narrower
- *    layer on top: `publishChannel()` re-locks (`lockForUpdate()`)
- *    exactly the post rows it is about to publish, inside the SAME
- *    transaction that calls the provider and persists the result, so a
- *    second caller racing for the identical channel blocks until the
- *    first either commits (and the second then sees `release_id` already
- *    set and skips) or rolls back (nothing was sent, safe to retry).
- *    Deliberately scoped to one channel's pending rows, not the whole
- *    group and not the whole run — see the next section for why holding
- *    one lock across the ENTIRE run (all channels, one HTTP call each)
- *    was rejected.
+ *    documents for `Integration`. `PostGroupService`'s reschedule paths
+ *    deliberately force-release that lock before redispatching (see that
+ *    class's docblock), so — unlike the token-refresh case — TWO
+ *    instances of this job for the same group genuinely can run at once;
+ *    this class adds a second, narrower layer on top that has to hold
+ *    even then: `publishChannel()` re-locks (`lockForUpdate()`) exactly
+ *    the post rows it is about to publish, inside the SAME transaction
+ *    that calls the provider and persists the result, so a second caller
+ *    racing for the identical channel blocks until the first either
+ *    commits (and the second then sees `release_id` already set and
+ *    skips) or rolls back (nothing was sent, safe to retry). Deliberately
+ *    scoped to one channel's pending rows, not the whole group and not
+ *    the whole run — see the next section for why holding one lock
+ *    across the ENTIRE run (all channels, one HTTP call each) was
+ *    rejected.
+ *
+ *    This re-lock's `WHERE` MUST filter on `state = QUEUE` as well as
+ *    `release_id IS NULL` — post-review fix, not a simplification to
+ *    ever reverse. `release_id IS NULL` alone is not sufficient: a
+ *    concurrent `abandonGroup()` run (`PublishPostJob::failed()`, once
+ *    retries are exhausted) can mark a channel's still-unpublished rows
+ *    `ERROR` — `release_id` stays null, only `state` changes — between
+ *    this method's unlocked pre-check and this transaction acquiring the
+ *    lock. Without the `state` predicate, this method would still pick
+ *    those `ERROR` rows up, call the provider, and `markPublished()`
+ *    would then attempt `ERROR -> PUBLISHED`, a transition
+ *    `PostStateMachine` rejects — throwing INSIDE this transaction AFTER
+ *    the network call already went out, rolling `release_id` back to
+ *    null while the message is live. Not an immediate duplicate today,
+ *    because the pending filter this re-lock feeds already requires
+ *    `state === QUEUE` — but Task 31's retry endpoint moves individual
+ *    posts `ERROR -> QUEUE`, and that is the next task: the moment it
+ *    ships, a customer clicking "retry" on exactly this row republishes
+ *    a segment already on the network, with no record it was ever sent.
+ *    The `state` filter here is what makes this method simply skip such
+ *    a row instead, on both counts, today and after Task 31.
  *
  * ==========================================================
  * Why the group-level lock is short, not held for the whole run
@@ -401,6 +426,7 @@ class PublishService
             $lockedIds = Post::withoutGlobalScope('organization')
                 ->whereIn('id', $pending->pluck('id'))
                 ->whereNull('release_id')
+                ->where('state', PostState::QUEUE->value)
                 ->lockForUpdate()
                 ->pluck('id');
 

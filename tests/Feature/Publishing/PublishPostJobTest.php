@@ -256,6 +256,32 @@ it('skips already published posts on retry, at both channel and segment level', 
         ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
 });
 
+it('never re-locks or republishes a segment that is ERROR with no release_id', function () {
+    // Review, round 4: the re-lock's WHERE must filter on state as well
+    // as release_id. A segment can be ERROR with release_id still null —
+    // e.g. a concurrent abandonGroup() run (PublishPostJob::failed())
+    // settling this channel between publishChannel()'s unlocked
+    // pre-check and this transaction acquiring the lock — and
+    // release_id IS NULL alone would still pick it up, call the
+    // provider, and then fail markPublished()'s ERROR -> PUBLISHED
+    // transition INSIDE the transaction, AFTER the network call already
+    // went out. The state = QUEUE filter is what makes this method skip
+    // such a row instead, with no provider call at all.
+    $provider = fakeProvider();
+
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [, $posts] = publishableChannel($org, $group, ['channel A']);
+    $posts[0]->update(['state' => PostState::ERROR, 'error' => 'settled by a concurrent run']);
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    expect($provider->publishedChains())->toHaveCount(0)
+        ->and($posts[0]->fresh()->state)->toBe(PostState::ERROR)
+        ->and($posts[0]->fresh()->release_id)->toBeNull()
+        ->and($group->fresh()->state)->toBe(PostState::ERROR);
+});
+
 it('marks only the failing channel as errored, while the other still publishes', function () {
     $org = Organization::factory()->create();
     $group = queuedGroup($org);
