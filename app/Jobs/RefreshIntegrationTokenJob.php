@@ -100,11 +100,43 @@ use Illuminate\Queue\SerializesModels;
  * hand-written uniqueFor() of 1h. Fixed by making uniqueFor() a pure
  * function of RETRY_BACKOFF_SECONDS/$tries (below) instead of an
  * independent constant, so the two cannot drift apart again -- widening
- * one automatically widens the other. maxInFlightSeconds() is also where
- * the ProviderRateLimitException path is bounded (handle() caps
- * release()'s delay at the same schedule's max entry) so that path's
- * worst case is covered by the identical arithmetic, not a second,
- * independently-reasoned number.
+ * one automatically widens the other.
+ *
+ * Third correction -- capping every ProviderRateLimitException release()
+ * at self::RETRY_BACKOFF_SECONDS's single MAXIMUM entry (an earlier
+ * revision's fix) was itself still wrong: that cap applies PER RELEASE,
+ * not once, so a job rate-limited on every attempt could release()
+ * up to 7 times at ~3600s each -- as much as 25200s, versus the 10290s
+ * array_sum() the whole uniqueFor() derivation rests on. Even three
+ * consecutive rate-limited attempts (10800s) already exceed it. A
+ * sustained provider rate-limit window or provider-side outage produces
+ * exactly that pattern, so this was a real, not theoretical, way back
+ * into the same race.
+ *
+ * Fixed by capping each release at the schedule value for the SPECIFIC
+ * ATTEMPT it's on (self::RETRY_BACKOFF_SECONDS[$this->attempts() - 1]),
+ * not the schedule's overall maximum -- see handle(). Attempts 1..7 (the
+ * only attempts that can still lead to another try, since $tries = 8)
+ * each release for at most their own position's schedule value, so the
+ * cumulative worst case across every rate-limited attempt is exactly
+ * array_sum(RETRY_BACKOFF_SECONDS) -- the identical sum maxInFlightSeconds()
+ * is built from, not a second, independently-reasoned number. The final
+ * attempt (8) does NOT release() at all if it's still rate-limited (see
+ * handle()): releasing there would hold the lock for another wait that
+ * can never lead to a further attempt anyway (Laravel marks the job
+ * failed, releasing the unique lock, the moment it next sees
+ * attempts() > $tries -- it never calls handle() again), so that wait
+ * would only cost lock time for nothing.
+ *
+ * The trade this makes explicit: when a provider asks for a longer wait
+ * than the schedule allows at the current position, THIS JOB retries
+ * sooner than the provider asked and may simply hit the rate limit
+ * again on the next attempt, consuming another one of $tries. That is
+ * deliberate -- a lock whose duration is provably bounded is worth more
+ * than perfectly honouring a delay this job cannot itself bound. Task 30
+ * inherits the same trade-off if it copies this shape: a real customer
+ * post may retry into the same rate limit more than once rather than
+ * waiting out the provider's full requested window in one release().
  */
 class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
 {
@@ -169,9 +201,10 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
      * Governs the automatic retry delay after an uncaught
      * ProviderTransientException. A ProviderRateLimitException's delay
      * comes from the provider's own Retry-After via release() in
-     * handle() instead, capped at self::RETRY_BACKOFF_SECONDS's own
-     * maximum — see handle() — so that path is bounded by this exact
-     * same schedule rather than an independent number.
+     * handle() instead, capped POSITIONALLY at this same array's entry
+     * for the current attempt — see handle() and the class docblock's
+     * "Third correction" section for why the cap must be per-position,
+     * not this array's overall maximum.
      *
      * @return list<int>
      */
@@ -223,22 +256,49 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
         try {
             $service->refresh($integration);
         } catch (ProviderRateLimitException $e) {
-            // Waits as long as the provider asked, capped at this
-            // schedule's own longest backoff entry — a provider-supplied
-            // Retry-After longer than that would otherwise let THIS
-            // path alone outlive uniqueFor(), independently of the
-            // arithmetic maxInFlightSeconds() already accounts for. A
-            // provider asking for longer than that cap is treated the
-            // same as any other exhausted-tries case: this job gives up
-            // and ScheduleTokenRefresh's next hourly pass tries again
-            // fresh (see the class docblock's "Deliberate decision for
-            // THIS job" section) -- but this DOES still consume one of
-            // $tries on this project's redis queue (attempts increment
-            // on every pop, release included). See the class docblock's
-            // "Retry semantics" section for why that's accepted here,
-            // and why Task 30 must not copy this line under the opposite
-            // assumption.
-            $this->release(min($e->retryAfterSeconds, max(self::RETRY_BACKOFF_SECONDS)));
+            // Position-aware cap -- see the class docblock's "Third
+            // correction" section. Capping at the schedule's overall
+            // MAXIMUM (an earlier revision) still let repeated
+            // rate-limited attempts release() several times at ~3600s
+            // each, summing well past uniqueFor(). Capping at THIS
+            // attempt's own schedule entry instead means the cumulative
+            // worst case across every rate-limited attempt can never
+            // exceed array_sum(RETRY_BACKOFF_SECONDS) -- the exact sum
+            // uniqueFor() is built from.
+            $attempt = $this->attempts();
+
+            if ($attempt >= $this->tries) {
+                // Last attempt: no further try is possible (Laravel
+                // marks the job failed -- releasing the unique lock --
+                // the moment it next sees attempts() > $tries, without
+                // calling handle() again). Releasing here would only
+                // hold the lock for a wait that can never be used, for
+                // no benefit -- give up quietly instead, the same
+                // outcome as any other exhausted-retries case for this
+                // job (see "Deliberate decision for THIS job" above).
+                return;
+            }
+
+            // $attempt is always within [1, count(RETRY_BACKOFF_SECONDS)]
+            // here (the guard above rules out the one value, $tries,
+            // that would push the index out of range), so the ?? branch
+            // is unreachable under this class's current invariants --
+            // kept only as a defensive fallback against a future edit
+            // that changes $tries independently of the array's length.
+            $cap = self::RETRY_BACKOFF_SECONDS[$attempt - 1] ?? max(self::RETRY_BACKOFF_SECONDS);
+
+            // Waits as long as the provider asked, but never longer than
+            // this attempt's own cap. When the provider's requested
+            // Retry-After exceeds it, this job deliberately retries
+            // SOONER than requested and may simply hit the rate limit
+            // again next attempt, consuming another one of $tries -- see
+            // the class docblock's "trade this makes explicit"
+            // paragraph. This DOES still consume one of $tries on this
+            // project's redis queue regardless (attempts increment on
+            // every pop, release included) -- see the "Retry semantics"
+            // section, and Task 30 must not copy this line under the
+            // opposite assumption.
+            $this->release(min($e->retryAfterSeconds, $cap));
 
             return;
         }

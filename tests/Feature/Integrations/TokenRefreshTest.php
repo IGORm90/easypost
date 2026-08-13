@@ -181,11 +181,14 @@ it('releases the job instead of breaking the channel on a rate limit, honouring 
         'token_expires_at' => now()->addMinutes(30),
     ]);
 
-    fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 45));
+    // 20s is under backoff()[0] (this job's first-attempt cap, 30s — see
+    // the position-aware cap in handle()), so this exercises "provider
+    // asked for less than the cap" and must be honoured exactly.
+    fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 20));
 
     /** @var RefreshIntegrationTokenJob&MockInterface $job */
     $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
-    $job->shouldReceive('release')->once()->with(45);
+    $job->shouldReceive('release')->once()->with(20);
 
     $job->handle(app(TokenRefreshService::class));
 
@@ -196,7 +199,7 @@ it('releases the job instead of breaking the channel on a rate limit, honouring 
     Notification::assertNothingSent();
 });
 
-it('caps a rate-limit release delay at the retry schedule\'s own longest entry, never outliving the unique lock', function () {
+it('caps a rate-limit release delay at THIS attempt\'s own schedule position, not the schedule\'s overall maximum', function () {
     Notification::fake();
 
     $org = Organization::factory()->create();
@@ -206,16 +209,19 @@ it('caps a rate-limit release delay at the retry schedule\'s own longest entry, 
         'token_expires_at' => now()->addMinutes(30),
     ]);
 
-    // A pathological provider asking to wait far longer than this job's
-    // own retry schedule. Uncapped, releasing for the full duration
-    // could by itself outlive uniqueFor() — see the class docblock's
-    // "uniqueFor() MUST cover..." section. handle() must clamp it to
-    // backoff()'s own longest entry instead of trusting the provider.
+    // A pathological provider asking to wait far longer than any
+    // schedule position allows. Capping at the schedule's overall
+    // MAXIMUM (a previous revision) would release() for that maximum
+    // regardless of which attempt this is — which, repeated across
+    // several rate-limited attempts, sums to well past uniqueFor() (see
+    // the class docblock's "Third correction"). handle() must clamp to
+    // THIS attempt's own position instead — here, the first attempt, so
+    // backoff()[0].
     fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 999_999));
 
     /** @var RefreshIntegrationTokenJob&MockInterface $job */
     $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
-    $expectedDelay = max($job->backoff());
+    $expectedDelay = $job->backoff()[0];
     $job->shouldReceive('release')->once()->with($expectedDelay);
 
     $job->handle(app(TokenRefreshService::class));
@@ -223,6 +229,33 @@ it('caps a rate-limit release delay at the retry schedule\'s own longest entry, 
     $fresh = $integration->fresh();
     expect($fresh->token)->toBe('old-token')
         ->and($fresh->disabled)->toBeFalse();
+
+    Notification::assertNothingSent();
+});
+
+it('never releases on the final attempt, even when still rate-limited', function () {
+    // The guard in handle(): releasing on the last possible attempt
+    // would hold the unique lock for a wait that can never lead to
+    // another try (Laravel marks the job failed the moment it next sees
+    // attempts() > $tries, without calling handle() again) — so it must
+    // not happen at all, not even capped.
+    Notification::fake();
+
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 30));
+
+    /** @var RefreshIntegrationTokenJob&MockInterface $job */
+    $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
+    $job->shouldReceive('attempts')->andReturn($job->tries);
+    $job->shouldNotReceive('release');
+
+    $job->handle(app(TokenRefreshService::class));
 
     Notification::assertNothingSent();
 });
@@ -252,10 +285,48 @@ it('keeps the unique lock duration at least as long as the worst-case retry life
     $worstCaseRetryDelaySum = array_sum($backoff);
 
     expect($job->tries)->toBe(count($backoff) + 1)
-        ->and($job->uniqueFor())->toBeGreaterThanOrEqual($worstCaseRetryDelaySum)
-        // The cap applied to a rate-limit release() (see the test above)
-        // must itself never exceed what uniqueFor() covers.
-        ->and(max($backoff))->toBeLessThanOrEqual($job->uniqueFor());
+        ->and($job->uniqueFor())->toBeGreaterThanOrEqual($worstCaseRetryDelaySum);
+});
+
+it('keeps the CUMULATIVE rate-limit wait under the unique lock even when every attempt is rate-limited past the schedule', function () {
+    // The property the previous round's test failed to check: not "does
+    // one release() respect a cap" but "can repeated rate-limited
+    // attempts, summed, ever exceed uniqueFor()". Drives the actual
+    // handle() path attempt-by-attempt (stubbing attempts() to advance
+    // 1, 2, 3, ... exactly like the real queue would across
+    // release()/redelivery cycles) rather than asserting the formula
+    // the implementation itself uses, so a regression in the cap logic
+    // — not just in the arithmetic constants — would be caught here.
+    Notification::fake();
+
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    /** @var RefreshIntegrationTokenJob&MockInterface $job */
+    $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
+
+    $releasedDelays = [];
+    $job->shouldReceive('release')->andReturnUsing(function (int $delay) use (&$releasedDelays): void {
+        $releasedDelays[] = $delay;
+    });
+    $job->shouldReceive('attempts')->andReturnValues(range(1, $job->tries));
+
+    // Every single attempt hits the rate limit, and the provider always
+    // asks for far longer than any schedule position allows — the
+    // sustained-rate-limit-window / provider-outage scenario the review
+    // flagged as the realistic way to hit this.
+    for ($i = 0; $i < $job->tries; $i++) {
+        fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 999_999));
+        $job->handle(app(TokenRefreshService::class));
+    }
+
+    expect(array_sum($releasedDelays))->toBeLessThanOrEqual($job->uniqueFor());
+
+    Notification::assertNothingSent();
 });
 
 // --- Idempotency / overlap guard -----------------------------------------
