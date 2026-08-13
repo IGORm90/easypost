@@ -24,6 +24,7 @@ class PostGroupFactory extends Factory
             'publish_date' => now()->addDay(),
             'created_by' => User::factory(),
             'error' => null,
+            'notified_at' => null,
             'share_token' => null,
             'queue_version' => 0,
         ];

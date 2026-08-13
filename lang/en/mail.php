@@ -28,4 +28,12 @@ return [
         'trouble' => 'Please reconnect this channel from your organization settings.',
     ],
 
+    'post_failed' => [
+        'subject' => 'A scheduled post failed to publish',
+        'greeting' => 'Hello :name!',
+        'line' => 'Your post scheduled for :date could not be published.',
+        'unknown_date' => 'an unknown date',
+        'action_line' => 'Please review and retry it from your calendar.',
+    ],
+
 ];

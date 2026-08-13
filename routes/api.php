@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\PostController;
+use App\Http\Controllers\Api\PostErrorController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\PublicPostController;
 use App\Http\Controllers\Api\SetController;
@@ -161,6 +162,14 @@ Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(func
     // and 404 on the findOrFail() lookup, never reaching findSlot() at
     // all.
     Route::get('find-slot', [PostController::class, 'findSlot']);
+    // Task 32: GET /api/posts/errors — failed publications for a UI
+    // banner. Registered ahead of '{group}' for the identical
+    // route-order reason as 'find-slot' above. Same tenant bar as every
+    // other route in this group (auth:sanctum + organization);
+    // PostErrorService's query is scoped by BelongsToOrganization's
+    // normal global scope, not a manual withoutGlobalScope() the way
+    // MissedPostsService's scan queries are.
+    Route::get('errors', [PostErrorController::class, 'index']);
     Route::get('{group}', [PostController::class, 'show']);
     Route::put('{group}', [PostController::class, 'update']);
     Route::delete('{group}', [PostController::class, 'destroy']);

@@ -1,6 +1,7 @@
 <?php
 
 use App\Console\Commands\ScheduleTokenRefresh;
+use App\Jobs\ScanMissedPostsJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -33,5 +34,32 @@ Artisan::command('inspire', function () {
  */
 Schedule::command(ScheduleTokenRefresh::class)
     ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * Task 32: the missed-posts safety net — see MissedPostsService's
+ * docblock for the two holes this recovers from (a crash/outage between
+ * commit and dispatch, and any ShouldBeUnique swallow that isn't one of
+ * PostGroupService's already-hardened reschedule paths). Both leave a
+ * group sitting at QUEUE with no live job working it, which is exactly
+ * what this scan finds.
+ *
+ * Schedule::job(), not Schedule::command(): ScanMissedPostsJob is a
+ * plain ShouldQueue job (matching PublishPostJob's own shape), not an
+ * Artisan command — Schedule::job() pushes it onto the queue at the
+ * scheduled tick rather than running it inline in the scheduler
+ * process, so a slow scan pass never blocks the scheduler itself.
+ *
+ * withoutOverlapping()/onOneServer(): identical reasoning to
+ * ScheduleTokenRefresh above — a second enumeration pass starting while
+ * the previous one is still running would needlessly re-probe the same
+ * candidate rows (harmless per MissedPostsService's own lock-probe
+ * guarantee, but pure waste), and onOneServer() keeps that true
+ * regardless of how many app/php containers this project ever scales
+ * to.
+ */
+Schedule::job(new ScanMissedPostsJob)
+    ->everyTenMinutes()
     ->withoutOverlapping()
     ->onOneServer();
