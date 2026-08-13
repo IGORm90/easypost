@@ -102,6 +102,66 @@ it('throws a partial-failure exception carrying results for the segments that al
     expect($provider->publishedChains())->toBe([]);
 });
 
+it('resumes a partially-failed thread by attaching the continuation to the anchor, without publishing a second root', function () {
+    $provider = fakeProvider();
+    $integration = new Integration;
+    $originalChain = [
+        new PostPayloadDto('root'),
+        new PostPayloadDto('reply 1'),
+        new PostPayloadDto('reply 2'),
+    ];
+
+    // First attempt: only the root segment publishes, then the chain fails.
+    $provider->failNextPostWithPartialFailure(1, 'second segment rejected');
+
+    $rootResult = null;
+    try {
+        $provider->post($integration, $originalChain);
+        test()->fail('expected ProviderPartialFailureException');
+    } catch (ProviderPartialFailureException $e) {
+        $rootResult = $e->published[0];
+    }
+
+    expect($rootResult)->not->toBeNull()
+        ->and($provider->rootReleaseIds())->toBe([$rootResult->releaseId]);
+
+    // Pipeline resumes: a NEW chain containing only the unpublished
+    // segments, first element carrying the anchor to the root that DID
+    // publish. This must NOT create a second root.
+    $resumedChain = [
+        $originalChain[1]->withReplyToReleaseId($rootResult->releaseId),
+        $originalChain[2],
+    ];
+
+    $results = $provider->post($integration, $resumedChain);
+
+    expect($results)->toHaveCount(2)
+        // exactly one root across BOTH post() calls — the resumed
+        // chain's first segment was attached, not re-rooted
+        ->and($provider->rootReleaseIds())->toBe([$rootResult->releaseId])
+        ->and($provider->rootReleaseIds())->toHaveCount(1);
+
+    // and the fake actually recorded the anchor it was given
+    $segments = $provider->publishedSegments();
+    $resumedFirstSegment = $segments[1]; // index 0 was the root from the first call
+    expect($resumedFirstSegment['attachedTo'])->toBe($rootResult->releaseId)
+        ->and($resumedFirstSegment['releaseId'])->toBe($results[0]->releaseId);
+});
+
+it('refuses a reply-to-release-id it cannot honour instead of publishing a duplicate root', function () {
+    $provider = fakeProvider()->refuseReplyToReleaseId();
+    $integration = new Integration;
+    $chain = [
+        (new PostPayloadDto('continuation'))->withReplyToReleaseId('some-external-id'),
+    ];
+
+    expect(fn () => $provider->post($integration, $chain))
+        ->toThrow(ProviderPermanentException::class);
+
+    // nothing was published — no duplicate, no partial state
+    expect($provider->publishedSegments())->toBe([]);
+});
+
 it('lets tests override capabilities, including the newly required fields', function () {
     $provider = fakeProvider();
     $custom = new ProviderCapabilities(

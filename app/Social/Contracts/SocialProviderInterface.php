@@ -82,6 +82,16 @@ interface SocialProviderInterface
      * returning early or throwing a plain failure would lose or
      * duplicate what already went out.
      *
+     * Resumed chains: after a ProviderPartialFailureException, the
+     * pipeline calls post() again with a NEW $chain holding only the
+     * segments that never published, and $chain[0]->replyToReleaseId
+     * set to the provider-side id of the last segment that did publish.
+     * See PostPayloadDto's docblock for the full contract — in short,
+     * that first segment MUST be attached as a reply to the given id,
+     * never published as a fresh, detached thread root. A provider that
+     * cannot do this must throw ProviderPermanentException rather than
+     * publish a duplicate root.
+     *
      * @param  PostPayloadDto[]  $chain  Thread: first element is the root.
      * @return array<int, PostResultDto> Keyed by chain index; same length as $chain on full success.
      */

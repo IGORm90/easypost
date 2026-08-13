@@ -27,9 +27,9 @@ use Throwable;
  *
  * Deliberately stateful and controllable: Task 30 (publishing pipeline)
  * and Task 37 drive every failure path — transient, permanent, auth,
- * rate-limit, partial-failure — through this class instead of mocking
- * HTTP calls for a real network. Configure it, then call the interface
- * methods; nothing here does real I/O.
+ * rate-limit, partial-failure, and thread-resumption — through this
+ * class instead of mocking HTTP calls for a real network. Configure it,
+ * then call the interface methods; nothing here does real I/O.
  *
  * Usage:
  *   $provider = app(ProviderRegistry::class)->get('fake');
@@ -48,8 +48,30 @@ class FakeProvider implements SocialProviderInterface
     /** @var array{succeedCount: int, message: string}|null */
     private ?array $nextPartialFailure = null;
 
+    /**
+     * When true, post() throws ProviderPermanentException instead of
+     * honouring $chain[0]->replyToReleaseId — simulates a network that
+     * cannot reply to an arbitrary external post id, per
+     * PostPayloadDto's documented contract for that case.
+     */
+    private bool $refusesReplyToReleaseId = false;
+
     /** @var list<PostPayloadDto[]> every chain fully published by post(), in call order */
     private array $publishedChains = [];
+
+    /**
+     * Every segment ever successfully published by post(), across all
+     * calls (including segments published just before a partial
+     * failure), in publish order. Each entry records whether it was
+     * published as a fresh thread root or attached to an existing post
+     * — either another segment published earlier in the same call, or
+     * (for the first segment of a resumed chain) the given
+     * $replyToReleaseId. This is what lets a test prove a resumed
+     * thread was actually threaded rather than double-rooted.
+     *
+     * @var list<array{releaseId: string, attachedTo: ?string}>
+     */
+    private array $publishedSegments = [];
 
     public function __construct()
     {
@@ -186,6 +208,20 @@ class FakeProvider implements SocialProviderInterface
     }
 
     /**
+     * Make post() throw ProviderPermanentException whenever it's given
+     * a chain whose first element carries $replyToReleaseId, simulating
+     * a network that cannot reply to an arbitrary external post id —
+     * exercises the "provider must refuse rather than duplicate" branch
+     * of PostPayloadDto's resumption contract.
+     */
+    public function refuseReplyToReleaseId(bool $refuse = true): self
+    {
+        $this->refusesReplyToReleaseId = $refuse;
+
+        return $this;
+    }
+
+    /**
      * @param  PostPayloadDto[]  $chain
      * @return array<int, PostResultDto>
      */
@@ -197,21 +233,37 @@ class FakeProvider implements SocialProviderInterface
             throw $exception;
         }
 
+        $anchor = $chain[0]->replyToReleaseId ?? null;
+
+        if ($anchor !== null && $this->refusesReplyToReleaseId) {
+            throw new ProviderPermanentException(
+                'fake provider cannot reply to an external post id ['.$anchor.']',
+            );
+        }
+
         if ($this->nextPartialFailure !== null) {
             $config = $this->nextPartialFailure;
             $this->nextPartialFailure = null;
 
             $published = [];
+            $previousReleaseId = null;
             foreach (array_slice($chain, 0, $config['succeedCount'], preserve_keys: true) as $index => $payload) {
-                $published[$index] = $this->fakeResult();
+                $attachedTo = $index === 0 ? $payload->replyToReleaseId : $previousReleaseId;
+                $result = $this->fakeResult($attachedTo);
+                $published[$index] = $result;
+                $previousReleaseId = $result->releaseId;
             }
 
             throw new ProviderPartialFailureException($config['message'], $published);
         }
 
         $results = [];
+        $previousReleaseId = null;
         foreach ($chain as $index => $payload) {
-            $results[$index] = $this->fakeResult();
+            $attachedTo = $index === 0 ? $payload->replyToReleaseId : $previousReleaseId;
+            $result = $this->fakeResult($attachedTo);
+            $results[$index] = $result;
+            $previousReleaseId = $result->releaseId;
         }
 
         $this->publishedChains[] = $chain;
@@ -219,9 +271,11 @@ class FakeProvider implements SocialProviderInterface
         return $results;
     }
 
-    private function fakeResult(): PostResultDto
+    private function fakeResult(?string $attachedTo): PostResultDto
     {
         $releaseId = 'fake-release-'.Str::ulid();
+
+        $this->publishedSegments[] = ['releaseId' => $releaseId, 'attachedTo' => $attachedTo];
 
         return new PostResultDto(
             releaseId: $releaseId,
@@ -244,13 +298,43 @@ class FakeProvider implements SocialProviderInterface
         return $this->publishedChains;
     }
 
+    /**
+     * Every segment successfully published across all post() calls,
+     * including ones that preceded a partial failure.
+     *
+     * @return list<array{releaseId: string, attachedTo: ?string}>
+     */
+    public function publishedSegments(): array
+    {
+        return $this->publishedSegments;
+    }
+
+    /**
+     * Release ids of every segment published as a fresh thread root
+     * (attachedTo === null) — i.e. neither threaded to a prior segment
+     * within the same call nor resuming via $replyToReleaseId. A test
+     * asserting "no duplicate root was published" during a resumed
+     * thread checks that this stays at exactly one entry.
+     *
+     * @return list<string>
+     */
+    public function rootReleaseIds(): array
+    {
+        return array_values(array_map(
+            fn (array $segment): string => $segment['releaseId'],
+            array_filter($this->publishedSegments, fn (array $segment): bool => $segment['attachedTo'] === null),
+        ));
+    }
+
     /** Reset all queued failures and recorded calls between test cases. */
     public function reset(): self
     {
         $this->nextPostException = null;
         $this->nextAuthenticateException = null;
         $this->nextPartialFailure = null;
+        $this->refusesReplyToReleaseId = false;
         $this->publishedChains = [];
+        $this->publishedSegments = [];
 
         return $this;
     }
