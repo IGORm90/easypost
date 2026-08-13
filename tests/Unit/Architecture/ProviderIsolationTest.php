@@ -17,16 +17,54 @@
  *    app/Social (e.g. a controller type-hinting TelegramProvider
  *    directly instead of going through SocialProviderInterface /
  *    ProviderRegistry). Neither check subsumes the other.
+ *
+ * The grep check deliberately does NOT pipe grep's output through a
+ * second grep with `|| true`: that pattern silently turns "the search
+ * itself failed" (missing grep binary, bad path, permission error) into
+ * the same empty result as "the search ran and found nothing" — an
+ * always-green guard that never actually looked. Instead each search
+ * runs once via exec(), its exit code is inspected explicitly (grep's
+ * own contract: 0 = matched, 1 = ran fine but no match, >1 = a real
+ * error), and provider-directory exclusion happens in PHP on the
+ * captured output rather than via a second piped command.
  */
 it('has no provider-specific branching outside app/Social/Providers', function () {
+    $root = base_path('app');
+    expect(is_dir($root))->toBeTrue("search root [{$root}] does not exist — the guard cannot have run");
+
     $hits = [];
     foreach (['telegram', 'mastodon', 'bluesky', 'discord', 'slack'] as $p) {
-        $out = shell_exec("grep -rniE \"['\\\"]{$p}['\\\"]\" ".base_path('app').' --include=*.php '
-            ."| grep -v 'app/Social/Providers' | grep -v 'config/social.php' || true");
-        if (trim((string) $out) !== '') {
-            $hits[] = $out;
+        $command = sprintf(
+            'grep -rniE %s %s --include=%s',
+            escapeshellarg("['\"]{$p}['\"]"),
+            escapeshellarg($root),
+            escapeshellarg('*.php'),
+        );
+
+        $outputLines = [];
+        $exitCode = null;
+        exec($command, $outputLines, $exitCode);
+
+        // grep: 0 = match found, 1 = ran fine, no match, >1 = real error
+        // (bad path, permission denied, binary missing, ...). Only the
+        // last case is a guard failure distinct from "no violations".
+        if ($exitCode > 1) {
+            throw new RuntimeException(
+                "grep failed while scanning for provider [{$p}] (exit code {$exitCode}): "
+                .implode("\n", $outputLines)
+            );
+        }
+
+        $violations = array_values(array_filter(
+            $outputLines,
+            fn (string $line): bool => ! str_contains($line, 'app/Social/Providers'),
+        ));
+
+        if ($violations !== []) {
+            $hits[] = implode("\n", $violations);
         }
     }
+
     expect($hits)->toBe([]);
 });
 

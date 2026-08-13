@@ -63,12 +63,27 @@ interface SocialProviderInterface
      * as a reply to the previous one. A non-threaded post is a
      * single-element $chain.
      *
-     * Throws one of the app\Social\Exceptions taxonomy on failure —
-     * never a raw HTTP/network exception — since the publishing pipeline
-     * (Task 30) decides how to react (retry, mark the channel broken,
-     * fail the post) purely from which exception type was thrown.
+     * Returns one PostResultDto per chain element, keyed by the same
+     * index as $chain — never a single aggregate result — because the
+     * app persists one row per chain item (each with its own
+     * release_id/release_url) and needs every segment's id to do so.
+     * On full success the returned array has exactly the same length
+     * as $chain.
+     *
+     * Throws one of the App\Social\Exceptions taxonomy on failure —
+     * never a raw HTTP/network exception — since the publishing
+     * pipeline (Task 30) decides how to react (retry, mark the channel
+     * broken, fail the post, persist-partial-and-fail-remainder) purely
+     * from which exception type was thrown. In particular: if one or
+     * more leading segments of $chain already published successfully
+     * before a later segment failed, throw
+     * ProviderPartialFailureException (carrying the results for the
+     * segments that did succeed) instead of any of the other four —
+     * returning early or throwing a plain failure would lose or
+     * duplicate what already went out.
      *
      * @param  PostPayloadDto[]  $chain  Thread: first element is the root.
+     * @return array<int, PostResultDto> Keyed by chain index; same length as $chain on full success.
      */
-    public function post(Integration $integration, array $chain): PostResultDto;
+    public function post(Integration $integration, array $chain): array;
 }

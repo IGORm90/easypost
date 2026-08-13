@@ -1,7 +1,5 @@
 <?php
 
-use Tests\Support\FakeProvider;
-
 return [
 
     /*
@@ -16,19 +14,16 @@ return [
     | any specific network. Real providers (Telegram, Mastodon, Bluesky,
     | Discord, Slack) are added here starting Task 14.
     |
-    | Tests\Support\FakeProvider is registered under the 'fake' identifier
-    | only in the testing environment (see below) — it must never appear in
-    | the production list, and it is not a real network integration.
+    | This file ships to production, so it deliberately contains no
+    | reference to Tests\Support\FakeProvider (an autoload-dev-only
+    | class) or to any other test fixture. The 'fake' identifier used by
+    | tests is wired separately in Tests\TestCase::setUp() via a config()
+    | override, which only ever runs inside the test process.
     |
     */
-    'providers' => array_merge(
-        [
-            // Real providers land here in Tasks 14-15, e.g.:
-            // 'telegram' => App\Social\Providers\Telegram\TelegramProvider::class,
-        ],
-        env('APP_ENV') === 'testing' ? [
-            'fake' => FakeProvider::class,
-        ] : [],
-    ),
+    'providers' => [
+        // Real providers land here in Tasks 14-15, e.g.:
+        // 'telegram' => App\Social\Providers\Telegram\TelegramProvider::class,
+    ],
 
 ];

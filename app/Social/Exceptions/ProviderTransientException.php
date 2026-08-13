@@ -14,5 +14,10 @@ use RuntimeException;
  * content, expired token, hit a rate limit) — those have their own,
  * more specific exception below and retrying them either wastes retries
  * or makes the problem worse.
+ *
+ * If some leading segments of the chain passed to post() already
+ * published successfully before this failure occurred, throw
+ * ProviderPartialFailureException instead — retrying the whole chain
+ * from scratch would duplicate the segments that already went out.
  */
-class ProviderTransientException extends RuntimeException {}
+class ProviderTransientException extends RuntimeException implements ProviderException {}

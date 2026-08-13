@@ -4,6 +4,7 @@ use App\Models\Integration;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\ProviderCapabilities;
 use App\Social\Exceptions\ProviderAuthException;
+use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
@@ -18,15 +19,18 @@ function fakeProvider(): FakeProvider
     return $provider->reset();
 }
 
-it('publishes a chain and records it', function () {
+it('publishes a chain and records one result per segment, keyed by index', function () {
     $provider = fakeProvider();
     $integration = new Integration;
-    $chain = [new PostPayloadDto('hello world')];
+    $chain = [new PostPayloadDto('root'), new PostPayloadDto('reply')];
 
-    $result = $provider->post($integration, $chain);
+    $results = $provider->post($integration, $chain);
 
-    expect($result->releaseId)->toStartWith('fake-release-')
-        ->and($result->releaseUrl)->toContain($result->releaseId)
+    expect($results)->toHaveCount(2)
+        ->and($results[0]->releaseId)->toStartWith('fake-release-')
+        ->and($results[1]->releaseId)->toStartWith('fake-release-')
+        ->and($results[0]->releaseId)->not->toBe($results[1]->releaseId)
+        ->and($results[1]->releaseUrl)->toContain($results[1]->releaseId)
         ->and($provider->publishedChains())->toHaveCount(1)
         ->and($provider->publishedChains()[0])->toBe($chain);
 });
@@ -40,8 +44,8 @@ it('throws a transient exception once, then succeeds', function () {
         ->toThrow(ProviderTransientException::class, 'boom');
 
     // queued failure is consumed — the retry succeeds
-    $result = $provider->post($integration, $chain);
-    expect($result->releaseId)->toStartWith('fake-release-');
+    $results = $provider->post($integration, $chain);
+    expect($results[0]->releaseId)->toStartWith('fake-release-');
 });
 
 it('throws a permanent exception on demand', function () {
@@ -66,14 +70,39 @@ it('throws a rate limit exception carrying retryAfterSeconds', function () {
 
     try {
         $provider->post($integration, [new PostPayloadDto('x')]);
-        $this->fail('expected ProviderRateLimitException');
+        test()->fail('expected ProviderRateLimitException');
     } catch (ProviderRateLimitException $e) {
         expect($e->retryAfterSeconds)->toBe(42)
             ->and($e->getMessage())->toBe('slow down');
     }
 });
 
-it('lets tests override capabilities', function () {
+it('throws a partial-failure exception carrying results for the segments that already published', function () {
+    $provider = fakeProvider()->failNextPostWithPartialFailure(2, 'third segment rejected');
+    $integration = new Integration;
+    $chain = [
+        new PostPayloadDto('root'),
+        new PostPayloadDto('reply 1'),
+        new PostPayloadDto('reply 2'),
+    ];
+
+    try {
+        $provider->post($integration, $chain);
+        test()->fail('expected ProviderPartialFailureException');
+    } catch (ProviderPartialFailureException $e) {
+        expect($e->getMessage())->toBe('third segment rejected')
+            ->and($e->published)->toHaveCount(2)
+            ->and($e->published)->toHaveKeys([0, 1])
+            ->and($e->published[0]->releaseId)->toStartWith('fake-release-')
+            ->and($e->published[1]->releaseId)->toStartWith('fake-release-')
+            ->and($e->published[0]->releaseId)->not->toBe($e->published[1]->releaseId);
+    }
+
+    // a partially-failed chain is not recorded as a fully published chain
+    expect($provider->publishedChains())->toBe([]);
+});
+
+it('lets tests override capabilities, including the newly required fields', function () {
     $provider = fakeProvider();
     $custom = new ProviderCapabilities(
         maxCharacters: 280,
@@ -83,9 +112,22 @@ it('lets tests override capabilities', function () {
         supportsScheduling: false,
         allowedMimeTypes: [],
         maxFileSizeBytes: 0,
+        allowsMixedMedia: false,
+        maxThreadLength: 1,
+        requiresAltText: true,
     );
 
     $provider->withCapabilities($custom);
 
-    expect($provider->capabilities())->toBe($custom);
+    expect($provider->capabilities())->toBe($custom)
+        ->and($provider->capabilities()->requiresAltText)->toBeTrue()
+        ->and($provider->capabilities()->maxThreadLength)->toBe(1);
+});
+
+it('defaults requiresAltText to false when not specified', function () {
+    $capabilities = fakeProvider()->capabilities();
+
+    expect($capabilities->requiresAltText)->toBeFalse()
+        ->and($capabilities->allowsMixedMedia)->toBeTrue()
+        ->and($capabilities->maxThreadLength)->toBeNull();
 });

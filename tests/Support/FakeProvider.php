@@ -10,23 +10,26 @@ use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
 use App\Social\Exceptions\ProviderAuthException;
+use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * A real, honest SocialProviderInterface implementation registered
- * under the 'fake' identifier — testing environment only (see
- * config/social.php). Implements the interface directly (not by
+ * under the 'fake' identifier — testing environment only, wired in
+ * Tests\TestCase::setUp() (never in config/social.php, which stays
+ * production-clean). Implements the interface directly (not by
  * extending a real provider) so any contract change breaks this loudly,
  * which is the point.
  *
  * Deliberately stateful and controllable: Task 30 (publishing pipeline)
  * and Task 37 drive every failure path — transient, permanent, auth,
- * rate-limit — through this class instead of mocking HTTP calls for a
- * real network. Configure it, then call the interface methods; nothing
- * here does real I/O.
+ * rate-limit, partial-failure — through this class instead of mocking
+ * HTTP calls for a real network. Configure it, then call the interface
+ * methods; nothing here does real I/O.
  *
  * Usage:
  *   $provider = app(ProviderRegistry::class)->get('fake');
@@ -38,11 +41,14 @@ class FakeProvider implements SocialProviderInterface
     private ProviderCapabilities $capabilities;
 
     /** Exception to throw on the next call, then clear. Null = succeed. */
-    private ?\Throwable $nextPostException = null;
+    private ?Throwable $nextPostException = null;
 
-    private ?\Throwable $nextAuthenticateException = null;
+    private ?Throwable $nextAuthenticateException = null;
 
-    /** @var list<PostPayloadDto[]> every chain ever passed to post(), in call order */
+    /** @var array{succeedCount: int, message: string}|null */
+    private ?array $nextPartialFailure = null;
+
+    /** @var list<PostPayloadDto[]> every chain fully published by post(), in call order */
     private array $publishedChains = [];
 
     public function __construct()
@@ -55,6 +61,8 @@ class FakeProvider implements SocialProviderInterface
             supportsScheduling: false,
             allowedMimeTypes: ['image/jpeg', 'image/png', 'video/mp4'],
             maxFileSizeBytes: 50 * 1024 * 1024,
+            allowsMixedMedia: true,
+            maxThreadLength: null,
         );
     }
 
@@ -96,7 +104,7 @@ class FakeProvider implements SocialProviderInterface
      * Queue an exception for the next authenticate() call. Cleared
      * after it fires once, mirroring failNextPostWith().
      */
-    public function failNextAuthenticateWith(\Throwable $exception): self
+    public function failNextAuthenticateWith(Throwable $exception): self
     {
         $this->nextAuthenticateException = $exception;
 
@@ -131,8 +139,11 @@ class FakeProvider implements SocialProviderInterface
      * Typical use: new ProviderTransientException(...),
      * new ProviderPermanentException(...), new ProviderAuthException(...),
      * or new ProviderRateLimitException($message, $retryAfterSeconds).
+     * For a partial-thread failure, use failNextPostWithPartialFailure()
+     * instead — it needs to know how many chain segments to simulate as
+     * having already succeeded.
      */
-    public function failNextPostWith(\Throwable $exception): self
+    public function failNextPostWith(Throwable $exception): self
     {
         $this->nextPostException = $exception;
 
@@ -160,7 +171,25 @@ class FakeProvider implements SocialProviderInterface
         return $this->failNextPostWith(new ProviderRateLimitException($message, $retryAfterSeconds));
     }
 
-    public function post(Integration $integration, array $chain): PostResultDto
+    /**
+     * Queue a partial-thread failure for the next post() call: the
+     * first $succeedCount elements of the chain passed to post() are
+     * treated as having published successfully (each gets a real
+     * PostResultDto), then a ProviderPartialFailureException is thrown
+     * carrying those results. Cleared after it fires once.
+     */
+    public function failNextPostWithPartialFailure(int $succeedCount, string $message = 'fake partial failure'): self
+    {
+        $this->nextPartialFailure = ['succeedCount' => $succeedCount, 'message' => $message];
+
+        return $this;
+    }
+
+    /**
+     * @param  PostPayloadDto[]  $chain
+     * @return array<int, PostResultDto>
+     */
+    public function post(Integration $integration, array $chain): array
     {
         if ($this->nextPostException !== null) {
             $exception = $this->nextPostException;
@@ -168,8 +197,30 @@ class FakeProvider implements SocialProviderInterface
             throw $exception;
         }
 
+        if ($this->nextPartialFailure !== null) {
+            $config = $this->nextPartialFailure;
+            $this->nextPartialFailure = null;
+
+            $published = [];
+            foreach (array_slice($chain, 0, $config['succeedCount'], preserve_keys: true) as $index => $payload) {
+                $published[$index] = $this->fakeResult();
+            }
+
+            throw new ProviderPartialFailureException($config['message'], $published);
+        }
+
+        $results = [];
+        foreach ($chain as $index => $payload) {
+            $results[$index] = $this->fakeResult();
+        }
+
         $this->publishedChains[] = $chain;
 
+        return $results;
+    }
+
+    private function fakeResult(): PostResultDto
+    {
         $releaseId = 'fake-release-'.Str::ulid();
 
         return new PostResultDto(
@@ -179,9 +230,14 @@ class FakeProvider implements SocialProviderInterface
     }
 
     /**
-     * @return list<PostPayloadDto[]> every chain successfully published
-     *                                so far, in call order — lets a test
-     *                                assert on what was actually sent.
+     * @return list<PostPayloadDto[]> every chain fully published so far,
+     *                                in call order — lets a test assert
+     *                                on what was actually sent. Chains
+     *                                that ended in
+     *                                ProviderPartialFailureException are
+     *                                NOT recorded here; inspect the
+     *                                exception's $published property for
+     *                                those instead.
      */
     public function publishedChains(): array
     {
@@ -193,6 +249,7 @@ class FakeProvider implements SocialProviderInterface
     {
         $this->nextPostException = null;
         $this->nextAuthenticateException = null;
+        $this->nextPartialFailure = null;
         $this->publishedChains = [];
 
         return $this;

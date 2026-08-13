@@ -12,8 +12,13 @@ use Throwable;
  * backoff — before retrying, honouring whatever the network itself
  * communicated (e.g. a Retry-After header or a rate-limit response
  * field).
+ *
+ * If some leading segments of the chain passed to post() already
+ * published successfully before the rate limit was hit, throw
+ * ProviderPartialFailureException instead — those segments must be
+ * persisted, not silently lost by failing the whole post.
  */
-class ProviderRateLimitException extends RuntimeException
+class ProviderRateLimitException extends RuntimeException implements ProviderException
 {
     public function __construct(
         string $message,
