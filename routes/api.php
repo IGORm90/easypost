@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CalendarController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\ImpersonationController;
 use App\Http\Controllers\Api\IntegrationController;
@@ -10,6 +11,7 @@ use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\PostController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\TagController;
 use Illuminate\Support\Facades\Route;
 
 // GET /api/auth/oauth/{driver}/{redirect,callback} are deliberately *not*
@@ -146,9 +148,34 @@ Route::middleware('auth:sanctum')->group(function () {
  */
 Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(function () {
     Route::post('/', [PostController::class, 'store']);
+    // 'find-slot' (a literal path segment) is registered before
+    // '{group}' (a wildcard) deliberately — same reason
+    // admin/impersonate/stop precedes admin/impersonate/{user} above:
+    // Laravel matches route registration order, so the wildcard would
+    // otherwise swallow GET /api/posts/find-slot as $group = 'find-slot'
+    // and 404 on the findOrFail() lookup, never reaching findSlot() at
+    // all.
+    Route::get('find-slot', [PostController::class, 'findSlot']);
     Route::get('{group}', [PostController::class, 'show']);
     Route::put('{group}', [PostController::class, 'update']);
     Route::delete('{group}', [PostController::class, 'destroy']);
     Route::post('{group}/duplicate', [PostController::class, 'duplicate']);
     Route::patch('{group}/date', [PostController::class, 'updateDate']);
+});
+
+/*
+ * Calendar and tags (Task 21). Same auth/organization bar as post group
+ * CRUD above — plain membership, no `role:` requirement: browsing the
+ * calendar and managing tags is everyday content work, not an
+ * administrative action.
+ */
+Route::middleware(['auth:sanctum', 'organization'])->group(function () {
+    Route::get('calendar', [CalendarController::class, 'index']);
+
+    Route::prefix('tags')->group(function () {
+        Route::get('/', [TagController::class, 'index']);
+        Route::post('/', [TagController::class, 'store']);
+        Route::put('{tag}', [TagController::class, 'update']);
+        Route::delete('{tag}', [TagController::class, 'destroy']);
+    });
 });

@@ -3,12 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\FindSlotRequest;
 use App\Http\Requests\StorePostRequest;
 use App\Http\Requests\UpdatePostDateRequest;
 use App\Http\Requests\UpdatePostRequest;
 use App\Http\Resources\PostGroupResource;
 use App\Models\PostGroup;
 use App\Services\Posts\PostGroupService;
+use App\Services\Posts\SlotFinderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Gate;
@@ -34,7 +36,20 @@ class PostController extends Controller
 {
     public function __construct(
         private readonly PostGroupService $groups,
+        private readonly SlotFinderService $slotFinder,
     ) {}
+
+    /**
+     * GET /api/posts/find-slot — Task 21. Registered ahead of the
+     * `{group}` wildcard route (see routes/api.php) so "find-slot" is
+     * never swallowed as a group id.
+     */
+    public function findSlot(FindSlotRequest $request): JsonResponse
+    {
+        $publishDate = $this->slotFinder->findNextFreeSlot($request->string('integration_id')->toString());
+
+        return response()->json(['publish_date' => $publishDate]);
+    }
 
     public function store(StorePostRequest $request): JsonResponse
     {
