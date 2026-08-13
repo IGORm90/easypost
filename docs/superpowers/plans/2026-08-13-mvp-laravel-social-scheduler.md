@@ -769,7 +769,9 @@ interface SocialProviderInterface
     public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;
     public function authenticate(array $params, string $redirectUri): AuthResultDto;
     /**
-     * @param  PostPayloadDto[] $chain  тред: первый элемент — корень
+     * @param  PostPayloadDto[] $chain  тред ЛИНЕЙНЫЙ: первый элемент — корень,
+     *                                  каждый следующий отвечает на ПРЕДЫДУЩИЙ, а не на корень
+     *                                  (в БД: posts.parent_post_id указывает на предыдущий сегмент)
      * @return array<int, PostResultDto>  по одному результату на элемент цепочки, ключ = индекс в $chain
      */
     public function post(Integration $integration, array $chain): array;
