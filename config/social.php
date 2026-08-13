@@ -1,5 +1,8 @@
 <?php
 
+use App\Social\Providers\MastodonProvider;
+use App\Social\Providers\TelegramProvider;
+
 return [
 
     /*
@@ -22,8 +25,9 @@ return [
     |
     */
     'providers' => [
-        // Real providers land here in Tasks 14-15, e.g.:
-        // 'telegram' => App\Social\Providers\Telegram\TelegramProvider::class,
+        'telegram' => TelegramProvider::class,
+        'mastodon' => MastodonProvider::class,
+        // Remaining providers (Bluesky, Discord, Slack) land here in Task 15.
     ],
 
 ];

@@ -46,7 +46,10 @@ class NoOptionsFakeProvider implements SocialProviderInterface
         );
     }
 
-    public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto
+    /**
+     * @param  array<string, mixed>  $params
+     */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto
     {
         return new AuthUrlDto(url: "https://fake-no-options.test/authorize?state={$state}");
     }

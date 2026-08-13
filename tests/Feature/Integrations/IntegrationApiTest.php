@@ -11,8 +11,8 @@ use Tests\Support\NoOptionsFakeProvider;
  * GET /api/integrations, POST auth-url/callback, PUT/disable/enable/DELETE
  * /api/integrations/{id}, GET /api/integrations/{id}/options/{option}).
  * Everything here runs against the 'fake' provider (Tests\Support\FakeProvider,
- * wired in Tests\TestCase::setUp()) — no real network provider exists yet
- * (Tasks 14-15).
+ * wired in Tests\TestCase::setUp()) unless otherwise noted — Task 14 is
+ * the first to register a real network provider.
  */
 
 // --- GET /api/providers -----------------------------------------------
@@ -28,6 +28,21 @@ it('lists registered providers with capabilities and auth_type', function () {
         ->and($fake['name'])->toBe('Fake')
         ->and($fake['auth_type'])->toBe('oauth')
         ->and($fake['capabilities']['maxCharacters'])->toBe(4096);
+});
+
+it('reports auth_type manual for a ManualTokenAuth provider and oauth for a standard one', function () {
+    // Deferred from Task 13: no ManualTokenAuth provider existed yet to
+    // exercise the 'manual' branch of IntegrationController::providers().
+    // Task 14's Telegram provider is the first one.
+    actingAsMember(Organization::factory()->create());
+
+    $response = $this->getJson('/api/providers');
+
+    $response->assertOk();
+    $byIdentifier = collect((array) $response->json())->keyBy('identifier');
+
+    expect($byIdentifier['telegram']['auth_type'])->toBe('manual')
+        ->and($byIdentifier['mastodon']['auth_type'])->toBe('oauth');
 });
 
 // --- GET /api/integrations ----------------------------------------------

@@ -116,7 +116,10 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions
         return $this;
     }
 
-    public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto
+    /**
+     * @param  array<string, mixed>  $params
+     */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto
     {
         return new AuthUrlDto(
             url: "https://fake.test/oauth/authorize?state={$state}&redirect_uri=".urlencode($redirectUri),

@@ -1,0 +1,409 @@
+<?php
+
+namespace App\Social\Providers;
+
+use App\Models\Integration;
+use App\Social\Contracts\SocialProviderInterface;
+use App\Social\Contracts\SupportsMedia;
+use App\Social\Dto\AuthResultDto;
+use App\Social\Dto\AuthUrlDto;
+use App\Social\Dto\MediaDto;
+use App\Social\Dto\PostPayloadDto;
+use App\Social\Dto\PostResultDto;
+use App\Social\Dto\ProviderCapabilities;
+use App\Social\Exceptions\ProviderException;
+use App\Social\Exceptions\ProviderPartialFailureException;
+use App\Social\Exceptions\ProviderPermanentException;
+use App\Social\Exceptions\ProviderTransientException;
+use Closure;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
+
+/**
+ * Mastodon adapter: standard OAuth2 (Doorkeeper, the library every
+ * Mastodon server runs) against a user-supplied instance host -- unlike
+ * Telegram, connecting a Mastodon channel means the frontend collects
+ * which server the account lives on (e.g. "mastodon.social") before any
+ * redirect can happen at all.
+ *
+ * Dynamic client registration: Mastodon has no pre-shared client_id --
+ * each instance issues its own via `POST /api/v1/apps`
+ * (https://docs.joinmastodon.org/methods/apps/#create), which must
+ * happen before an authorize URL can be built and again be available at
+ * token-exchange time. generateAuthUrl() registers (or reuses a
+ * previously registered) app per instance host, cached via Cache
+ * (keyed by host, not by the CSRF `state` -- app registration is
+ * instance-wide, not per-connect-attempt) so repeat connects to the same
+ * instance don't re-register needlessly. This is the reason
+ * SocialProviderInterface::generateAuthUrl() grew its `$params`
+ * parameter in Task 14 -- see that interface's docblock for the fuller
+ * account of why Task 11's original two-argument signature didn't fit.
+ *
+ * Two-phase media (SupportsMedia): Mastodon's `POST /api/v2/media`
+ * returns an attachment id that a subsequent `POST /api/v1/statuses`
+ * references via `media_ids` -- exactly the flow MediaDto::$remoteId
+ * exists for. post() therefore requires every MediaDto it's given to
+ * already carry a $remoteId (i.e. uploadMedia() was called first, e.g.
+ * by Task 25's editor); it does not silently upload on the caller's
+ * behalf, since doing so would hide upload failures from composition
+ * time (uploadMedia()'s own docblock).
+ */
+class MastodonProvider implements SocialProviderInterface, SupportsMedia
+{
+    use MapsHttpErrors;
+
+    private const string APP_REGISTRATION_CACHE_PREFIX = 'mastodon_app_registration:';
+
+    private const int APP_REGISTRATION_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+    private const string SCOPES = 'read:accounts write:statuses write:media';
+
+    public function identifier(): string
+    {
+        return 'mastodon';
+    }
+
+    public function name(): string
+    {
+        return 'Mastodon';
+    }
+
+    public function capabilities(): ProviderCapabilities
+    {
+        return new ProviderCapabilities(
+            maxCharacters: 500,
+            maxImages: 4,
+            maxVideos: 1,
+            supportsThreads: true,
+            supportsScheduling: false,
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'video/mp4'],
+            maxFileSizeBytes: 40 * 1024 * 1024,
+            // A status carries either up to 4 images OR exactly 1
+            // video/gif, never both -- Mastodon's own upload limit
+            // (https://docs.joinmastodon.org/user/posting/#media).
+            allowsMixedMedia: false,
+            maxThreadLength: null,
+            requiresAltText: false,
+        );
+    }
+
+    /**
+     * Registers (or reuses) an OAuth app on the caller-supplied instance
+     * and returns the authorize URL for it. $params['instance'] is
+     * required -- there is no default host, per the brief's "user-supplied
+     * instance host" requirement -- and missing it is a caller/config bug
+     * (the frontend must always collect it before calling this), not a
+     * live-network outcome, so it throws InvalidArgumentException rather
+     * than something from the ProviderException taxonomy.
+     *
+     * @param  array<string, mixed>  $params
+     */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto
+    {
+        $host = $this->normalizeHost($params['instance'] ?? null);
+        $app = $this->registerOrReuseApp($host, $redirectUri);
+
+        $query = http_build_query([
+            'client_id' => $app['client_id'],
+            'scope' => self::SCOPES,
+            'redirect_uri' => $redirectUri,
+            'response_type' => 'code',
+            'state' => $state,
+        ]);
+
+        return new AuthUrlDto(
+            url: "https://{$host}/oauth/authorize?{$query}",
+            extra: ['instance' => $host],
+        );
+    }
+
+    /**
+     * Exchanges an authorization code for an access token and fetches
+     * the connected account's identity. $params must carry `instance`
+     * (the same host generateAuthUrl() was called with -- the frontend is
+     * responsible for round-tripping it, since callback() forwards
+     * whatever it receives untouched) and `code` (Mastodon's redirect
+     * query parameter).
+     *
+     * @param  array<string, mixed>  $params
+     */
+    public function authenticate(array $params, string $redirectUri): AuthResultDto
+    {
+        $host = $this->normalizeHost($params['instance'] ?? null);
+        $code = $params['code'] ?? null;
+
+        if (! is_string($code) || $code === '') {
+            throw new InvalidArgumentException('Mastodon requires an authorization code.');
+        }
+
+        $app = Cache::get(self::appCacheKey($host));
+
+        if (! is_array($app) || ! isset($app['client_id'], $app['client_secret'])) {
+            throw new ProviderPermanentException(
+                "No Mastodon app registration found for instance [{$host}]; the connect flow must be restarted.",
+            );
+        }
+
+        $tokenResponse = $this->send(fn (): Response => Http::asForm()->post("https://{$host}/oauth/token", [
+            'grant_type' => 'authorization_code',
+            'client_id' => $app['client_id'],
+            'client_secret' => $app['client_secret'],
+            'redirect_uri' => $redirectUri,
+            'code' => $code,
+            'scope' => self::SCOPES,
+        ]));
+
+        if (! $tokenResponse->successful()) {
+            throw $this->errorFor($tokenResponse, 'exchanging the authorization code');
+        }
+
+        $accessToken = $tokenResponse->json('access_token');
+
+        if (! is_string($accessToken) || $accessToken === '') {
+            throw new ProviderPermanentException('Mastodon token exchange did not return an access_token.');
+        }
+
+        $accountResponse = $this->send(fn (): Response => Http::withToken($accessToken)
+            ->get("https://{$host}/api/v1/accounts/verify_credentials"));
+
+        if (! $accountResponse->successful()) {
+            throw $this->errorFor($accountResponse, 'verifying the connected account');
+        }
+
+        /** @var array<string, mixed> $account */
+        $account = (array) $accountResponse->json();
+
+        return new AuthResultDto(
+            internalId: (string) $account['id'],
+            name: (string) ($account['display_name'] ?: $account['username']),
+            token: $accessToken,
+            picture: is_string($account['avatar_static'] ?? null) ? $account['avatar_static'] : null,
+            settings: ['instance' => $host],
+        );
+    }
+
+    public function uploadMedia(Integration $integration, MediaDto $media): MediaDto
+    {
+        $host = $this->hostFor($integration);
+        $token = (string) $integration->token;
+
+        $body = $this->call(
+            fn (): Response => Http::withToken($token)
+                ->attach('file', (string) file_get_contents($media->path), basename($media->path))
+                ->post("https://{$host}/api/v2/media", array_filter([
+                    'description' => $media->altText,
+                ], static fn (mixed $value): bool => $value !== null)),
+            'uploading media',
+        );
+
+        $id = $body['id'] ?? null;
+
+        if (! is_string($id) && ! is_int($id)) {
+            throw new ProviderPermanentException('Mastodon media upload did not return an id.');
+        }
+
+        return $media->withRemoteId((string) $id);
+    }
+
+    /**
+     * @param  PostPayloadDto[]  $chain
+     * @return array<int, PostResultDto>
+     */
+    public function post(Integration $integration, array $chain): array
+    {
+        $host = $this->hostFor($integration);
+        $token = (string) $integration->token;
+
+        $results = [];
+        $previousStatusId = null;
+
+        foreach ($chain as $index => $payload) {
+            $replyTo = $index === 0 ? $payload->replyToReleaseId : $previousStatusId;
+
+            try {
+                $result = $this->publishSegment($host, $token, $payload, $replyTo);
+            } catch (ProviderException $e) {
+                if ($results !== []) {
+                    throw new ProviderPartialFailureException($e->getMessage(), $results, $e);
+                }
+
+                throw $e;
+            }
+
+            $results[$index] = $result;
+            $previousStatusId = $result->releaseId;
+        }
+
+        return $results;
+    }
+
+    private function publishSegment(string $host, string $token, PostPayloadDto $payload, ?string $replyTo): PostResultDto
+    {
+        $mediaIds = [];
+
+        foreach ($payload->media as $media) {
+            if ($media->remoteId === null) {
+                throw new ProviderPermanentException(
+                    'Media must be uploaded via uploadMedia() (SupportsMedia) before publishing to Mastodon.',
+                );
+            }
+
+            $mediaIds[] = $media->remoteId;
+        }
+
+        $body = $this->call(
+            fn (): Response => Http::withToken($token)->asForm()->post("https://{$host}/api/v1/statuses", array_filter([
+                'status' => $payload->content,
+                'media_ids' => $mediaIds !== [] ? $mediaIds : null,
+                'in_reply_to_id' => $replyTo,
+                'visibility' => 'public',
+            ], static fn (mixed $value): bool => $value !== null)),
+            'publishing a status',
+        );
+
+        $id = $body['id'] ?? null;
+
+        if (! is_string($id) && ! is_int($id)) {
+            throw new ProviderPermanentException('Mastodon status response did not include an id.');
+        }
+
+        return new PostResultDto(
+            releaseId: (string) $id,
+            releaseUrl: is_string($body['url'] ?? null) ? $body['url'] : null,
+        );
+    }
+
+    /**
+     * Registers a new OAuth app on $host, or returns the previously
+     * registered one from cache. Cached per-host (not per-connect-attempt)
+     * since Mastodon app registration is a property of the instance, not
+     * of any one user's connect flow -- reusing it avoids leaving behind
+     * a fresh "application" entry in the instance's authorized-apps list
+     * every time someone in this app connects the same server.
+     *
+     * @return array{client_id: string, client_secret: string}
+     */
+    private function registerOrReuseApp(string $host, string $redirectUri): array
+    {
+        $cacheKey = self::appCacheKey($host);
+        $cached = Cache::get($cacheKey);
+
+        if (is_array($cached) && isset($cached['client_id'], $cached['client_secret'])) {
+            /** @var array{client_id: string, client_secret: string} $cached */
+            return $cached;
+        }
+
+        $body = $this->call(
+            fn (): Response => Http::asForm()->post("https://{$host}/api/v1/apps", [
+                'client_name' => (string) config('app.name', 'EasyPost Scheduler'),
+                'redirect_uris' => $redirectUri,
+                'scopes' => self::SCOPES,
+                'website' => (string) config('app.url'),
+            ]),
+            'registering the OAuth application',
+        );
+
+        $clientId = $body['client_id'] ?? null;
+        $clientSecret = $body['client_secret'] ?? null;
+
+        if (! is_string($clientId) || $clientId === '' || ! is_string($clientSecret) || $clientSecret === '') {
+            throw new ProviderPermanentException("Mastodon instance [{$host}] did not return app credentials.");
+        }
+
+        $app = ['client_id' => $clientId, 'client_secret' => $clientSecret];
+        Cache::put($cacheKey, $app, self::APP_REGISTRATION_TTL_SECONDS);
+
+        return $app;
+    }
+
+    private function hostFor(Integration $integration): string
+    {
+        $host = $integration->settings['instance'] ?? null;
+
+        if (! is_string($host) || $host === '') {
+            throw new ProviderPermanentException('This Mastodon channel has no instance host recorded in its settings.');
+        }
+
+        return $host;
+    }
+
+    private function normalizeHost(mixed $instance): string
+    {
+        if (! is_string($instance) || $instance === '') {
+            throw new InvalidArgumentException('Mastodon requires an instance host (params[instance]).');
+        }
+
+        $host = preg_replace('#^https?://#i', '', trim($instance));
+        $host = rtrim((string) $host, '/');
+
+        if ($host === '' || str_contains($host, '/') || ! preg_match('/^[a-z0-9.-]+$/i', $host)) {
+            throw new InvalidArgumentException("Mastodon instance host [{$instance}] is not a valid hostname.");
+        }
+
+        return $host;
+    }
+
+    /**
+     * Runs one Mastodon API call, translating both an unsuccessful HTTP
+     * response and a network-level failure into the App\Social\Exceptions
+     * taxonomy, and returns the decoded JSON body.
+     *
+     * @return array<string, mixed>
+     */
+    private function call(Closure $call, string $context): array
+    {
+        $response = $this->send($call);
+
+        if (! $response->successful()) {
+            throw $this->errorFor($response, $context);
+        }
+
+        /** @var array<string, mixed> */
+        return (array) $response->json();
+    }
+
+    private function send(Closure $call): Response
+    {
+        try {
+            /** @var Response $response */
+            $response = $call();
+        } catch (ConnectionException $e) {
+            throw new ProviderTransientException('Network error while calling the Mastodon API.', 0, $e);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Mastodon reports errors via plain HTTP status codes and (for 429)
+     * a standard `Retry-After` header -- unlike Telegram, there is no
+     * provider-specific body envelope to parse for the mapping itself,
+     * so this leans almost entirely on the shared table in
+     * MapsHttpErrors. What's still provider-specific: reading the
+     * `Retry-After` header and the `error`/`error_description` body
+     * fields Mastodon actually uses for its message text.
+     */
+    private function errorFor(Response $response, string $context): ProviderException
+    {
+        $body = $response->json();
+        $message = is_array($body)
+            ? (string) ($body['error_description'] ?? $body['error'] ?? 'unknown error')
+            : 'unknown error';
+
+        $retryAfter = (int) $response->header('Retry-After');
+
+        return $this->exceptionForStatus(
+            $response->status(),
+            "Mastodon API error while {$context} ({$response->status()}): {$message}",
+            $retryAfter,
+        );
+    }
+
+    private static function appCacheKey(string $host): string
+    {
+        return self::APP_REGISTRATION_CACHE_PREFIX.$host;
+    }
+}

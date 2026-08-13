@@ -20,6 +20,7 @@ use App\Social\Exceptions\UnknownProviderOptionException;
 use App\Social\ProviderRegistry;
 use App\Support\OrganizationContext;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Gate;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -76,12 +77,22 @@ class IntegrationController extends Controller
      * browser. `role:ADMIN` (route middleware) gates this, not a check
      * here — starting a connect flow carries the same authorization bar
      * as completing one (IntegrationPolicy::manage()).
+     *
+     * Everything the caller sent beyond the implicit state/redirect
+     * (query string or JSON body -- `$request->all()` merges both) is
+     * forwarded verbatim to `generateAuthUrl()`'s `$params` (Task 14):
+     * e.g. Mastodon needs the user-chosen instance host before it can
+     * build an authorize URL at all. This controller has no idea what
+     * shape that data takes for any given provider (same rule as
+     * `callback()` passing `$request->except('state')` through to
+     * `authenticate()` below) -- it only knows how to hand the request
+     * through generically.
      */
-    public function authUrl(string $provider): JsonResponse
+    public function authUrl(Request $request, string $provider): JsonResponse
     {
         $providerInstance = $this->resolveProvider($provider);
         $state = $this->states->generate($this->currentOrganization(), $this->currentUser());
-        $authUrl = $providerInstance->generateAuthUrl($state, $this->redirectUri());
+        $authUrl = $providerInstance->generateAuthUrl($state, $this->redirectUri(), $request->all());
 
         return response()->json(['url' => $authUrl->url, 'state' => $state]);
     }

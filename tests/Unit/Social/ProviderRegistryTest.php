@@ -2,6 +2,7 @@
 
 use App\Social\Exceptions\UnknownProviderException;
 use App\Social\ProviderRegistry;
+use App\Social\Providers\TelegramProvider;
 use Tests\Support\FakeProvider;
 
 it('resolves a registered provider by identifier', function () {
@@ -9,6 +10,15 @@ it('resolves a registered provider by identifier', function () {
 
     expect($provider)->toBeInstanceOf(FakeProvider::class)
         ->and($provider->identifier())->toBe('fake');
+});
+
+it('resolves the real telegram provider by identifier', function () {
+    // Deferred from Task 11's original registry test: no real provider
+    // existed yet then. Task 14 is the first to register one.
+    $provider = app(ProviderRegistry::class)->get('telegram');
+
+    expect($provider)->toBeInstanceOf(TelegramProvider::class)
+        ->and($provider->identifier())->toBe('telegram');
 });
 
 it('lists every registered provider keyed by identifier', function () {

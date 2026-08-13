@@ -45,8 +45,24 @@ interface SocialProviderInterface
      * caller-generated CSRF token the provider must round-trip
      * unmodified (either via the OAuth `state` parameter or equivalent)
      * so the callback can be verified.
+     *
+     * $params carries whatever the frontend supplied on
+     * `POST /api/integrations/{provider}/auth-url` beyond the implicit
+     * state/redirect — e.g. Mastodon's user-chosen instance host, which
+     * must be known before an authorize URL (and, for Mastodon
+     * specifically, a per-instance OAuth app registration) can be built
+     * at all. Added in Task 14 once a real provider needed it: Task 11's
+     * original two-argument signature had no channel for this, and
+     * bending Mastodon around that gap (e.g. smuggling the host through
+     * $state) would have been worse than widening the contract. Optional
+     * and empty by default so providers with nothing to configure ahead
+     * of the redirect (every provider before Task 14, ManualTokenAuth
+     * providers like Telegram) are unaffected. Providers that need a key
+     * $params doesn't have MUST throw rather than guess.
+     *
+     * @param  array<string, mixed>  $params
      */
-    public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto;
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;
 
     /**
      * Complete an authorization flow started by generateAuthUrl() and

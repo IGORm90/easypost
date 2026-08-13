@@ -1,0 +1,44 @@
+{
+    "ok": true,
+    "result": [
+        {
+            "message_id": 45,
+            "chat": {
+                "id": -1001234567890,
+                "title": "My Announcements Channel",
+                "type": "channel"
+            },
+            "date": 1755000180,
+            "media_group_id": "13887911710000000",
+            "photo": [
+                {
+                    "file_id": "AgACAgIAAxkBAAIBZGSzQiJocgABy2G",
+                    "file_unique_id": "AQADvbExGwABBQAD",
+                    "file_size": 25321,
+                    "width": 800,
+                    "height": 800
+                }
+            ],
+            "caption": "gallery"
+        },
+        {
+            "message_id": 46,
+            "chat": {
+                "id": -1001234567890,
+                "title": "My Announcements Channel",
+                "type": "channel"
+            },
+            "date": 1755000180,
+            "media_group_id": "13887911710000000",
+            "photo": [
+                {
+                    "file_id": "AgACAgIAAxkBAAIBZWSzQiJocgABy2H",
+                    "file_unique_id": "AQADvbExGwABBQAE",
+                    "file_size": 27890,
+                    "width": 800,
+                    "height": 800
+                }
+            ]
+        }
+    ]
+}

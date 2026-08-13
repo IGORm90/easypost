@@ -1,0 +1,29 @@
+{
+    "ok": true,
+    "result": {
+        "message_id": 44,
+        "chat": {
+            "id": -1001234567890,
+            "title": "My Announcements Channel",
+            "type": "channel"
+        },
+        "date": 1755000120,
+        "photo": [
+            {
+                "file_id": "AgACAgIAAxkBAAIBY2SzQhMocgABy2E",
+                "file_unique_id": "AQADvbExGwABBQAB",
+                "file_size": 1256,
+                "width": 90,
+                "height": 90
+            },
+            {
+                "file_id": "AgACAgIAAxkBAAIBY2SzQhMocgABy2F",
+                "file_unique_id": "AQADvbExGwABBQAC",
+                "file_size": 25321,
+                "width": 800,
+                "height": 800
+            }
+        ],
+        "caption": "hello with photo"
+    }
+}

@@ -1,0 +1,6 @@
+{
+    "access_token": "ZAgtwqUvErw8ZgAcffQhL3-XSRRRWEmVEqnwbtu8v2A",
+    "token_type": "Bearer",
+    "scope": "write:media write:statuses read:accounts",
+    "created_at": 1755000000
+}
