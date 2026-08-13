@@ -8,6 +8,7 @@ use App\Services\Posts\PostValidationService;
 use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Support\OrganizationContext;
+use Closure;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
@@ -100,25 +101,41 @@ trait ValidatesPostChains
             // input here, which is also what makes this class's own
             // `@param list<string>` annotations on attachMedia() and
             // friends actually true rather than merely hoped for.
-            'posts.*.value.*.media_ids' => ['sometimes', 'array', 'list'],
+            // Review round 2 (Important, regression the coordinator
+            // introduced and owned): Laravel's built-in 'distinct' rule
+            // does NOT scope to the nearest array — extractDistinctValues()
+            // works from getLeadingExplicitAttributePath(), which for
+            // `posts.*.value.*.media_ids.*` is `posts` (the very first
+            // segment, before any wildcard), not `media_ids`. That made
+            // `distinct` compare EVERY media_ids.* value across the WHOLE
+            // request, so the same image reused across two segments of a
+            // thread, or across two different channels in one request —
+            // the entire reason a shared media library exists — 422'd
+            // even though `media_post` is unique per (media_id, post_id)
+            // and two distinct Post rows collide on nothing.
+            // `posts.*.integration_id`'s own `distinct` above only
+            // happened to work because it has a single wildcard, so its
+            // leading path coincidentally equals the intended scope.
+            // Fixed with a plain Closure rule instead: Laravel invokes it
+            // once per concrete `posts.{i}.value.{j}.media_ids` path, so
+            // $value is genuinely just that one segment's own array —
+            // exactly the "duplicate within one segment" check the
+            // original Minor 2 finding asked for, with no
+            // cross-request/cross-segment/cross-channel bleed.
+            'posts.*.value.*.media_ids' => ['sometimes', 'array', 'list', function (string $attribute, mixed $value, Closure $fail): void {
+                if (! is_array($value)) {
+                    return;
+                }
+
+                if (count($value) !== count(array_unique($value))) {
+                    $fail('The :attribute field has a duplicate value.');
+                }
+            }],
             // ulid shape + existence/ownership, both enforced here — see
-            // this trait's docblock ("media_ids"). 'distinct' (review
-            // Minor 2): without it, `[A, B, A]` was silently rewritten to
-            // `[B, A]` by attachMedia()'s id-keyed pivot array (a
-            // media_post row can only exist once per (media_id, post_id)
-            // pair regardless), quietly discarding the client's stated
-            // order/intent instead of rejecting the malformed input.
-            // Ordering is content — see Post::media()'s docblock — so a
-            // request that can't state a coherent order must fail
-            // loudly, not have one guessed. Applied on the `.*` element
-            // (not the parent array) per Laravel's own convention for
-            // per-array-instance distinctness on a nested wildcard field
-            // — same placement `posts.*.integration_id`'s `distinct`
-            // uses above, one level up.
+            // this trait's docblock ("media_ids").
             'posts.*.value.*.media_ids.*' => [
                 'string',
                 'ulid',
-                'distinct',
                 Rule::exists('media', 'id')->where('organization_id', OrganizationContext::id()),
             ],
         ];

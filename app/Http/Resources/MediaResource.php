@@ -16,6 +16,15 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * a stable API contract, and Storage::disk()->url() is the only thing
  * that knows how to turn it into something actually fetchable (a fake
  * local path in tests, a real S3/MinIO URL otherwise).
+ *
+ * `width`/`height` (Task 28 review): read straight off `Media`'s own
+ * columns, captured once at upload/import time by
+ * MediaUploadService::extractDimensions() — never derived here. `GET
+ * /api/media` (this resource) is what Task 29's picker/gallery lists
+ * from, so these need to be here, not only on `PostResource`'s
+ * already-attached-media shape — a grid needs dimensions to reserve
+ * layout space before an image loads. Null for video and any image
+ * `getimagesize()` couldn't parse, same as `thumbnail_url`.
  */
 class MediaResource extends JsonResource
 {
@@ -28,6 +37,8 @@ class MediaResource extends JsonResource
             'id' => $this->id,
             'mime' => $this->mime_type,
             'size_bytes' => $this->size_bytes,
+            'width' => $this->width,
+            'height' => $this->height,
             'original_filename' => $this->original_filename,
             'url' => $this->url(),
             'thumbnail_url' => $this->thumbnailUrl(),

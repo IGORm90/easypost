@@ -117,11 +117,51 @@ it('captures width and height from the uploaded image', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
 
-    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 800, 600)])
+    $response = $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 800, 600)])
         ->assertCreated();
+
+    // Round-trip fix (also fix): MediaResource -- what GET /api/media
+    // (Task 29's picker/gallery) lists from -- must expose these too,
+    // not only PostResource's already-attached-media shape.
+    $response->assertJsonPath('data.width', 800);
+    $response->assertJsonPath('data.height', 600);
 
     $media = Media::sole();
     expect($media->width)->toBe(800)->and($media->height)->toBe(600);
+
+    $index = $this->getJson('/api/media')->assertOk();
+    expect($index->json('data.0.width'))->toBe(800);
+    expect($index->json('data.0.height'))->toBe(600);
+});
+
+it('leaves width and height null on both GET /api/media and the upload response for an unparseable image', function () {
+    // Pins the null-dimension path end to end: MediaFactory always sets
+    // real dimensions, so nothing previously exercised a null value
+    // flowing through either resource. Simulates getimagesize() failing
+    // on a file that still sniffs as an allowed image mime (truncated/
+    // corrupt data) -- MediaUploadService::extractDimensions() must
+    // degrade to null/null rather than fail the whole upload.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    // A single JPEG SOI marker followed by garbage: finfo's magic-byte
+    // sniff (which only looks at the header) reports image/jpeg, but
+    // GD's getimagesize() cannot parse a real image out of it.
+    $bytes = "\xFF\xD8\xFF\xE0".str_repeat("\x00", 64);
+    $file = UploadedFile::fake()->createWithContent('broken.jpg', $bytes);
+
+    $response = $this->postJson('/api/media', ['file' => $file])->assertCreated();
+    $response->assertJsonPath('data.mime', 'image/jpeg');
+    $response->assertJsonPath('data.width', null);
+    $response->assertJsonPath('data.height', null);
+
+    $media = Media::sole();
+    expect($media->width)->toBeNull()->and($media->height)->toBeNull();
+
+    $index = $this->getJson('/api/media')->assertOk();
+    expect($index->json('data.0.width'))->toBeNull();
+    expect($index->json('data.0.height'))->toBeNull();
 });
 
 it('leaves width and height null for an mp4 video', function () {

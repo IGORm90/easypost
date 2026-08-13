@@ -58,6 +58,30 @@ it('persists media_ids to media_post with order preserved and reads it back in o
     expect($firstMedia['height'])->toBe($media[2]->height);
 });
 
+it('passes through null width/height in PostResource for a media row with no captured dimensions', function () {
+    // Pins the null-dimension path through PostResource specifically:
+    // MediaFactory always sets real dimensions, so nothing else in this
+    // suite exercises a genuinely-null value here (e.g. a video, or an
+    // image getimagesize() couldn't parse at upload time).
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $media = Media::factory()->for($org)->create(['width' => null, 'height' => null]);
+
+    $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => [$media->id]]]],
+        ],
+    ])->assertCreated();
+
+    $group = PostGroup::sole();
+    $show = $this->getJson("/api/posts/{$group->id}")->assertOk();
+
+    $show->assertJsonPath('posts.0.value.0.media.0.width', null);
+    $show->assertJsonPath('posts.0.value.0.media.0.height', null);
+});
+
 it('rejects an object-shaped media_ids instead of 500ing on a non-integer pivot order', function () {
     // Review Finding 1: {"a": "<ulid>"} used to pass the old 'array'-only
     // rule, reach PostGroupService::attachMedia() with the string key
@@ -99,11 +123,67 @@ it('rejects duplicate media ids within one segment instead of silently reorderin
     ]);
 
     $response->assertStatus(422);
-    // 'distinct' is applied per-element (see ValidatesPostChains'
-    // docblock), so the error lands on the offending indices, not the
-    // parent array field.
-    $response->assertJsonValidationErrors(['posts.0.value.0.media_ids.0', 'posts.0.value.0.media_ids.2']);
+    // The duplicate check is a Closure rule scoped to this one segment's
+    // own media_ids array (see ValidatesPostChains' docblock for why the
+    // built-in 'distinct' rule can't be used here) -- the error lands on
+    // the array field itself.
+    $response->assertJsonValidationErrors(['posts.0.value.0.media_ids']);
     expect(PostGroup::count())->toBe(0);
+});
+
+it('allows the same media id reused across two segments of one thread', function () {
+    // Review round 2: the built-in 'distinct' rule's request-wide scope
+    // used to reject this -- a media_post row is unique per (media_id,
+    // post_id), so two distinct Post rows referencing the same Media
+    // collide on nothing and must be legal.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $media = Media::factory()->for($org)->create();
+
+    $response = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            [
+                'integration_id' => $integration->id,
+                'value' => [
+                    ['content' => 'root', 'media_ids' => [$media->id]],
+                    ['content' => 'reply', 'media_ids' => [$media->id]],
+                ],
+            ],
+        ],
+    ]);
+
+    $response->assertCreated();
+    $posts = Post::query()->orderBy('order')->get();
+    expect($posts)->toHaveCount(2);
+    expect($posts[0]->media()->pluck('media.id')->all())->toBe([$media->id]);
+    expect($posts[1]->media()->pluck('media.id')->all())->toBe([$media->id]);
+});
+
+it('allows the same media id reused across two different channels in one request', function () {
+    // Review round 2: this is the primary reason a shared media library
+    // exists -- posting the same image to two channels in one request.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $telegram = Integration::factory()->for($org)->create(['provider_identifier' => 'telegram']);
+    $mastodon = Integration::factory()->for($org)->create(['provider_identifier' => 'mastodon']);
+    $media = Media::factory()->for($org)->create(['mime_type' => 'image/jpeg']);
+
+    $response = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $telegram->id, 'value' => [['content' => 'A', 'media_ids' => [$media->id]]]],
+            ['integration_id' => $mastodon->id, 'value' => [['content' => 'B', 'media_ids' => [$media->id]]]],
+        ],
+    ]);
+
+    $response->assertCreated();
+    $posts = Post::query()->get();
+    expect($posts)->toHaveCount(2);
+    foreach ($posts as $post) {
+        expect($post->media()->pluck('media.id')->all())->toBe([$media->id]);
+    }
 });
 
 it('rejects a media id belonging to another organization with 422', function () {
