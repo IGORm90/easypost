@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Models\Tag;
+use Illuminate\Support\Facades\Queue;
 
 /*
  * Task 20: POST /api/posts — one post_group per request, one Post row
@@ -14,6 +15,14 @@ use App\Models\Tag;
  * scenarios plus the extra cross-tenant coverage the task calls for on
  * every mutating endpoint.
  */
+
+// Task 30: PostGroupService now dispatches PublishPostJob whenever a
+// group enters QUEUE (type=schedule/now). This suite runs on the sync
+// queue driver, which would otherwise execute the real publish pipeline
+// inline mid-test — Queue::fake() keeps these tests focused on CRUD/state
+// behaviour, exactly as before Task 30. See PublishPostJobTest for
+// coverage of the job itself.
+beforeEach(fn () => Queue::fake());
 
 it('creates one post per integration inside a single group', function () {
     $org = Organization::factory()->create();

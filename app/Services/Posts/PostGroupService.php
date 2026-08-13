@@ -3,6 +3,7 @@
 namespace App\Services\Posts;
 
 use App\Enums\PostState;
+use App\Jobs\PublishPostJob;
 use App\Models\Integration;
 use App\Models\Post;
 use App\Models\PostGroup;
@@ -81,7 +82,7 @@ class PostGroupService
      */
     public function create(array $data): PostGroup
     {
-        return DB::transaction(function () use ($data) {
+        $group = DB::transaction(function () use ($data) {
             $this->resolveIntegrations($data['posts']);
 
             $targetState = $data['type'] === 'draft' ? PostState::DRAFT : PostState::QUEUE;
@@ -103,6 +104,10 @@ class PostGroupService
 
             return $group->fresh(['posts.media', 'tags']);
         });
+
+        $this->dispatchPublishIfQueued($group);
+
+        return $group;
     }
 
     /**
@@ -110,7 +115,7 @@ class PostGroupService
      */
     public function update(PostGroup $group, array $data): PostGroup
     {
-        return DB::transaction(function () use ($group, $data) {
+        $group = DB::transaction(function () use ($group, $data) {
             $this->guardEditable($group);
             $this->resolveIntegrations($data['posts']);
 
@@ -136,6 +141,10 @@ class PostGroupService
 
             return $group->fresh(['posts.media', 'tags']);
         });
+
+        $this->dispatchPublishIfQueued($group);
+
+        return $group;
     }
 
     /**
@@ -294,6 +303,53 @@ class PostGroupService
         }
 
         return PostState::DRAFT;
+    }
+
+    /**
+     * Dispatches Task 30's `PublishPostJob` for `$group` iff it just
+     * entered `QUEUE` — a no-op for `draft`. Delayed until
+     * `$group->publish_date`: for `type=schedule` that is the future
+     * instant the user picked; for `type=now`, `resolvePublishDate()`
+     * already stamped it to (approximately) `now()`, so the delay is
+     * effectively zero.
+     *
+     * Deliberately called AFTER `create()`/`update()`'s own
+     * `DB::transaction()` has fully committed, never from inside it.
+     * Two independent reasons, both hard requirements:
+     *
+     *  - Durability: dispatching before commit risks a worker picking
+     *    the job up and querying for a group the transaction hasn't
+     *    made visible yet (real risk on the redis queue used in
+     *    production, where a worker is a separate process/connection
+     *    that only ever sees committed data).
+     *  - The sync-queue test footgun: this project's test suite runs
+     *    with `QUEUE_CONNECTION=sync`, under which `dispatch()` runs the
+     *    job SYNCHRONOUSLY, in this same call stack — and
+     *    `App\Listeners\ClearOrganizationContext` clears
+     *    `OrganizationContext` around every job boundary (Task 4). A
+     *    dispatch from inside this method's own transaction closure
+     *    would clear the tenant context out from under whatever
+     *    BelongsToOrganization-scoped work the closure still had left to
+     *    do (its own `$group->fresh(['posts.media', 'tags'])` call, for
+     *    one). Dispatching only after the closure has returned avoids
+     *    this entirely — this method has no further scoped work to do
+     *    afterwards. Every existing Post CRUD test that schedules or
+     *    publishes-now (CreatePostTest, UpdatePostTest, PostMediaTest)
+     *    now calls `Queue::fake()` for exactly this reason — a real
+     *    dispatch() on the sync driver would otherwise run
+     *    `PublishPostJob` for real, inline, in the middle of tests that
+     *    have nothing to do with publishing.
+     *    `tests/Feature/Publishing/PublishPostJobTest.php` is what
+     *    exercises the job for real, by constructing and calling it
+     *    directly rather than through dispatch().
+     */
+    private function dispatchPublishIfQueued(PostGroup $group): void
+    {
+        if ($group->state !== PostState::QUEUE) {
+            return;
+        }
+
+        PublishPostJob::dispatch($group->id)->delay($group->publish_date);
     }
 
     /**

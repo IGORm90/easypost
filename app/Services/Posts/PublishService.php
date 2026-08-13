@@ -1,0 +1,408 @@
+<?php
+
+namespace App\Services\Posts;
+
+use App\Enums\PostState;
+use App\Models\Integration;
+use App\Models\Media;
+use App\Models\Post;
+use App\Models\PostGroup;
+use App\Services\Posts\Exceptions\PublishRetryNeededException;
+use App\Social\Dto\MediaDto;
+use App\Social\Dto\PostPayloadDto;
+use App\Social\Dto\PostResultDto;
+use App\Social\Exceptions\ProviderAuthException;
+use App\Social\Exceptions\ProviderPartialFailureException;
+use App\Social\Exceptions\ProviderPermanentException;
+use App\Social\Exceptions\ProviderRateLimitException;
+use App\Social\Exceptions\ProviderTransientException;
+use App\Social\ProviderRegistry;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Collection as SupportCollection;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Owns the actual act of publishing a `PostGroup` to every channel it was
+ * scheduled to — `PublishPostJob` is a one-line wrapper around
+ * `publishGroup()` (see that class), everything that decides WHAT
+ * happens for a given provider outcome lives here.
+ *
+ * Runs with NO `OrganizationContext` set — this is a queued job, and
+ * `App\Listeners\ClearOrganizationContext` clears it around every job
+ * boundary (Task 4). Every query against a `BelongsToOrganization`
+ * model in this class therefore goes through `withoutGlobalScope('organization')`
+ * BY NAME, never the blanket `withoutGlobalScopes()` — see
+ * `TokenRefreshService::dueForRefresh()` (Task 16) for the identical,
+ * already-reviewed pattern this class copies. `Model::save()`/`fresh()`
+ * need no such treatment: both build their query via
+ * `newModelQuery()`/`newQueryWithoutScopes()`, which never apply global
+ * scopes in the first place (verified directly against the framework
+ * source, not assumed — see `BelongsToOrganization`'s docblock).
+ *
+ * ============================================================
+ * Idempotency — every path that could publish a segment twice
+ * ============================================================
+ *
+ * 1. Re-running `publishGroup()` for an already-`PUBLISHED` (or already
+ *    `ERROR`, terminal-for-this-run) group: the very first thing this
+ *    method does is take the group row `lockForUpdate()` inside a short
+ *    transaction and re-check `state === QUEUE`. Anything else exits
+ *    immediately with no further action — no provider is ever touched.
+ *    This is what makes calling `publishGroup()` twice in a row (Task
+ *    30's brief, test 2) a true no-op the second time.
+ *
+ * 2. Re-running mid-chain, per SEGMENT: `publishChannel()` below only
+ *    ever builds a payload chain out of a channel's posts that satisfy
+ *    BOTH `release_id IS NULL` AND `state === QUEUE`. A segment that
+ *    already carries a `release_id` — set the instant a provider
+ *    confirmed it went out, see `markPublished()` — is never included in
+ *    a chain sent to `post()` again, on any future run. The database
+ *    backs this up independently: `posts_release_id_immutable` (Task 18)
+ *    makes a second UPDATE that tried to touch a set `release_id`
+ *    physically fail (`Post::RELEASE_ID_IMMUTABLE_SQLSTATE`) rather than
+ *    silently overwrite it — this class simply never attempts that
+ *    UPDATE in the first place, so the trigger is defence-in-depth here,
+ *    not the primary guard.
+ *
+ * 3. Re-running mid-chain, per CHANNEL: if every post in a channel's
+ *    chain already satisfies `release_id IS NOT NULL` (or is a
+ *    terminally-failed `ERROR` segment with no `release_id` — see below),
+ *    `publishChannel()` returns immediately without calling
+ *    `ProviderRegistry::get()` or `post()` at all. A fully-published
+ *    channel costs nothing on retry.
+ *
+ * 4. Concurrent execution of the SAME group: the primary defence is
+ *    `PublishPostJob`'s `ShouldBeUnique` (keyed on the group id), which
+ *    stops a second instance of the job from ever being enqueued while
+ *    one is in flight — the same reasoning `RefreshIntegrationTokenJob`
+ *    documents for `Integration`. This class adds a second, narrower
+ *    layer on top: `publishChannel()` re-locks (`lockForUpdate()`)
+ *    exactly the post rows it is about to publish, inside the SAME
+ *    transaction that calls the provider and persists the result, so a
+ *    second caller racing for the identical channel blocks until the
+ *    first either commits (and the second then sees `release_id` already
+ *    set and skips) or rolls back (nothing was sent, safe to retry).
+ *    Deliberately scoped to one channel's pending rows, not the whole
+ *    group and not the whole run — see the next section for why holding
+ *    one lock across the ENTIRE run (all channels, one HTTP call each)
+ *    was rejected.
+ *
+ * ==========================================================
+ * Why the group-level lock is short, not held for the whole run
+ * ==========================================================
+ *
+ * The brief's contract says "take the group `lockForUpdate()` inside a
+ * transaction; if the state is not QUEUE, exit without acting". It does
+ * NOT say the entire publish run (every channel's provider HTTP call)
+ * must happen inside that same transaction, and deliberately: a
+ * transaction spanning multiple slow network calls is exactly what turns
+ * a worker crash (killed process, OOM, a deploy) mid-run into a
+ * duplicate-publish bug. If segment A's `post()` call actually reached a
+ * real Telegram channel — a message is now live — and the process dies
+ * before the wrapping transaction commits, Postgres rolls the whole
+ * transaction back: `release_id` reverts to NULL in the database while
+ * it is very much NOT null on the remote network, and the very next
+ * retry re-sends segment A, producing exactly the double-post this whole
+ * task exists to prevent. Committing per-channel (see `publishChannel()`)
+ * means a crash can only ever lose progress on the ONE channel that was
+ * in flight at the moment of the crash — not the whole group, and never
+ * a channel whose provider call already returned successfully.
+ *
+ * ==========================================
+ * Resuming a partially published chain
+ * ==========================================
+ *
+ * `ProviderPartialFailureException::$published` carries a `PostResultDto`
+ * for every leading chain index that DID make it out before the
+ * failure, keyed by the same 0-based index `publishChannel()` used when
+ * it built the payload chain (i.e. relative to the channel's PENDING
+ * segments for this call, not the channel's absolute `order`). Every
+ * index present in `$published` is persisted via `markPublished()` —
+ * `release_id`/`release_url`/`published_at` set, state moved to
+ * `PUBLISHED` — exactly as if `post()` had returned it directly; every
+ * index NOT present is left completely untouched (still `QUEUE`, no
+ * `release_id`), and this run reports the channel as needing a retry
+ * rather than marking those segments `ERROR` (the underlying reason for
+ * the failure — transient, rate-limited, or something else — is not
+ * distinguishable from a bare `ProviderPartialFailureException`, so this
+ * class treats it exactly like a plain `ProviderTransientException`: an
+ * unbounded number of retries within the job's own `$tries`, never a
+ * permanent failure invented on its own authority).
+ *
+ * On the next call to `publishGroup()` for this group (a fresh job
+ * attempt after `release()`, or a second manual call), `publishChannel()`
+ * recomputes `$pending` for this channel — now starting after the
+ * newly-published prefix — and separately looks up the LAST published
+ * segment in the whole chain by `order` (which, after a partial failure,
+ * is exactly the last one `markPublished()` touched) to use as
+ * `$anchor`. `PostPayloadDto::withReplyToReleaseId($anchor)` is applied
+ * to the resumed chain's first element ONLY — see that DTO's docblock
+ * for why a provider that cannot honour this must throw
+ * `ProviderPermanentException` rather than publish a duplicate,
+ * detached root. `PublishPostJobTest`'s resumption test proves this by
+ * asserting `FakeProvider::rootReleaseIds()` stays at exactly one entry
+ * across both calls.
+ */
+class PublishService
+{
+    public function __construct(
+        private readonly ProviderRegistry $registry,
+        private readonly PostStateMachine $stateMachine,
+    ) {}
+
+    /**
+     * @throws PublishRetryNeededException when at least one channel needs
+     *                                     to be attempted again later —
+     *                                     caught only by `PublishPostJob`.
+     */
+    public function publishGroup(string $postGroupId): void
+    {
+        $group = $this->lockGroupIfQueued($postGroupId);
+
+        if ($group === null) {
+            return;
+        }
+
+        $chains = $this->loadChains($group);
+
+        $needsRetry = false;
+        $retryAfterSeconds = null;
+
+        foreach ($chains as $integrationId => $posts) {
+            [$channelNeedsRetry, $channelRetryAfterSeconds] = $this->publishChannel(
+                (string) $integrationId,
+                $posts,
+            );
+
+            if (! $channelNeedsRetry) {
+                continue;
+            }
+
+            $needsRetry = true;
+
+            if ($channelRetryAfterSeconds !== null) {
+                $retryAfterSeconds = $retryAfterSeconds === null
+                    ? $channelRetryAfterSeconds
+                    : min($retryAfterSeconds, $channelRetryAfterSeconds);
+            }
+        }
+
+        if ($needsRetry) {
+            throw new PublishRetryNeededException($retryAfterSeconds);
+        }
+
+        $this->finalizeGroupState($group);
+    }
+
+    /**
+     * Locks and returns the group iff it is currently `QUEUE`; returns
+     * null (and does nothing else) otherwise. `withoutGlobalScope('organization')`
+     * because this runs with no `OrganizationContext` — see class
+     * docblock. Deliberately its own short transaction, not the one
+     * wrapping the whole run — see the class docblock's "why the
+     * group-level lock is short" section.
+     */
+    private function lockGroupIfQueued(string $postGroupId): ?PostGroup
+    {
+        return DB::transaction(function () use ($postGroupId): ?PostGroup {
+            /** @var PostGroup|null $group */
+            $group = PostGroup::withoutGlobalScope('organization')
+                ->whereKey($postGroupId)
+                ->lockForUpdate()
+                ->first();
+
+            if ($group === null || $group->state !== PostState::QUEUE) {
+                return null;
+            }
+
+            return $group;
+        });
+    }
+
+    /**
+     * Every `Post` belonging to $group, eager-loaded with its media,
+     * grouped by `integration_id` and ordered by `order` within each
+     * group (the query's own `orderBy` — `groupBy()` on a Collection
+     * preserves each item's original relative order within its bucket).
+     *
+     * @return SupportCollection<string, Collection<int, Post>>
+     */
+    private function loadChains(PostGroup $group): SupportCollection
+    {
+        /** @var Collection<int, Post> $posts */
+        $posts = Post::withoutGlobalScope('organization')
+            ->where('post_group_id', $group->id)
+            ->with(['media' => fn ($query) => $query->withoutGlobalScope('organization')])
+            ->orderBy('order')
+            ->get();
+
+        /** @var SupportCollection<string, Collection<int, Post>> $grouped */
+        $grouped = $posts->groupBy('integration_id');
+
+        return $grouped;
+    }
+
+    /**
+     * Publishes exactly one channel's still-pending segments, if any.
+     * Returns `[needsRetry, retryAfterSeconds]` — never throws for a
+     * provider failure, since a failing channel must never stop the
+     * group's other channels from being attempted (brief point 7).
+     *
+     * @param  Collection<int, Post>  $posts  This channel's full chain, in order (published and unpublished).
+     * @return array{0: bool, 1: ?int}
+     */
+    private function publishChannel(string $integrationId, Collection $posts): array
+    {
+        $pending = $posts
+            ->filter(fn (Post $post): bool => $post->release_id === null && $post->state === PostState::QUEUE)
+            ->values();
+
+        if ($pending->isEmpty()) {
+            // Either every segment already published, or every
+            // remaining segment already failed permanently (ERROR, no
+            // release_id) in an earlier attempt this same retry cycle —
+            // either way, nothing left for this channel to do.
+            return [false, null];
+        }
+
+        return DB::transaction(function () use ($integrationId, $posts, $pending): array {
+            // Re-lock exactly the rows about to be published, inside the
+            // SAME transaction as the provider call and its persistence
+            // — see the class docblock's idempotency section, point 4.
+            $lockedIds = Post::withoutGlobalScope('organization')
+                ->whereIn('id', $pending->pluck('id'))
+                ->whereNull('release_id')
+                ->lockForUpdate()
+                ->pluck('id');
+
+            if ($lockedIds->isEmpty()) {
+                // A concurrent run already finished this channel between
+                // this method's initial (unlocked) check and this
+                // transaction acquiring the lock.
+                return [false, null];
+            }
+
+            $pending = $pending->filter(fn (Post $post): bool => $lockedIds->contains($post->id))->values();
+
+            /** @var Integration|null $integration */
+            $integration = Integration::withoutGlobalScope('organization')->find($integrationId);
+
+            if ($integration === null) {
+                // Defensive only: posts.integration_id is a restricted-
+                // on-delete foreign key, so a live Post row referencing a
+                // gone Integration should not be reachable in practice.
+                $this->markAllError($pending, 'The connected channel no longer exists.');
+
+                return [false, null];
+            }
+
+            $provider = $this->registry->get($integration->provider_identifier);
+
+            $anchor = $posts
+                ->filter(fn (Post $post): bool => $post->release_id !== null)
+                ->sortByDesc('order')
+                ->first()
+                ?->release_id;
+
+            $chain = $this->buildChain($pending, $anchor);
+
+            try {
+                $results = $provider->post($integration, $chain);
+
+                foreach ($pending as $index => $post) {
+                    $this->markPublished($post, $results[$index]);
+                }
+
+                return [false, null];
+            } catch (ProviderPartialFailureException $e) {
+                foreach ($pending as $index => $post) {
+                    if (isset($e->published[$index])) {
+                        $this->markPublished($post, $e->published[$index]);
+                    }
+                }
+
+                // See class docblock: a partial failure carries no
+                // reason distinguishable from transient — it is retried,
+                // never marked ERROR on its own authority.
+                return [true, null];
+            } catch (ProviderRateLimitException $e) {
+                return [true, $e->retryAfterSeconds];
+            } catch (ProviderTransientException) {
+                return [true, null];
+            } catch (ProviderPermanentException $e) {
+                $this->markAllError($pending, $e->getMessage());
+
+                return [false, null];
+            } catch (ProviderAuthException $e) {
+                $integration->refresh_needed = true;
+                $integration->save();
+
+                $this->markAllError($pending, $e->getMessage());
+
+                return [false, null];
+            }
+        });
+    }
+
+    /**
+     * @param  Collection<int, Post>  $pending
+     * @return list<PostPayloadDto>
+     */
+    private function buildChain(Collection $pending, ?string $anchor): array
+    {
+        $chain = [];
+
+        foreach ($pending as $index => $post) {
+            $payload = new PostPayloadDto(
+                content: $post->content,
+                media: $post->media
+                    ->map(fn (Media $media): MediaDto => $media->toDto())
+                    ->all(),
+                settings: $post->settings ?? [],
+            );
+
+            if ($index === 0 && $anchor !== null) {
+                $payload = $payload->withReplyToReleaseId($anchor);
+            }
+
+            $chain[] = $payload;
+        }
+
+        return $chain;
+    }
+
+    private function markPublished(Post $post, PostResultDto $result): void
+    {
+        $post->release_id = $result->releaseId;
+        $post->release_url = $result->releaseUrl;
+        $post->published_at = now();
+        $this->stateMachine->transition($post, PostState::PUBLISHED);
+    }
+
+    /**
+     * @param  Collection<int, Post>  $posts
+     */
+    private function markAllError(Collection $posts, string $message): void
+    {
+        foreach ($posts as $post) {
+            $post->error = $message;
+            $this->stateMachine->transition($post, PostState::ERROR);
+        }
+    }
+
+    /**
+     * Reached only when no channel needs a retry — every post in the
+     * group has settled into either `PUBLISHED` or `ERROR` for this run.
+     * PUBLISHED iff every single one of them is; otherwise ERROR (brief
+     * point 9).
+     */
+    private function finalizeGroupState(PostGroup $group): void
+    {
+        $hasUnpublished = Post::withoutGlobalScope('organization')
+            ->where('post_group_id', $group->id)
+            ->where('state', '!=', PostState::PUBLISHED->value)
+            ->exists();
+
+        $this->stateMachine->transition($group, $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED);
+    }
+}

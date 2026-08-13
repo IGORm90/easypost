@@ -6,6 +6,7 @@ use App\Models\Media;
 use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -18,6 +19,11 @@ use Illuminate\Support\Str;
  * check) and checked against the target provider's ProviderCapabilities
  * through PostValidationService.
  */
+
+// Task 30: PostGroupService now dispatches PublishPostJob whenever a
+// group enters QUEUE (type=schedule/now) — see CreatePostTest's
+// identical note.
+beforeEach(fn () => Queue::fake());
 
 it('persists media_ids to media_post with order preserved and reads it back in order', function () {
     $org = Organization::factory()->create();

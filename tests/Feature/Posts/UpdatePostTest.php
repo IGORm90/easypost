@@ -5,6 +5,7 @@ use App\Models\Integration;
 use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
+use Illuminate\Support\Facades\Queue;
 
 /*
  * Task 20: GET/PUT/PATCH .../date on a post group. PUT is a full chain
@@ -13,6 +14,11 @@ use App\Models\PostGroup;
  * Task 18's `posts_release_id_immutable` trigger protects — see
  * Post::RELEASE_ID_IMMUTABLE_SQLSTATE).
  */
+
+// Task 30: PostGroupService now dispatches PublishPostJob whenever a
+// group enters QUEUE (type=schedule/now) — see CreatePostTest's
+// identical note.
+beforeEach(fn () => Queue::fake());
 
 function createDraftGroup(Organization $org, Integration $integration, string $content = 'original'): PostGroup
 {
