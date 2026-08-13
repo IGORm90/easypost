@@ -171,6 +171,25 @@ it('resends the verification mail to the authenticated user', function () {
     Notification::assertSentTo($user, VerifyEmailNotification::class);
 });
 
+it('sends nothing on resend for an already-verified user, but responds identically to a real resend', function () {
+    Notification::fake();
+    // Factory default: already verified (see the idempotent-verify test above).
+    $user = User::factory()->create(['password' => Hash::make('secret1234')]);
+
+    $login = $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'secret1234'])->assertOk();
+    $cookieName = config('session.cookie');
+
+    $resend = $this->withCookie($cookieName, $login->getCookie($cookieName)->getValue())
+        ->postJson('/api/auth/email/resend')
+        ->assertOk();
+
+    // Same shape as the successful-send response in the test above —
+    // account verification state isn't observable from this endpoint's
+    // response, only from its side effect (or lack of one).
+    expect($resend->json('message'))->toBe('Verification email sent.');
+    Notification::assertNothingSent();
+});
+
 it('rate limits repeated resend requests', function () {
     $user = User::factory()->unverified()->create(['password' => Hash::make('secret1234')]);
     $login = $this->postJson('/api/auth/login', ['email' => $user->email, 'password' => 'secret1234'])->assertOk();

@@ -49,6 +49,14 @@ class EmailVerificationService
      * threshold decision use the same atomic read. Unthrottled, this
      * endpoint is a mail-bomb primitive aimed at whatever address the
      * caller is authenticated as.
+     *
+     * Sends nothing for an already-verified user: the mail would be
+     * pointless (there is nothing left to verify) and, since the caller is
+     * already authenticated as this user, an unconditional send would let
+     * anyone with a session repeatedly trigger mail to their own inbox for
+     * no functional reason — a small amplification primitive. The
+     * controller returns the same response either way, so this is a silent
+     * no-op rather than a distinguishable branch.
      */
     public function resend(User $user, string $ip): void
     {
@@ -57,6 +65,10 @@ class EmailVerificationService
 
         if ($attempts > self::MAX_ATTEMPTS) {
             $this->throwLockoutException($throttleKey);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return;
         }
 
         $user->sendEmailVerificationNotification();

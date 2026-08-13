@@ -23,6 +23,27 @@ class User extends Authenticatable implements HasLocalePreference, MustVerifyEma
     use HasFactory, HasUlids, Notifiable;
 
     /**
+     * Mirrors the `users` migration's DB-level column defaults
+     * (`timezone` default 'UTC', `locale` default 'en') so a freshly
+     * instantiated or freshly created in-memory model already carries
+     * those values, without needing a round trip back to the database.
+     *
+     * This matters beyond convenience: `timezone` is what later scheduling
+     * code (Task 21's slot finder) uses to decide when a post publishes. A
+     * null timezone reaching that code silently computes a wrong publish
+     * time rather than throwing — the DB default alone doesn't protect
+     * against that, because nothing forces a caller to refresh() the model
+     * after User::create() before reading it (AuthController::register()
+     * doesn't, and there is no reason a future caller would know to).
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'timezone' => 'UTC',
+        'locale' => 'en',
+    ];
+
+    /**
      * Get the attributes that should be cast.
      *
      * @return array<string, string>
@@ -76,10 +97,9 @@ class User extends Authenticatable implements HasLocalePreference, MustVerifyEma
      */
     public function preferredLocale(): string
     {
-        // Coalesces to the app default: the `locale` column has a DB-level
-        // default ('en'), but a freshly-hydrated in-memory instance (e.g.
-        // right after User::create() with no explicit locale, before any
-        // refresh from the database) doesn't carry that default yet.
-        return $this->locale ?? config('app.locale');
+        // No longer needs a `?? config('app.locale')` fallback: the
+        // $attributes default above guarantees `locale` is never null on
+        // an in-memory instance, so this is a straight read.
+        return $this->locale;
     }
 }
