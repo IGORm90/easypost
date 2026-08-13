@@ -89,3 +89,47 @@ it('does not overwrite an explicitly-set organization_id on create', function ()
 
     expect($stub->organization_id)->toBe($orgB);
 });
+
+it('does not let a mass update from organization B touch organization A rows', function () {
+    $orgA = (string) Str::ulid();
+    $orgB = (string) Str::ulid();
+
+    $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
+    TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
+
+    OrganizationContext::set($orgB);
+
+    // A blanket update with no WHERE clause of its own — the global scope
+    // is the only thing standing between this and cross-tenant writes.
+    TenantStub::query()->update(['name' => 'hijacked']);
+
+    expect($a->refresh()->name)->toBe('a');
+    expect(TenantStub::withoutGlobalScopes()->where('id', $a->id)->value('name'))->toBe('a');
+});
+
+it('does not let a mass delete from organization B touch organization A rows', function () {
+    $orgA = (string) Str::ulid();
+    $orgB = (string) Str::ulid();
+
+    $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
+    TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
+
+    OrganizationContext::set($orgB);
+
+    TenantStub::query()->delete();
+
+    expect(TenantStub::withoutGlobalScopes()->whereKey($a->id)->exists())->toBeTrue();
+});
+
+it('does not let destroy() from organization B remove an organization A row by id', function () {
+    $orgA = (string) Str::ulid();
+    $orgB = (string) Str::ulid();
+
+    $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
+
+    OrganizationContext::set($orgB);
+
+    TenantStub::destroy($a->id);
+
+    expect(TenantStub::withoutGlobalScopes()->whereKey($a->id)->exists())->toBeTrue();
+});
