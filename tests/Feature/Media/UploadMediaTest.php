@@ -176,6 +176,33 @@ it('does not report success or persist a row when the storage write fails (revie
     expect(Media::count())->toBe(0);
 });
 
+it('does not report success or persist a row when writeStream() returns false (not throws) for the original file (review finding 2)', function () {
+    // Distinct from the throwing case above: this exercises
+    // writeToDisk()'s explicit `$written === false` check directly --
+    // the defense-in-depth branch that matters if a Filesystem
+    // implementation (this project's real 'media' disk config now sets
+    // 'throw' => true and would raise instead, but the Filesystem
+    // CONTRACT does not require that) reports failure by return value
+    // rather than by exception. Review finding 2: the original
+    // Critical-severity bug was exactly this shape on the ORIGINAL
+    // file write (writeStream() returning false, discarded, still
+    // producing a 201 with a persisted row) -- the earlier throwing
+    // test above would have passed against the pre-fix code too (an
+    // unhandled exception also 500s), so it never actually exercised
+    // the specific defect this finding named.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $failingDisk = Mockery::mock(Filesystem::class);
+    $failingDisk->shouldReceive('writeStream')->andReturn(false);
+    Storage::shouldReceive('disk')->with('media')->andReturn($failingDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 10, 10)])
+        ->assertStatus(500);
+
+    expect(Media::count())->toBe(0);
+});
+
 it('stores the original file but leaves thumbnail_path null when only the thumbnail write fails (review finding 1)', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);

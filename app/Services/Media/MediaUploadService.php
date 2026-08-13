@@ -184,7 +184,22 @@ final class MediaUploadService
         $paths = array_values(array_filter([$media->path, $media->thumbnail_path]));
 
         if ($paths !== []) {
-            Storage::disk($media->disk)->delete($paths);
+            // 'throw' => true on the `media` disk (see writeToDisk()'s
+            // docblock, review finding 1) means a failed delete raises
+            // League\Flysystem\FilesystemException instead of silently
+            // reporting success — caught here and rethrown as
+            // MediaStorageException (never the raw Flysystem/S3
+            // message) so MediaController can map it to a 500 instead
+            // of an unhandled exception. Fail-loud, not unhandled: the
+            // row is deliberately NOT deleted below when this throws,
+            // so a storage-side delete failure never leaves a `Media`
+            // row pointing at a file this application no longer knows
+            // whether still exists.
+            try {
+                Storage::disk($media->disk)->delete($paths);
+            } catch (FilesystemException) {
+                throw MediaStorageException::forFailedDelete();
+            }
         }
 
         $media->delete();
@@ -231,14 +246,16 @@ final class MediaUploadService
      *   from a safe host to an internal one is re-validated exactly
      *   like the original URL, rather than followed blindly by the
      *   HTTP client.
-     * - Response size lying about itself: the cap is enforced via a
-     *   cURL progress callback that aborts the transfer the moment
-     *   actual downloaded bytes exceed IMPORT_MAX_BYTES — this reads
-     *   real bytes received, never the response's (attacker-controlled,
-     *   possibly absent or wrong) Content-Length header. The final size
-     *   used for the stored row is likewise `filesize()` on what
-     *   actually landed on disk (see storeFromUrl()), never a header
-     *   value.
+     * - Response size lying about itself: the cap is enforced by
+     *   CappedSinkStreamWrapper (see that class's docblock), a real PHP
+     *   stream resource whose `stream_write()` throws the instant
+     *   cumulative bytes written exceed $maxBytes — checked BEFORE each
+     *   chunk is delegated to the real underlying file, so disk contents
+     *   can never exceed the cap. This reads real bytes received, never
+     *   the response's (attacker-controlled, possibly absent or wrong)
+     *   Content-Length header. The final size used for the stored row is
+     *   likewise `filesize()` on what actually landed on disk (see
+     *   storeFromUrl()), never a header value.
      * - Slow-loris: `Http::timeout()` is cURL's total-transfer timeout
      *   (connect + read combined), so a server that dribbles bytes
      *   slowly enough to never trip a single "read" timeout is still
@@ -296,10 +313,19 @@ final class MediaUploadService
             // directly and requires a resource) can write through —
             // verified against a real local HTTP server and real cURL,
             // not Http::fake(), in
-            // tests/Unit/Services/Media/SizeCappedSinkStreamTest.php.
-            $sink = CappedSinkStreamWrapper::open($tmpPath, $maxBytes);
+            // tests/Unit/Services/Media/CappedSinkStreamWrapperTest.php.
+            //
+            // open() itself (not just the transfer) is inside this same
+            // try: a review finding caught that it previously sat
+            // outside, so a sink-open failure (e.g. the mediacap://
+            // wrapper failing to register, or the underlying fopen()
+            // failing) escaped as an unhandled 500 instead of the 422
+            // this endpoint promises for every other download failure.
+            $sink = null;
 
             try {
+                $sink = CappedSinkStreamWrapper::open($tmpPath, $maxBytes);
+
                 // Broad catch deliberately: a network boundary call can
                 // fail in many distinct ways (DNS, connect refused, our
                 // own sink aborting mid-transfer, transfer timeout) and

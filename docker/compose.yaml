@@ -93,26 +93,34 @@ services:
   # the server is accepting connections, not merely that its container
   # started. `--ignore-existing` makes this idempotent across restarts
   # with an already-populated volume.
+  # `docker/minio/init.sh` + `docker/minio/media-policy.json` (mounted
+  # rather than inlined): bucket creation alone is not sufficient for
+  # config/filesystems.php's `media` disk `'visibility' => 'public'` to
+  # mean anything on MinIO -- MinIO does not honor the per-object ACL
+  # header Flysystem's S3 adapter sends on PutObject by default, so
+  # without an explicit anonymous policy every MediaResource.url/
+  # thumbnail_url this application returns 403s for an unauthenticated
+  # browser request even though the object exists (confirmed by
+  # construction against the real, torn-down-and-rebuilt stack: `curl
+  # -I` against a just-uploaded object returned 403 before a policy
+  # existed at all). The policy file grants ONLY `s3:GetObject` on
+  # `arn:aws:s3:::media/*` -- deliberately not the coarser `mc anonymous
+  # set download`, which grants unauthenticated `s3:ListBucket` on the
+  # whole bucket too (also confirmed by construction: `curl
+  # ".../media/?list-type=2"` returned a full, unauthenticated object
+  # listing spanning every organization's media, unpublished drafts
+  # included, under that shortcut). See media-policy.json's own comment
+  # for the full reasoning.
   minio-init:
     image: minio/mc
     depends_on: [minio]
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 minio minio123; do sleep 1; done &&
-      mc mb --ignore-existing local/media &&
-      mc anonymous set download local/media
-      "
-    # `mc anonymous set download` (verified against the real, torn-down-
-    # and-rebuilt stack, not assumed): bucket creation alone is not
-    # sufficient for config/filesystems.php's `media` disk `'visibility'
-    # => 'public'` to mean anything on MinIO -- MinIO does not honor the
-    # per-object ACL header Flysystem's S3 adapter sends on PutObject by
-    # default, so without an explicit anonymous-download bucket policy,
-    # every MediaResource.url/thumbnail_url this application returns
-    # 403s for an unauthenticated browser request, even though the
-    # object exists and the URL itself resolves. Confirmed by construction:
-    # `curl -I` against a just-uploaded object returned 403 before this
-    # line was added, 200 after.
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - ./minio/init.sh:/init.sh:ro
+      - ./minio/media-policy.json:/minio-policy/media-policy.json:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
   mailpit:
     image: axllent/mailpit
     ports: ["8025:8025", "1025:1025"]

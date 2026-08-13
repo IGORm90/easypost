@@ -22,6 +22,14 @@ use RuntimeException;
  * (persist() only calls `Media::query()->create()` AFTER both writeToDisk()
  * calls have returned without throwing).
  *
+ * Also thrown by MediaUploadService::delete() (see forFailedDelete())
+ * when a write-through-config `throw => true` failure surfaces there
+ * instead: same "this application's/its infrastructure's fault, not a
+ * 4xx" reasoning, and the same requirement that a failed storage
+ * operation must never look like it succeeded — a failed delete must
+ * not delete the `Media` row either, or the row would silently point at
+ * a file this application no longer knows the state of.
+ *
  * MediaController maps this to a 500 — a storage failure is this
  * application's fault (or its infrastructure's), not the caller's
  * input, so it is not a 4xx.
@@ -31,5 +39,10 @@ class MediaStorageException extends RuntimeException
     public static function forFailedWrite(): self
     {
         return new self('The file could not be stored.');
+    }
+
+    public static function forFailedDelete(): self
+    {
+        return new self('The file could not be deleted.');
     }
 }

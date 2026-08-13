@@ -122,6 +122,17 @@ class MediaController extends Controller
             $this->media->delete($media);
         } catch (MediaInUseException $e) {
             return response()->json(['message' => $e->getMessage()], Response::HTTP_CONFLICT);
+        } catch (MediaStorageException $e) {
+            // Review finding (2nd pass): delete() now also throws
+            // MediaStorageException on a failed disk delete ('throw' =>
+            // true on the `media` disk) — this was previously
+            // uncaught here, an unhandled 500 with the row left intact
+            // by accident rather than by design. Fail-loud is correct
+            // (see MediaStorageException's docblock: the row is
+            // deliberately NOT deleted when the disk delete fails), but
+            // it must still be a clean, JSON 500 response, not an
+            // unhandled exception.
+            return response()->json(['message' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
 
         return response()->noContent();
