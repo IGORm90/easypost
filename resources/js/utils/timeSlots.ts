@@ -84,8 +84,13 @@ export function utcMinutesToLocal(minutesFromWeekStart: number, timeZone: string
  * Asia/Karachi) at approximately the given instant: the wall-clock
  * fields `timeZone` renders `date` as, re-interpreted as a UTC instant,
  * minus `date` itself.
+ *
+ * Exported for `utils/zonedDateTime.ts` (Task 25's schedule picker,
+ * which needs the exact same offset-diffing trick against a real
+ * instant rather than this file's fixed reference week) — kept as the
+ * single implementation rather than duplicated.
  */
-function zoneOffsetMs(date: Date, timeZone: string): number {
+export function zoneOffsetMs(date: Date, timeZone: string): number {
     const parts = new Intl.DateTimeFormat('en-US', {
         timeZone,
         hourCycle: 'h23',

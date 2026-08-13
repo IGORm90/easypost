@@ -1,20 +1,35 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 
-withDefaults(defineProps<{ open?: boolean; title?: string }>(), {
+/**
+ * `ignoreBackdropClick` defaults to `false`, preserving every existing
+ * caller's behaviour exactly (a stray click outside still closes them).
+ * PostEditorModal.vue (Task 25) is the first caller to opt in — an
+ * irreplaceable, multi-minute composition sitting behind a full-screen
+ * backdrop should not be discardable by a single misplaced click, only
+ * by the explicit close button or a deliberate in-form action.
+ */
+const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean }>(), {
     open: false,
     title: undefined,
+    ignoreBackdropClick: false,
 });
 
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
+
+function onBackdropClick(): void {
+    if (!props.ignoreBackdropClick) {
+        emit('close');
+    }
+}
 </script>
 
 <template>
     <Teleport to="body">
         <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div class="absolute inset-0 bg-text/40" @click="emit('close')" />
+            <div class="absolute inset-0 bg-text/40" @click="onBackdropClick" />
             <div class="relative w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-lg">
                 <div class="mb-4 flex items-center justify-between">
                     <h2 v-if="title" class="text-base font-semibold text-text">{{ title }}</h2>

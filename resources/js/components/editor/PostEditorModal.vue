@@ -11,6 +11,7 @@ import ChannelTab from './ChannelTab.vue';
 import ThreadEditor from './ThreadEditor.vue';
 import ScheduleControls from './ScheduleControls.vue';
 import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
+import { useAuthStore } from '../../stores/auth';
 import { api } from '../../api/client';
 import type { CalendarTag } from '../../stores/posts';
 import type { ChannelDraft, PostGroupApi, SaveType, SetDto, SignatureDto } from './types';
@@ -34,12 +35,32 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 
 const { t } = useI18n();
 const integrations = useIntegrationsStore();
+const auth = useAuthStore();
+
+// Same source CalendarGrid.vue's `timeZone` option and Channels'
+// TimeSlotEditor.vue already use — see zonedDateTime.ts's docblock for
+// why ScheduleControls must convert against this and never the
+// browser's own OS timezone.
+const timezone = computed(() => auth.user?.timezone ?? 'UTC');
 
 const loading = ref(false);
 const saving = ref(false);
 const networkError = ref(false);
-/** True once the API has confirmed this group can no longer be edited — either loaded already-published, or a 409 arrived on save. */
-const apiLocked = ref(false);
+/**
+ * True once this group is known to be un-editable via PUT — either it
+ * loaded already published (state PUBLISHED, or any segment already has
+ * a `published_at`), or a 409 arrived from a save attempt during this
+ * session (PostGroupService::guardEditable()'s race: the group
+ * published while the editor was open). Either way the composed model
+ * is NOT cleared and saving is NOT disabled: `effectiveGroupId` gets
+ * reset to `null` so the very next save re-targets `POST /api/posts` (a
+ * new group) instead of retrying the now-locked `PUT`, so the user's
+ * work still reaches the server instead of being stranded behind a dead
+ * end. See Task 25 review, Finding 2.
+ */
+const groupLocked = ref(false);
+/** `null` composes via POST; a group id composes via PUT — starts as `props.groupId`, but a 409 (see `groupLocked` above) resets it to `null` so the retry becomes a create. */
+const effectiveGroupId = ref<string | null>(null);
 const generalErrors = ref<string[]>([]);
 const channelErrors = reactive<Record<string, Record<number, string[]>>>({});
 
@@ -183,6 +204,15 @@ async function fetchTags(): Promise<void> {
     availableTags.value = data;
 }
 
+/**
+ * Clears every field of the composed model. Called unconditionally at
+ * the top of `init()` — see Task 25 review, Finding 1: previously this
+ * only ran for a brand-new post (`groupId === null`), so `commonContent`
+ * (and, transitively, any undirtied channel's root segment — see
+ * `newDraft()`) survived a save/close and leaked into the NEXT group
+ * this modal was opened against, silently seeding it with a different
+ * post's text.
+ */
 function resetForm(): void {
     selectedChannelIds.value = [];
     for (const key of Object.keys(channelDrafts)) {
@@ -192,7 +222,7 @@ function resetForm(): void {
     commonContent.value = '';
     selectedTags.value = [];
     publishDate.value = null;
-    apiLocked.value = false;
+    groupLocked.value = false;
 }
 
 /**
@@ -203,14 +233,27 @@ function resetForm(): void {
  * `signatureId` always starts unset: the API has nowhere to record
  * which signature (if any) produced the stored text, so re-selecting one
  * here appends fresh rather than guessing at, or doubling, what is
- * already baked into `content` (see PostGroupApi's docblock).
+ * already baked into `content` (see PostGroupApi's docblock, and
+ * `isEditingExisting`/the signature `<select>`'s relabelled default in
+ * the template, for how the UI now makes that an explicit choice rather
+ * than implying "none applied").
  */
 async function loadGroup(id: string): Promise<void> {
     const { data } = await api.get<PostGroupApi>(`/posts/${id}`);
 
     selectedTags.value = [...data.tags];
     publishDate.value = data.publish_date;
-    apiLocked.value = data.state === 'PUBLISHED' || data.posts.some((post) => post.value.some((segment) => segment.published_at !== null));
+
+    const alreadyPublished = data.state === 'PUBLISHED' || data.posts.some((post) => post.value.some((segment) => segment.published_at !== null));
+    if (alreadyPublished) {
+        // Loaded already un-editable: skip straight to "save = create a
+        // new group" rather than waiting for PUT to 409 first — same
+        // end state `save()`'s 409 branch reaches, just without the
+        // wasted round trip. See `groupLocked`'s docblock.
+        groupLocked.value = true;
+        effectiveGroupId.value = null;
+    }
+
     selectedChannelIds.value = data.posts.map((post) => post.integration_id);
 
     for (const post of data.posts) {
@@ -233,13 +276,15 @@ async function init(): Promise<void> {
         delete channelErrors[key];
     }
 
+    // Unconditional — see resetForm()'s docblock (Finding 1).
+    resetForm();
+    effectiveGroupId.value = props.groupId;
+
     try {
         await Promise.all([integrations.fetch(), integrations.fetchProviders(), fetchSets(), fetchSignatures(), fetchTags()]);
 
         if (props.groupId) {
             await loadGroup(props.groupId);
-        } else {
-            resetForm();
         }
     } catch {
         networkError.value = true;
@@ -263,17 +308,24 @@ function buildPayload(type: SaveType): Record<string, unknown> {
         type,
         publish_date: type === 'now' ? null : publishDate.value,
         tags: selectedTags.value,
-        posts: selectedChannelIds.value.map((id) => {
-            const draft = channelDrafts[id];
-            const signature = signatureFor(id);
+        // `.filter(Boolean)`: a selected id with no draft yet (e.g. the
+        // `selectedChannelIds` watcher hasn't run for it — should not
+        // normally happen, but nothing here should crash outside the
+        // try/catch in save() if it ever does) is skipped rather than
+        // dereferenced. See Task 25 review, Minor 2.
+        posts: selectedChannelIds.value
+            .filter((id) => Boolean(channelDrafts[id]))
+            .map((id) => {
+                const draft = channelDrafts[id];
+                const signature = signatureFor(id);
 
-            const value = draft.segments.map((segment, index, all) => ({
-                content: signature && index === all.length - 1 ? `${segment.content}${SIGNATURE_SEPARATOR}${signature.content}` : segment.content,
-                media_ids: segment.media_ids,
-            }));
+                const value = draft.segments.map((segment, index, all) => ({
+                    content: signature && index === all.length - 1 ? `${segment.content}${SIGNATURE_SEPARATOR}${signature.content}` : segment.content,
+                    media_ids: segment.media_ids,
+                }));
 
-            return { integration_id: id, settings: draft.settings, value };
-        }),
+                return { integration_id: id, settings: draft.settings, value };
+            }),
     };
 }
 
@@ -307,7 +359,13 @@ function applyServerErrors(errors: Record<string, string[]>): void {
     }
 }
 
-const saveDisabled = computed(() => apiLocked.value || selectedChannelIds.value.length === 0);
+// Saving is only ever blocked by "nothing to save" — a 409/already-
+// published group (`groupLocked`) no longer disables it, see
+// `groupLocked`'s docblock (Finding 2): the save actions stay live so
+// the composed text can still reach the server, just as a new group.
+const saveDisabled = computed(() => selectedChannelIds.value.length === 0);
+
+const scheduleNotice = computed(() => (groupLocked.value ? t('editor.lockedRetry') : null));
 
 async function save(type: SaveType): Promise<void> {
     if (saveDisabled.value) {
@@ -324,8 +382,8 @@ async function save(type: SaveType): Promise<void> {
     const payload = buildPayload(type);
 
     try {
-        if (props.groupId) {
-            await api.put(`/posts/${props.groupId}`, payload);
+        if (effectiveGroupId.value) {
+            await api.put(`/posts/${effectiveGroupId.value}`, payload);
         } else {
             await api.post('/posts', payload);
         }
@@ -338,9 +396,12 @@ async function save(type: SaveType): Promise<void> {
                 // The group published (or started publishing) while this
                 // editor was open — PostGroupService::guardEditable()'s
                 // race. The user's text is untouched: nothing above this
-                // catch block mutates any draft, only the flag that
-                // disables the save actions.
-                apiLocked.value = true;
+                // catch block mutates any draft. Re-targeting the next
+                // save as a create (rather than leaving it disabled) is
+                // what actually gets the user's work saved — see
+                // `groupLocked`'s docblock.
+                groupLocked.value = true;
+                effectiveGroupId.value = null;
             } else if (error.response?.status === 422) {
                 applyServerErrors(error.response.data?.errors ?? {});
             } else {
@@ -355,14 +416,15 @@ async function save(type: SaveType): Promise<void> {
 }
 
 const modalTitle = computed(() => (props.groupId ? t('editor.titleEdit') : t('editor.titleNew')));
+const isEditingExisting = computed(() => Boolean(props.groupId));
 </script>
 
 <template>
-    <Modal :open="open" :title="modalTitle" @close="emit('close')">
+    <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" @close="emit('close')">
         <div v-if="loading" class="py-8 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
 
         <div v-else class="flex max-h-[75vh] flex-col gap-4 overflow-y-auto">
-            <Toast v-if="apiLocked" variant="warning">{{ t('editor.locked') }}</Toast>
+            <Toast v-if="groupLocked" variant="warning">{{ t('editor.locked') }}</Toast>
             <Toast v-if="networkError" variant="danger" @dismiss="networkError = false">{{ t('editor.networkError') }}</Toast>
             <Toast v-if="generalErrors.length" variant="danger" @dismiss="generalErrors = []">
                 <p v-for="(message, index) in generalErrors" :key="index">{{ message }}</p>
@@ -408,12 +470,24 @@ const modalTitle = computed(() => (props.groupId ? t('editor.titleEdit') : t('ed
                             v-model="activeDraft.signatureId"
                             class="rounded-xl border border-border bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                         >
-                            <option :value="null">{{ t('editor.noSignature') }}</option>
+                            <!--
+                                Finding 4: editing an existing group can never
+                                truthfully claim "no signature" — the API has
+                                nowhere to record whether the stored text
+                                already carries one (see loadGroup()'s
+                                docblock), so a plain "No signature" default
+                                reads as "none was applied", inviting the user
+                                to "correct" it and append a second, invisible
+                                copy. The relabelled option makes picking one
+                                here a deliberate, informed act instead.
+                            -->
+                            <option :value="null">{{ isEditingExisting ? t('editor.signatureUnknown') : t('editor.noSignature') }}</option>
                             <option v-for="signature in signatures" :key="signature.id" :value="signature.id">
                                 {{ signature.content.slice(0, 40) }}
                             </option>
                         </select>
                     </div>
+                    <p v-if="isEditingExisting" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
 
                     <ThreadEditor
                         :model-value="activeDraft.segments"
@@ -435,7 +509,9 @@ const modalTitle = computed(() => (props.groupId ? t('editor.titleEdit') : t('ed
                 v-model="publishDate"
                 :integrations="selectedIntegrations"
                 :saving="saving"
-                :locked="saveDisabled"
+                :disabled="saveDisabled"
+                :timezone="timezone"
+                :notice="scheduleNotice"
                 @save-draft="save('draft')"
                 @save-schedule="save('schedule')"
                 @save-now="save('now')"

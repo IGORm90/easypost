@@ -3,13 +3,14 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '../ui/Button.vue';
 import { api } from '../../api/client';
+import { utcIsoToZonedInput, zonedInputToUtcIso } from '../../utils/zonedDateTime';
 import type { Integration } from '../../stores/integrations';
 
 /**
  * The publish-date picker, the "find a free slot" helper (`GET
  * /api/posts/find-slot`), and the three save actions (draft / schedule /
  * publish now) the task-25 brief asks for. `modelValue` is the
- * `publish_date` as an ISO string (or `null` — no date chosen yet);
+ * `publish_date` as a UTC ISO string (or `null` — no date chosen yet);
  * everything else about *what* gets saved lives in the parent
  * (PostEditorModal.vue), this component only ever emits which of the
  * three actions the user picked.
@@ -18,8 +19,12 @@ const props = defineProps<{
     modelValue: string | null;
     integrations: Integration[];
     saving: boolean;
-    /** A group that already partially/fully published — every save action is disabled (see PostEditorModal.vue's 409 handling). */
-    locked?: boolean;
+    /** The signed-in user's profile timezone (`auth.user.timezone`) — same value `CalendarGrid.vue` renders every entry in, so a date picked here lands on the exact slot the calendar shows it at. */
+    timezone: string;
+    /** Disables every save action — currently only "no channel selected" (see PostEditorModal.vue). */
+    disabled?: boolean;
+    /** Shown just above the save buttons — e.g. "saving now creates a new post" after a 409 (see PostEditorModal.vue). */
+    notice?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -35,22 +40,17 @@ const slotIntegrationId = ref<string>('');
 const findingSlot = ref(false);
 const slotError = ref(false);
 
-// datetime-local works in the browser's own local time; `modelValue` is
-// always UTC ISO. Converting on the two edges here keeps every other
-// component in this feature dealing in plain ISO strings.
+// datetime-local is always the BROWSER's own local wall clock — it has
+// no timezone concept of its own. Converting through `props.timezone`
+// (the user's profile zone, not the browser's OS zone) on both edges is
+// what keeps this picker agreeing with CalendarGrid.vue's rendering —
+// see zonedDateTime.ts's docblock.
 const localValue = computed({
     get(): string {
-        if (!props.modelValue) {
-            return '';
-        }
-
-        const date = new Date(props.modelValue);
-        const pad = (n: number) => String(n).padStart(2, '0');
-
-        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        return props.modelValue ? utcIsoToZonedInput(props.modelValue, props.timezone) : '';
     },
     set(value: string) {
-        emit('update:modelValue', value ? new Date(value).toISOString() : null);
+        emit('update:modelValue', value ? zonedInputToUtcIso(value, props.timezone) : null);
     },
 });
 
@@ -105,16 +105,19 @@ async function findSlot(): Promise<void> {
                 type="datetime-local"
                 class="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
             />
+            <p class="text-xs text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
         </div>
 
+        <p v-if="notice" class="text-sm text-warning">{{ notice }}</p>
+
         <div class="flex flex-wrap gap-2">
-            <Button variant="secondary" type="button" :loading="saving" :disabled="locked" @click="emit('save-draft')">
+            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-draft')">
                 {{ t('editor.actions.saveDraft') }}
             </Button>
-            <Button variant="secondary" type="button" :loading="saving" :disabled="locked || !modelValue" @click="emit('save-schedule')">
+            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled || !modelValue" @click="emit('save-schedule')">
                 {{ t('editor.actions.schedule') }}
             </Button>
-            <Button variant="primary" type="button" :loading="saving" :disabled="locked" @click="emit('save-now')">
+            <Button variant="primary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-now')">
                 {{ t('editor.actions.publishNow') }}
             </Button>
         </div>

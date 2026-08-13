@@ -4,15 +4,25 @@ import { useI18n } from 'vue-i18n';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
+// `disabled` is declared explicitly (rather than left to fall through as
+// a bare HTML attribute) so it can be combined with `loading` instead of
+// racing it: before this prop existed, a parent passing `:disabled="x"`
+// landed via Vue's attrs fallthrough and *won* over this component's own
+// `:disabled="loading"` binding, meaning a caller like
+// ScheduleControls.vue passing both `:loading="saving"` and
+// `:disabled="someUnrelatedFalseCondition"` re-enabled the button mid
+// in-flight request. See Task 25 review, Minor 1.
 const props = withDefaults(
     defineProps<{
         variant?: Variant;
         loading?: boolean;
+        disabled?: boolean;
         type?: 'button' | 'submit' | 'reset';
     }>(),
     {
         variant: 'primary',
         loading: false,
+        disabled: false,
         type: 'button',
     },
 );
@@ -29,9 +39,10 @@ const variantClasses: Record<Variant, string> = {
 };
 
 const classes = computed(() => variantClasses[props.variant]);
+const isDisabled = computed(() => props.loading || props.disabled);
 
 function handleClick(event: MouseEvent): void {
-    if (props.loading) {
+    if (isDisabled.value) {
         return;
     }
 
@@ -43,7 +54,7 @@ function handleClick(event: MouseEvent): void {
     <button
         :type="type"
         :aria-busy="loading"
-        :disabled="loading"
+        :disabled="isDisabled"
         :class="[
             'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition',
             'focus-visible:outline-none focus-visible:ring-2',

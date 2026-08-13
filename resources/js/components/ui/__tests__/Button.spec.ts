@@ -25,6 +25,26 @@ it('renders the secondary variant as an outline, never as accent', () => {
   expect(w.classes().join(' ')).not.toMatch(/accent|primary/)   // color.md §3.2
 })
 
+it('an explicit disabled=false does not re-enable the button while loading — Task 25 review, Minor 1', async () => {
+  // Before Button.vue declared its own `disabled` prop, a parent
+  // passing `:loading="true" :disabled="false"` (e.g. ScheduleControls'
+  // save buttons mid-request, where the caller's own "disabled" reason
+  // is unrelated to and can be false during a save) landed via Vue's
+  // attrs fallthrough and WON over the component's own
+  // `:disabled="loading"` binding, silently re-enabling the button.
+  const w = mount(Button, { props: { loading: true, disabled: false } })
+  expect((w.element as HTMLButtonElement).disabled).toBe(true)
+  await w.trigger('click')
+  expect(w.emitted('click')).toBeFalsy()
+})
+
+it('disabled alone (not loading) also blocks the click and sets the disabled attribute', async () => {
+  const w = mount(Button, { props: { disabled: true } })
+  expect((w.element as HTMLButtonElement).disabled).toBe(true)
+  await w.trigger('click')
+  expect(w.emitted('click')).toBeFalsy()
+})
+
 it('renders the danger variant on the on-danger token, never a raw palette class', () => {
   const w = mount(Button, { props: { variant: 'danger' } })
   expect(w.classes()).toContain('bg-danger')
