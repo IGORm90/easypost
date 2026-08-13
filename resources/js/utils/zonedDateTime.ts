@@ -59,11 +59,17 @@ export function zonedInputToUtcIso(input: string, timeZone: string): string {
     const [year, month, day] = datePart.split('-').map(Number);
     const [hour, minute] = timePart.split(':').map(Number);
 
-    // Same one-iteration offset-diffing approximation as
+    // Same fixed-point offset-diffing refinement as
     // `timeSlots.ts#localToUtcMinutes` — see that function's docblock
-    // for why a single correction is the accepted, documented limit.
+    // for why a SINGLE offset guess is wrong for every unambiguous local
+    // time within roughly one transition-delta of a DST boundary (not
+    // just the literal ambiguous/skipped hour), and why re-deriving the
+    // offset against the corrected estimate resolves all of those,
+    // leaving only the genuinely ambiguous/nonexistent clock hour itself
+    // as an inherent, undocumented-preference case.
     const naiveUtc = Date.UTC(year, month - 1, day, hour, minute);
-    const offset = zoneOffsetMs(new Date(naiveUtc), timeZone);
+    const firstOffset = zoneOffsetMs(new Date(naiveUtc), timeZone);
+    const offset = zoneOffsetMs(new Date(naiveUtc - firstOffset), timeZone);
 
     return new Date(naiveUtc - offset).toISOString();
 }

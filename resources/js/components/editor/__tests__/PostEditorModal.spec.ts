@@ -152,15 +152,67 @@ it('a 409 on save keeps the composed text intact, stays saveable, and retargets 
     expect(publishNow).toBeTruthy();
     expect((publishNow!.element as HTMLButtonElement).disabled).toBe(false);
 
+    // Clicking again does NOT immediately save — Task 25 review round 2,
+    // Finding 3: a locked group requires an explicit confirmation before
+    // the next click is allowed to actually create a second, live post.
+    await publishNow!.trigger('click');
+    await flushPromises();
+    expect(post).toHaveBeenCalledTimes(1); // still just the failed attempt
+    expect(w.text()).toContain('This will publish a second, separate post');
+
+    const confirm = w.findAll('button').find((b) => b.text() === 'Yes, create a new post');
+    expect(confirm).toBeTruthy();
+
     // Retrying reaches the server as a NEW post (POST), not a retry of
     // the now-locked PUT — this is what actually saves the user's work.
     post.mockResolvedValueOnce({ data: { id: 'group-new' } });
-    await publishNow!.trigger('click');
+    await confirm!.trigger('click');
     await flushPromises();
 
     expect(post).toHaveBeenCalledTimes(2);
     expect(put).not.toHaveBeenCalled();
     expect(w.emitted('saved')).toBeTruthy();
+});
+
+it('cancelling the confirmation leaves the draft untouched and does not save', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'careful text');
+    post.mockRejectedValueOnce(axiosError(409));
+
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    await publishNow!.trigger('click'); // requests confirmation, does not save
+    await flushPromises();
+
+    const cancel = w.findAll('button').find((b) => b.text() === 'Cancel');
+    expect(cancel).toBeTruthy();
+    await cancel!.trigger('click');
+    await flushPromises();
+
+    expect(w.text()).not.toContain('This will publish a second, separate post');
+    expect(post).toHaveBeenCalledTimes(1);
+    expect((w.get('#common-content').element as HTMLTextAreaElement).value).toBe('careful text');
+});
+
+it('an already-published group requires confirmation before the very first save, not just after a 409', async () => {
+    groupFixtures['group-b'] = groupApi({ state: 'PUBLISHED' });
+    const w = mount(PostEditorModal, {
+        props: { open: true, groupId: 'group-b' },
+        global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+
+    expect(w.text()).toContain('saving now will create it as a new post');
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    // No request went out yet — only the confirmation is showing.
+    expect(post).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(w.text()).toContain('This will publish a second, separate post');
 });
 
 it('a 422 maps the error onto the right channel/segment and keeps the text editable', async () => {

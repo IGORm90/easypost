@@ -123,16 +123,31 @@ export function zoneOffsetMs(date: Date, timeZone: string): number {
 export function localToUtcMinutes(weekday: number, hour: number, minute: number, timeZone: string): number {
     // Interpret the desired local wall-clock fields as if they were UTC
     // — a first guess at the instant — then read `timeZone`'s offset at
-    // that guess and subtract it to land on the real UTC instant whose
-    // rendering in `timeZone` actually produces those fields. One
-    // iteration (using the guess instant's offset rather than the true
-    // instant's) is the standard approximation for this kind of
-    // library-free conversion; it can be off by the DST delta only in
-    // the ~1-hour window spanning a transition, which is an accepted
-    // limitation — see this file's docblock.
+    // that guess. A SINGLE iteration (using the guess instant's own
+    // offset) is wrong whenever the guess and the true instant straddle
+    // a DST transition: on the transition day, "which offset applies at
+    // the naive-UTC reading" and "which offset applies at the true
+    // instant" can differ for a window as wide as the transition delta
+    // itself (e.g. an hour either side of a 1-hour transition) — not
+    // just the literal ambiguous/skipped clock hour. This was Task 25
+    // review Finding 3, round 2: measured on America/New_York's 2026
+    // transitions, unambiguous local times as far as 3.5 hours from the
+    // transition still round-tripped an hour off under one iteration.
+    //
+    // Fix: re-derive the offset a second time, evaluated at the
+    // corrected instant estimate (`naiveUtc - firstOffset`) rather than
+    // the naive one — a fixed-point refinement that resolves every
+    // unambiguous local time correctly, leaving only the true
+    // ambiguous (fall-back) or nonexistent (spring-forward) clock hour
+    // itself as an inherent, unresolvable case (there is no single
+    // correct UTC instant for those without an explicit convention,
+    // e.g. "prefer the earlier/later offset" — this function makes no
+    // such choice and both iterations' offsets coincide for every other
+    // instant).
     const reference = referenceMonday();
     const naiveUtc = new Date(reference.getTime() + (weekday * MINUTES_PER_DAY + hour * 60 + minute) * 60_000);
-    const offset = zoneOffsetMs(naiveUtc, timeZone);
+    const firstOffset = zoneOffsetMs(naiveUtc, timeZone);
+    const offset = zoneOffsetMs(new Date(naiveUtc.getTime() - firstOffset), timeZone);
     const actualUtc = naiveUtc.getTime() - offset;
 
     const minutesFromReference = Math.round((actualUtc - reference.getTime()) / 60_000);

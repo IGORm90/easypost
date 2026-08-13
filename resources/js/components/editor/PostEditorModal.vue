@@ -61,6 +61,24 @@ const networkError = ref(false);
 const groupLocked = ref(false);
 /** `null` composes via POST; a group id composes via PUT — starts as `props.groupId`, but a 409 (see `groupLocked` above) resets it to `null` so the retry becomes a create. */
 const effectiveGroupId = ref<string | null>(null);
+/**
+ * The save type awaiting an explicit "yes, create a second post"
+ * confirmation — set only while `groupLocked` is true (see
+ * `requestSave()` below). Task 25 review, Finding 3: after the 409
+ * re-target (or a group that loaded already published), a single click
+ * on the PRIMARY button used to silently create a second, live copy of
+ * an already-published post — the locked banner explained the
+ * consequence, but explaining is not a guard. Every save action now
+ * routes through `requestSave()` first while locked, requiring a
+ * deliberate confirm click before `executeSave()` ever runs.
+ *
+ * Declared here (rather than next to `requestSave()`/`executeSave()`
+ * further down) because `resetForm()` reads it, and `resetForm()` runs
+ * synchronously inside the `watch(() => props.open, ..., { immediate:
+ * true })` below — which fires during this very setup() execution, so
+ * every ref it touches must already be initialised above that point.
+ */
+const pendingSaveType = ref<SaveType | null>(null);
 const generalErrors = ref<string[]>([]);
 const channelErrors = reactive<Record<string, Record<number, string[]>>>({});
 
@@ -223,6 +241,7 @@ function resetForm(): void {
     selectedTags.value = [];
     publishDate.value = null;
     groupLocked.value = false;
+    pendingSaveType.value = null;
 }
 
 /**
@@ -367,11 +386,35 @@ const saveDisabled = computed(() => selectedChannelIds.value.length === 0);
 
 const scheduleNotice = computed(() => (groupLocked.value ? t('editor.lockedRetry') : null));
 
-async function save(type: SaveType): Promise<void> {
+function requestSave(type: SaveType): void {
     if (saveDisabled.value) {
         return;
     }
 
+    if (groupLocked.value) {
+        pendingSaveType.value = type;
+
+        return;
+    }
+
+    void executeSave(type);
+}
+
+function confirmPendingSave(): void {
+    if (!pendingSaveType.value) {
+        return;
+    }
+
+    const type = pendingSaveType.value;
+    pendingSaveType.value = null;
+    void executeSave(type);
+}
+
+function cancelPendingSave(): void {
+    pendingSaveType.value = null;
+}
+
+async function executeSave(type: SaveType): Promise<void> {
     saving.value = true;
     networkError.value = false;
     generalErrors.value = [];
@@ -399,7 +442,9 @@ async function save(type: SaveType): Promise<void> {
                 // catch block mutates any draft. Re-targeting the next
                 // save as a create (rather than leaving it disabled) is
                 // what actually gets the user's work saved — see
-                // `groupLocked`'s docblock.
+                // `groupLocked`'s docblock. The NEXT save attempt now
+                // goes through `requestSave()`'s confirmation gate,
+                // since `groupLocked` is now true.
                 groupLocked.value = true;
                 effectiveGroupId.value = null;
             } else if (error.response?.status === 422) {
@@ -415,8 +460,13 @@ async function save(type: SaveType): Promise<void> {
     }
 }
 
-const modalTitle = computed(() => (props.groupId ? t('editor.titleEdit') : t('editor.titleNew')));
-const isEditingExisting = computed(() => Boolean(props.groupId));
+// Keyed off `effectiveGroupId`, not `props.groupId`: after a 409
+// re-target (or a group that loaded already published) the next save
+// creates a NEW group, so the header/hint must stop claiming this is
+// still "editing" the original the moment that becomes true, not just
+// at the initial load. Task 25 review, round 2 cosmetic finding.
+const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit') : t('editor.titleNew')));
+const isEditingExisting = computed(() => Boolean(effectiveGroupId.value));
 </script>
 
 <template>
@@ -512,10 +562,28 @@ const isEditingExisting = computed(() => Boolean(props.groupId));
                 :disabled="saveDisabled"
                 :timezone="timezone"
                 :notice="scheduleNotice"
-                @save-draft="save('draft')"
-                @save-schedule="save('schedule')"
-                @save-now="save('now')"
+                @save-draft="requestSave('draft')"
+                @save-schedule="requestSave('schedule')"
+                @save-now="requestSave('now')"
             />
+
+            <!--
+                Task 25 review, Finding 3: saving while `groupLocked` is
+                true would silently create a second, live copy of an
+                already-published post. requestSave() routes here
+                instead of saving directly whenever that's the case —
+                the primary action stops being one click away from a
+                duplicate publish.
+            -->
+            <Toast v-if="pendingSaveType" variant="warning">
+                <p>{{ t('editor.confirmNewPost') }}</p>
+                <div class="mt-2 flex gap-2">
+                    <Button variant="primary" type="button" :loading="saving" @click="confirmPendingSave">
+                        {{ t('editor.confirmNewPostYes') }}
+                    </Button>
+                    <Button variant="ghost" type="button" @click="cancelPendingSave">{{ t('ui.cancel') }}</Button>
+                </div>
+            </Toast>
 
             <Button variant="ghost" type="button" class="self-start" @click="emit('close')">{{ t('ui.cancel') }}</Button>
         </div>
