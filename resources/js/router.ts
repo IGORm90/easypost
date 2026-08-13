@@ -7,6 +7,8 @@ import Reset from './pages/Auth/Reset.vue';
 import Profile from './pages/Settings/Profile.vue';
 import Team from './pages/Settings/Team.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
+import Channels from './pages/Channels/Index.vue';
+import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import { useAuthStore } from './stores/auth';
 import { useOrganizationStore } from './stores/organization';
 
@@ -18,6 +20,15 @@ const router = createRouter({
         { path: '/forgot-password', name: 'forgot-password', component: Forgot, meta: { requiresAuth: false } },
         { path: '/reset-password', name: 'reset-password', component: Reset, meta: { requiresAuth: false } },
         { path: '/', name: 'home', component: AppLayout, meta: { requiresAuth: true } },
+        { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },
+        // `INTEGRATIONS_REDIRECT_URL` (config/services.php) points every
+        // OAuth provider's redirect at this exact path — see
+        // pages/Integrations/Callback.vue's docblock. requiresAuth: true
+        // is correct, not incidental: connecting a channel only ever
+        // starts from an already-authenticated session (auth-url is
+        // gated by auth:sanctum + role:ADMIN), so the callback always
+        // arrives with that same session's cookie still valid.
+        { path: '/integrations/callback', name: 'integrations-callback', component: IntegrationsCallback, meta: { requiresAuth: true } },
         { path: '/settings/profile', name: 'settings-profile', component: Profile, meta: { requiresAuth: true } },
         { path: '/settings/team', name: 'settings-team', component: Team, meta: { requiresAuth: true } },
         { path: '/invites/:token', name: 'invites-accept', component: AcceptInvite, meta: { requiresAuth: true } },

@@ -66,9 +66,17 @@ class IntegrationController extends Controller
         return response()->json($payload);
     }
 
+    /**
+     * Eager-loads `timeSlots` so `IntegrationResource::time_slots` is
+     * actually populated here (its `whenLoaded()` would otherwise omit
+     * the key entirely) — the channels page (Task 17) has no other way
+     * to learn a channel's existing weekly schedule before opening its
+     * settings editor, since there is no single-integration `show`
+     * route.
+     */
     public function index(): JsonResponse
     {
-        return response()->json(IntegrationResource::collection(Integration::query()->get()));
+        return response()->json(IntegrationResource::collection(Integration::query()->with('timeSlots')->get()));
     }
 
     /**

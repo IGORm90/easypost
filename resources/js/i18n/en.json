@@ -5,6 +5,7 @@
     "nav": {
         "toggleTheme": "Toggle theme",
         "menu": "Menu",
+        "channels": "Channels",
         "settingsProfile": "Profile",
         "settingsTeam": "Team",
         "logout": "Log out"
@@ -115,5 +116,77 @@
     },
     "validation": {
         "generic": "Please check the form for errors."
+    },
+    "channels": {
+        "title": "Channels",
+        "connect": "Connect channel",
+        "empty": "No channels connected yet.",
+        "status": {
+            "active": "Active",
+            "disabled": "Disabled",
+            "refreshNeeded": "Reconnection required"
+        },
+        "actions": {
+            "settings": "Settings",
+            "enable": "Enable",
+            "disable": "Disable",
+            "remove": "Remove",
+            "removeConfirm": "Remove channel \"{name}\"? Scheduled posts through it will stop going out.",
+            "reconnect": "Reconnect"
+        },
+        "connectModal": {
+            "title": "Connect a channel",
+            "chooseProvider": "Choose a network",
+            "oauthIntro": "You'll be redirected to {name} to authorize.",
+            "connect": "Connect",
+            "back": "Back",
+            "fields": {
+                "instance": "Mastodon server (e.g. mastodon.social)",
+                "botToken": "Bot token",
+                "chatId": "Chat/channel id",
+                "handle": "Handle (e.g. user.bsky.social)",
+                "appPassword": "App password",
+                "token": "Access token"
+            },
+            "manualSubmit": "Connect",
+            "error": "Could not connect the channel. Check the details and try again.",
+            "permissionDenied": "You don't have permission to connect a channel."
+        },
+        "settings": {
+            "title": "\"{name}\" settings",
+            "name": "Name",
+            "groupName": "Group",
+            "customerName": "Customer",
+            "timeSlots": "Posting schedule",
+            "timeSlotsHint": "Times are shown in your timezone ({tz}); stored and synced in UTC.",
+            "addSlot": "Add slot",
+            "removeSlot": "Remove slot",
+            "save": "Save",
+            "saved": "Settings saved.",
+            "weekday": "Weekday",
+            "time": "Time"
+        },
+        "weekdays": {
+            "0": "Mon",
+            "1": "Tue",
+            "2": "Wed",
+            "3": "Thu",
+            "4": "Fri",
+            "5": "Sat",
+            "6": "Sun"
+        }
+    },
+    "integrations": {
+        "callback": {
+            "title": "Connecting channel",
+            "inProgress": "Finishing the connection…",
+            "success": "Channel \"{name}\" connected.",
+            "backToChannels": "Back to channels",
+            "errors": {
+                "denied": "Access was not granted. Please try connecting the channel again.",
+                "invalidState": "This connection attempt has expired or is invalid. Please try again.",
+                "generic": "Could not connect the channel. Please try again."
+            }
+        }
     }
 }

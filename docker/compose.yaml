@@ -26,7 +26,15 @@ services:
   node:
     image: node:22-alpine
     working_dir: /var/www/html
-    command: sh -c "npm install && npm run dev -- --host"
+    # `--host` alone binds Vite's dev server to `::` (the IPv6 unspecified
+    # address) and laravel-vite-plugin writes that literal into
+    # `public/hot`. `curl` tolerates `http://[::]:5173`, but browsers
+    # generally refuse to navigate to it, so nothing built on top of the
+    # dev server (HMR client, asset URLs) could ever be checked in a real
+    # browser. `0.0.0.0` still listens on every interface (needed so the
+    # container-external browser can reach it through the mapped port)
+    # but is a literal every browser accepts.
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     ports: ["5173:5173"]
     volumes: ["../:/var/www/html"]
   postgres:

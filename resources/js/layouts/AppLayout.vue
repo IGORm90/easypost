@@ -14,6 +14,13 @@ const auth = useAuthStore();
         <aside class="hidden w-56 shrink-0 border-r border-border bg-surface-2 p-4 md:flex md:flex-col md:gap-1">
             <p class="mb-3 text-sm font-semibold">{{ t('app.name') }}</p>
             <router-link
+                :to="{ name: 'channels' }"
+                class="rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text"
+                active-class="bg-primary-soft text-primary"
+            >
+                {{ t('nav.channels') }}
+            </router-link>
+            <router-link
                 :to="{ name: 'settings-profile' }"
                 class="rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text"
                 active-class="bg-primary-soft text-primary"
