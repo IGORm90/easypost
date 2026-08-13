@@ -1,7 +1,7 @@
 <?php
 
+use App\Models\Organization;
 use App\Support\OrganizationContext;
-use Illuminate\Support\Str;
 use Tests\Support\Jobs\RecordOrganizationContextJob;
 use Tests\Support\Jobs\SetOrganizationContextJob;
 
@@ -22,7 +22,7 @@ afterEach(function () {
 it('clears the organization context between queued jobs even when a job forgets to', function () {
     RecordOrganizationContextJob::$observedOrganizationId = 'not-run';
 
-    SetOrganizationContextJob::dispatch((string) Str::ulid());
+    SetOrganizationContextJob::dispatch(Organization::factory()->create());
     RecordOrganizationContextJob::dispatch();
 
     expect(RecordOrganizationContextJob::$observedOrganizationId)->toBeNull();

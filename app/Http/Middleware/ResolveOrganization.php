@@ -2,28 +2,27 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Organization;
+use App\Models\User;
 use App\Support\OrganizationContext;
 use Closure;
-use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Resolves the tenant for the current request from the `X-Organization`
  * header, verifies the authenticated user is a member of it, and puts the
- * organization id in OrganizationContext for the rest of the request.
+ * organization in OrganizationContext for the rest of the request.
  *
- * STUBBED pending Task 5: `userBelongsToOrganization()` cannot query the
- * `organization_user` pivot table yet because it doesn't exist until
- * Task 5's migrations land. It currently always returns false, so this
- * middleware fails closed — every request is rejected with 403 rather than
- * silently authorising everyone. Task 5 (or the task that first routes
- * traffic through this middleware) must replace the body of
- * userBelongsToOrganization() with a real lookup, e.g.:
- *
- *     return $user->organizations()->whereKey($organizationId)->exists();
- *
- * No other part of this class needs to change for that swap.
+ * Task 5 replaces the Task-4 stub (which always returned false, failing
+ * every request closed because `organization_user` didn't exist yet) with
+ * a real membership lookup. `resolveMembership()` runs a single query
+ * through `User::organizations()` (the `organization_user` pivot) scoped to
+ * the requested id: it both confirms membership and returns the
+ * Organization to store in the context, so there's no separate
+ * exists()-then-find() pair. It returns null — and this class then aborts
+ * with 403 — for all three "not admitted" cases: no membership row, no
+ * authenticated user, and an organization id that doesn't exist at all.
  */
 class ResolveOrganization
 {
@@ -37,21 +36,26 @@ class ResolveOrganization
 
         $user = $request->user();
 
-        if (! $user instanceof Authenticatable || ! $this->userBelongsToOrganization($user, $organizationId)) {
+        $organization = $user instanceof User
+            ? $this->resolveMembership($user, $organizationId)
+            : null;
+
+        if (! $organization instanceof Organization) {
             abort(403, 'You are not a member of this organization.');
         }
 
-        OrganizationContext::set($organizationId);
+        OrganizationContext::set($organization);
 
         return $next($request);
     }
 
     /**
-     * STUB — see class docblock. Always false until Task 5 provides the
-     * organization_user pivot to check membership against.
+     * Returns the Organization if $user is a verified member of it, or
+     * null otherwise (covers both "no membership row" and "no such
+     * organization" — both fail closed identically).
      */
-    protected function userBelongsToOrganization(Authenticatable $user, string $organizationId): bool
+    protected function resolveMembership(User $user, string $organizationId): ?Organization
     {
-        return false;
+        return $user->organizations()->whereKey($organizationId)->first();
     }
 }

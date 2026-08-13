@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Organization;
 use App\Support\OrganizationContext;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -7,14 +8,20 @@ use Illuminate\Support\Str;
 use Tests\Support\Models\TenantStub;
 
 /*
- * Organization and Tag do not exist yet (Task 5 and Task 18 respectively).
- * These tests exercise BelongsToOrganization against a throwaway table/model
- * (see tests/Support/Models/TenantStub.php) so the trait itself is what's
- * under test, not any particular tenant-owned domain model. Plain ULID
- * strings stand in for organization ids — no Organization row is needed
- * because the trait only ever compares organization_id to
- * OrganizationContext::id(), never resolves an Organization model.
+ * These tests exercise BelongsToOrganization against a throwaway
+ * table/model (see tests/Support/Models/TenantStub.php) so the trait
+ * itself is what's under test, not any particular tenant-owned domain
+ * model. `OrganizationContext::set()` (Task 5) requires a real Organization
+ * instance, but only ever reads its `id` — so these use unsaved,
+ * forceFill()'d instances rather than persisting real organizations rows,
+ * keeping this file independent of the `organizations` table and free of
+ * side effects on it (this suite has no RefreshDatabase, see tests/Pest.php).
  */
+function orgWithId(string $id): Organization
+{
+    return (new Organization)->forceFill(['id' => $id]);
+}
+
 beforeEach(function () {
     // Defensive: drop any leftover table from a previous run that died
     // between beforeEach and afterEach (e.g. a fatal error mid-test).
@@ -40,7 +47,7 @@ it('scopes queries to the current organization', function () {
     TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
     TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
 
-    OrganizationContext::set($orgA);
+    OrganizationContext::set(orgWithId($orgA));
 
     expect(TenantStub::pluck('name')->all())->toBe(['a']);
 });
@@ -48,7 +55,7 @@ it('scopes queries to the current organization', function () {
 it('auto-fills organization_id on create', function () {
     $orgA = (string) Str::ulid();
 
-    OrganizationContext::set($orgA);
+    OrganizationContext::set(orgWithId($orgA));
 
     expect(TenantStub::create(['name' => 'x'])->organization_id)->toBe($orgA);
 });
@@ -71,7 +78,7 @@ it('lets withoutGlobalScopes bypass the tenant scope', function () {
     TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
     TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
 
-    OrganizationContext::set($orgA);
+    OrganizationContext::set(orgWithId($orgA));
 
     $names = TenantStub::withoutGlobalScopes()->pluck('name')->all();
     sort($names);
@@ -83,7 +90,7 @@ it('does not overwrite an explicitly-set organization_id on create', function ()
     $orgA = (string) Str::ulid();
     $orgB = (string) Str::ulid();
 
-    OrganizationContext::set($orgA);
+    OrganizationContext::set(orgWithId($orgA));
 
     $stub = TenantStub::create(['name' => 'x', 'organization_id' => $orgB]);
 
@@ -97,7 +104,7 @@ it('does not let a mass update from organization B touch organization A rows', f
     $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
     TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
 
-    OrganizationContext::set($orgB);
+    OrganizationContext::set(orgWithId($orgB));
 
     // A blanket update with no WHERE clause of its own — the global scope
     // is the only thing standing between this and cross-tenant writes.
@@ -114,7 +121,7 @@ it('does not let a mass delete from organization B touch organization A rows', f
     $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
     TenantStub::create(['organization_id' => $orgB, 'name' => 'b']);
 
-    OrganizationContext::set($orgB);
+    OrganizationContext::set(orgWithId($orgB));
 
     TenantStub::query()->delete();
 
@@ -127,7 +134,7 @@ it('does not let destroy() from organization B remove an organization A row by i
 
     $a = TenantStub::create(['organization_id' => $orgA, 'name' => 'a']);
 
-    OrganizationContext::set($orgB);
+    OrganizationContext::set(orgWithId($orgB));
 
     TenantStub::destroy($a->id);
 

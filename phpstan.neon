@@ -24,10 +24,3 @@ parameters:
         -
             message: '#^Call to an undefined method (?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy)(?:\|(?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy))*::\w+\(\)\.$#'
             path: tests/*
-        # App\Models\Organization and App\Models\User (with the organization_user pivot) are
-        # introduced in Task 5. The actingAsMember() helper in tests/Pest.php references them
-        # ahead of time so it is ready for Task 5+; PHP resolves class names lazily, so the
-        # helper is harmless while unused. Remove this ignore once Task 5 lands the models.
-        -
-            identifier: class.notFound
-            path: tests/Pest.php

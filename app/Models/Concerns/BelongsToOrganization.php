@@ -2,8 +2,10 @@
 
 namespace App\Models\Concerns;
 
+use App\Models\Organization;
 use App\Support\OrganizationContext;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Scopes a model to the current tenant (organization) and auto-fills
@@ -23,10 +25,10 @@ use Illuminate\Database\Eloquent\Builder;
  * so this does not block legitimate cross-tenant access — it only removes
  * the accidental, implicit kind.
  *
- * `organization()` is intentionally omitted for now: `App\Models\Organization`
- * does not exist yet (Task 5). Adding a `belongsTo(Organization::class)`
- * here would fail PHPStan (`class.notFound`) today. Task 5 should add the
- * relation to this trait once the model exists.
+ * `organization()` now resolves for real: `App\Models\Organization` exists
+ * as of Task 5.
+ *
+ * @property string|null $organization_id
  */
 trait BelongsToOrganization
 {
@@ -48,5 +50,13 @@ trait BelongsToOrganization
         static::creating(function ($model): void {
             $model->organization_id ??= OrganizationContext::id();
         });
+    }
+
+    /**
+     * @return BelongsTo<Organization, $this>
+     */
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
     }
 }

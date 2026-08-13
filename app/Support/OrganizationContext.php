@@ -2,43 +2,41 @@
 
 namespace App\Support;
 
+use App\Models\Organization;
+
 /**
- * Holds the current tenant's organization id for the duration of a request
+ * Holds the current tenant's Organization for the duration of a request
  * (or console/job execution once callers opt in explicitly).
  *
- * Deviation from the plan's illustrative signature: `App\Models\Organization`
- * does not exist yet (it is Task 5's deliverable), so this class cannot type
- * against it without breaking PHPStan (`class.notFound`) the moment it's
- * introduced. Holding only the id keeps this class honest about what it
- * actually has today. `get()` currently returns the id, matching `id()`;
- * once Organization exists, Task 5 (or whichever task first needs the
- * resolved model) may change `get()` to resolve and return the Organization
- * instance instead, without needing to touch `set()`/`id()`.
+ * Task 5 restores the plan's intended API now that `App\Models\Organization`
+ * exists: `set()` takes the resolved Organization instance (not just its
+ * id) and `get()` returns it directly. Holding the whole model — set once
+ * by whoever resolved it (e.g. `ResolveOrganization` middleware, which
+ * already has to query it to verify membership) — means `id()`, which
+ * `BelongsToOrganization`'s global scope calls on every single query, never
+ * has to hit the database itself.
  */
 final class OrganizationContext
 {
-    private static ?string $organizationId = null;
+    private static ?Organization $organization = null;
 
-    public static function set(string $organizationId): void
+    public static function set(Organization $organization): void
     {
-        self::$organizationId = $organizationId;
+        self::$organization = $organization;
     }
 
     /**
-     * Returns the current organization id.
-     *
-     * Named `get()` to match the interface the plan anticipates; it returns
-     * the id (not an Organization instance) because that model does not
-     * exist yet. See the class docblock.
+     * Returns the current organization, or null if none has been resolved
+     * for this request/job.
      */
-    public static function get(): ?string
+    public static function get(): ?Organization
     {
-        return self::$organizationId;
+        return self::$organization;
     }
 
     public static function id(): ?string
     {
-        return self::$organizationId;
+        return self::$organization?->id;
     }
 
     /**
@@ -47,6 +45,6 @@ final class OrganizationContext
      */
     public static function clear(): void
     {
-        self::$organizationId = null;
+        self::$organization = null;
     }
 }
