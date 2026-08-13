@@ -10,6 +10,7 @@ use App\Http\Requests\UpdatePostRequest;
 use App\Http\Resources\PostGroupResource;
 use App\Models\PostGroup;
 use App\Services\Posts\PostGroupService;
+use App\Services\Posts\ShareService;
 use App\Services\Posts\SlotFinderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
@@ -37,6 +38,7 @@ class PostController extends Controller
     public function __construct(
         private readonly PostGroupService $groups,
         private readonly SlotFinderService $slotFinder,
+        private readonly ShareService $shares,
     ) {}
 
     /**
@@ -95,6 +97,35 @@ class PostController extends Controller
         $group = $this->groups->updateDate($group, $request->date('publish_date'));
 
         return response()->json(new PostGroupResource($group->load(['posts', 'tags'])));
+    }
+
+    /**
+     * POST /api/posts/{group}/share (Task 22) — mints (or replaces) the
+     * group's public share_token and returns the public URL for it.
+     * Same 'manage' bar as update/destroy: minting a link that makes
+     * this group's content publicly readable is a mutating, content-
+     * altering action, not a read.
+     */
+    public function share(string $group): JsonResponse
+    {
+        $group = $this->findAuthorized($group, 'manage');
+        $url = $this->shares->generate($group);
+
+        return response()->json(['url' => $url]);
+    }
+
+    /**
+     * DELETE /api/posts/{group}/share (Task 22) — revokes the group's
+     * share link. Idempotent: a group with no active token simply gets
+     * NULLed again (a no-op), never a 404/409 — "make sure this isn't
+     * shared" should always succeed.
+     */
+    public function unshare(string $group): Response
+    {
+        $group = $this->findAuthorized($group, 'manage');
+        $this->shares->revoke($group);
+
+        return response()->noContent();
     }
 
     private function findAuthorized(string $id, string $ability): PostGroup

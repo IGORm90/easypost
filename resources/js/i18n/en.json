@@ -176,6 +176,11 @@
             "6": "Sun"
         }
     },
+    "sharedPost": {
+        "publishDate": "Publish date",
+        "notFound": "This link is invalid or is no longer shared.",
+        "empty": "Nothing to preview yet."
+    },
     "integrations": {
         "callback": {
             "title": "Connecting channel",

@@ -9,16 +9,24 @@ import Team from './pages/Settings/Team.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
+import SharedPost from './pages/Public/SharedPost.vue';
 import { useAuthStore } from './stores/auth';
 import { useOrganizationStore } from './stores/organization';
 
 const router = createRouter({
     history: createWebHistory(),
     routes: [
-        { path: '/login', name: 'login', component: Login, meta: { requiresAuth: false } },
-        { path: '/register', name: 'register', component: Register, meta: { requiresAuth: false } },
-        { path: '/forgot-password', name: 'forgot-password', component: Forgot, meta: { requiresAuth: false } },
-        { path: '/reset-password', name: 'reset-password', component: Reset, meta: { requiresAuth: false } },
+        { path: '/login', name: 'login', component: Login, meta: { requiresAuth: false, guestOnly: true } },
+        { path: '/register', name: 'register', component: Register, meta: { requiresAuth: false, guestOnly: true } },
+        { path: '/forgot-password', name: 'forgot-password', component: Forgot, meta: { requiresAuth: false, guestOnly: true } },
+        { path: '/reset-password', name: 'reset-password', component: Reset, meta: { requiresAuth: false, guestOnly: true } },
+        // Task 22's public share page: no session required, and — unlike
+        // the guest-only auth pages above — a signed-in member must NOT
+        // be bounced away from it either (a teammate opening their own
+        // share link is a completely normal case). See the guard below:
+        // it only redirects away routes with `guestOnly`, which this
+        // route deliberately does not set.
+        { path: '/share/:token', name: 'shared-post', component: SharedPost, meta: { requiresAuth: false } },
         { path: '/', name: 'home', component: AppLayout, meta: { requiresAuth: true } },
         { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },
         // `INTEGRATIONS_REDIRECT_URL` (config/services.php) points every
@@ -60,8 +68,10 @@ router.beforeEach(async (to) => {
     }
 
     // Signed-in users hitting /login, /register, etc. get bounced home
-    // instead of seeing the auth forms again.
-    if (!to.meta.requiresAuth && auth.user) {
+    // instead of seeing the auth forms again. `guestOnly`, not merely
+    // `!requiresAuth`: a public, no-auth route like /share/:token must
+    // stay reachable for a signed-in member too (see that route's meta).
+    if (to.meta.guestOnly && auth.user) {
         return { name: 'home' };
     }
 

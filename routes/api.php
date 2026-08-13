@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CalendarController;
+use App\Http\Controllers\Api\CommentController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\ImpersonationController;
 use App\Http\Controllers\Api\IntegrationController;
@@ -11,6 +12,7 @@ use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\PostController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\PublicPostController;
 use App\Http\Controllers\Api\TagController;
 use Illuminate\Support\Facades\Route;
 
@@ -161,6 +163,29 @@ Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(func
     Route::delete('{group}', [PostController::class, 'destroy']);
     Route::post('{group}/duplicate', [PostController::class, 'duplicate']);
     Route::patch('{group}/date', [PostController::class, 'updateDate']);
+
+    // Task 22. `{group}` is resolved/authorized inside each controller
+    // the same PostGroup::query()->findOrFail() + Gate::authorize() way
+    // as every other {group} action above — see CommentController's and
+    // PostController::findAuthorized()'s docblocks.
+    Route::get('{group}/comments', [CommentController::class, 'index']);
+    Route::post('{group}/comments', [CommentController::class, 'store']);
+    Route::post('{group}/share', [PostController::class, 'share']);
+    Route::delete('{group}/share', [PostController::class, 'unshare']);
+});
+
+/*
+ * Task 22: GET /api/public/posts/{token}. Deliberately outside every
+ * auth/organization/role middleware group in this file — this is the one
+ * endpoint in the whole application meant to work for a caller with no
+ * session and no membership at all. See PublicPostController and
+ * ShareService::findForPublic() for how it stays safe without any of
+ * that: an unguessable/revocable token standing in for the tenant check,
+ * IP-keyed throttling, and a response shape that carries no ids, no
+ * organization data and no comments.
+ */
+Route::prefix('public')->group(function () {
+    Route::get('posts/{token}', [PublicPostController::class, 'show']);
 });
 
 /*
