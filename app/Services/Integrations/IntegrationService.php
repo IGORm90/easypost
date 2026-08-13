@@ -5,6 +5,9 @@ namespace App\Services\Integrations;
 use App\Models\Integration;
 use App\Models\Organization;
 use App\Social\Dto\AuthResultDto;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Owns writes to the `integrations` table: connecting/reconnecting a
@@ -44,16 +47,13 @@ class IntegrationService
      * organization's soft-deleted row — the query simply never sees rows
      * outside $org, deleted or not. A database-level partial unique index
      * (see the `integrations` migration) backs this against a race
-     * between two concurrent connect() calls for the same key.
+     * between two concurrent connect() calls for the same key — see
+     * `save()`'s try/catch below for how a lost race is handled rather
+     * than left to surface as a raw 500 mid-OAuth-callback.
      */
     public function connect(Organization $org, string $providerIdentifier, AuthResultDto $auth): Integration
     {
-        $integration = Integration::withoutGlobalScope('organization')
-            ->withTrashed()
-            ->where('organization_id', $org->id)
-            ->where('provider_identifier', $providerIdentifier)
-            ->where('internal_id', $auth->internalId)
-            ->first();
+        $integration = $this->findUpsertTarget($org, $providerIdentifier, $auth->internalId);
 
         if (! $integration instanceof Integration) {
             $integration = new Integration([
@@ -71,9 +71,71 @@ class IntegrationService
         $integration->token_expires_at = $auth->expiresAt;
         $integration->settings = $auth->settings;
         $integration->refresh_needed = false;
-        $integration->save();
+
+        try {
+            // Wrapped in its own transaction (a SAVEPOINT when already
+            // inside an outer one, e.g. under RefreshDatabase in tests):
+            // Postgres aborts the whole enclosing transaction after a
+            // failed statement, which would otherwise poison the
+            // recovery lookup below with "current transaction is
+            // aborted" instead of letting it run.
+            DB::transaction(function () use ($integration): void {
+                $integration->save();
+            });
+        } catch (QueryException $e) {
+            // Lost the race: our initial lookup ran before a concurrent
+            // connect() for the same (org, provider, internal_id) key
+            // committed its insert, so ours collided with the partial
+            // unique index instead of finding a row to update. That
+            // concurrent call already produced the correct, live
+            // integration — re-fetch and return it rather than letting
+            // this surface as an uncaught QueryException mid-callback.
+            // Narrowly matched on the specific index name so an
+            // unrelated constraint violation still propagates as a real
+            // error instead of being silently swallowed.
+            if (! str_contains($e->getMessage(), 'integrations_org_provider_internal_live_unique')) {
+                throw $e;
+            }
+
+            $winner = $this->findUpsertTarget($org, $providerIdentifier, $auth->internalId);
+
+            if (! $winner instanceof Integration) {
+                throw $e;
+            }
+
+            return $winner;
+        }
 
         return $integration;
+    }
+
+    /**
+     * Updates display/organizational metadata (never `token`,
+     * `refresh_token`, or anything OAuth-identity-related — those are
+     * only ever written by `connect()`/`SupportsRefresh::refresh()`) and,
+     * when `time_slots` is present, replaces the integration's weekly
+     * posting slots wholesale. `$data` is expected pre-validated by
+     * `UpdateIntegrationRequest` (range/uniqueness of `time_slots`
+     * already enforced there).
+     *
+     * @param  array{name?: string, group_name?: ?string, customer_name?: ?string, settings?: ?array<string, mixed>, time_slots?: list<int>}  $data
+     */
+    public function update(Integration $integration, array $data): Integration
+    {
+        DB::transaction(function () use ($integration, $data): void {
+            $integration->fill(Arr::only($data, ['name', 'group_name', 'customer_name', 'settings']));
+            $integration->save();
+
+            if (array_key_exists('time_slots', $data)) {
+                $integration->timeSlots()->delete();
+
+                foreach ($data['time_slots'] as $minutes) {
+                    $integration->timeSlots()->create(['minutes_from_week_start' => $minutes]);
+                }
+            }
+        });
+
+        return $integration->fresh('timeSlots') ?? $integration;
     }
 
     public function disable(Integration $integration): void
@@ -89,5 +151,22 @@ class IntegrationService
     public function softDelete(Integration $integration): void
     {
         $integration->delete();
+    }
+
+    /**
+     * The upsert lookup shared by both the initial attempt and the
+     * lost-race recovery path in connect(). Protected (not private) so a
+     * test can override it to deterministically force the race window —
+     * see IntegrationApiTest's concurrent-connect coverage — without
+     * needing genuine multi-process concurrency.
+     */
+    protected function findUpsertTarget(Organization $org, string $providerIdentifier, string $internalId): ?Integration
+    {
+        return Integration::withoutGlobalScope('organization')
+            ->withTrashed()
+            ->where('organization_id', $org->id)
+            ->where('provider_identifier', $providerIdentifier)
+            ->where('internal_id', $internalId)
+            ->first();
     }
 }

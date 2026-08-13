@@ -8,6 +8,7 @@ use Database\Factories\IntegrationFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
@@ -96,5 +97,19 @@ class Integration extends Model
             'in_between_steps' => 'boolean',
             'refresh_needed' => 'boolean',
         ];
+    }
+
+    /**
+     * Weekly recurring posting slots for this channel (Task 13's `PUT
+     * .../{id}` accepts `time_slots[]`). No independent tenant scope on
+     * `IntegrationTimeSlot` itself — it is reached exclusively through an
+     * already organization-scoped `Integration`, so the boundary is
+     * inherited, not re-declared.
+     *
+     * @return HasMany<IntegrationTimeSlot, $this>
+     */
+    public function timeSlots(): HasMany
+    {
+        return $this->hasMany(IntegrationTimeSlot::class);
     }
 }

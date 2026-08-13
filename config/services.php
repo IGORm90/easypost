@@ -65,4 +65,19 @@ return [
     // redirect by an attacker-supplied `?redirect=` value.
     'oauth_spa_redirect_url' => env('OAUTH_SPA_REDIRECT_URL', env('APP_URL', 'http://localhost')),
 
+    // The SPA page that receives a provider's OAuth redirect when
+    // connecting a channel (Task 13), passed as `redirect_uri` to
+    // SocialProviderInterface::generateAuthUrl()/authenticate(). That page
+    // reads `code`/`state` (or whatever the provider appended) from its
+    // own URL and POSTs them to
+    // `/api/integrations/{provider}/callback` — this backend never
+    // receives the provider's redirect directly, so (unlike
+    // oauth_spa_redirect_url above) there is no open-redirect concern
+    // here: this URL is never used in an HTTP redirect response, only
+    // handed to the provider as the target for ITS redirect.
+    'integrations_redirect_url' => env(
+        'INTEGRATIONS_REDIRECT_URL',
+        rtrim(env('OAUTH_SPA_REDIRECT_URL', env('APP_URL', 'http://localhost')), '/').'/integrations/callback'
+    ),
+
 ];

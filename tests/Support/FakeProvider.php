@@ -4,6 +4,7 @@ namespace Tests\Support;
 
 use App\Models\Integration;
 use App\Social\Contracts\SocialProviderInterface;
+use App\Social\Contracts\SupportsOptions;
 use App\Social\Dto\AuthResultDto;
 use App\Social\Dto\AuthUrlDto;
 use App\Social\Dto\PostPayloadDto;
@@ -14,6 +15,7 @@ use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
+use App\Social\Exceptions\UnknownProviderOptionException;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -36,7 +38,7 @@ use Throwable;
  *   $provider->failNextPostWith(new ProviderRateLimitException('slow down', 30));
  *   $provider->post($integration, [$payload]); // throws that exception once
  */
-class FakeProvider implements SocialProviderInterface
+class FakeProvider implements SocialProviderInterface, SupportsOptions
 {
     private ProviderCapabilities $capabilities;
 
@@ -324,6 +326,28 @@ class FakeProvider implements SocialProviderInterface
             fn (array $segment): string => $segment['releaseId'],
             array_filter($this->publishedSegments, fn (array $segment): bool => $segment['attachedTo'] === null),
         ));
+    }
+
+    /**
+     * SupportsOptions implementation, exercised by Task 13's generic
+     * `GET /api/integrations/{id}/options/{option}` endpoint tests: a
+     * canned 'rooms' list, and UnknownProviderOptionException for
+     * anything else — proving the controller stays generic (it never
+     * hardcodes 'rooms' anywhere) while still exercising both the happy
+     * path and the "provider doesn't recognise this option" 404 path.
+     *
+     * @return array<int, array{value: string, label: string}>
+     */
+    public function options(Integration $integration, string $option): array
+    {
+        if ($option !== 'rooms') {
+            throw UnknownProviderOptionException::forOption($this->identifier(), $option);
+        }
+
+        return [
+            ['value' => 'general', 'label' => 'General'],
+            ['value' => 'random', 'label' => 'Random'],
+        ];
     }
 
     /** Reset all queued failures and recorded calls between test cases. */

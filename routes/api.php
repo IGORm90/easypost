@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\ImpersonationController;
+use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\InviteController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
@@ -95,4 +96,40 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('admin/impersonate/stop', [ImpersonationController::class, 'stop']);
     Route::post('admin/impersonate/{user}', [ImpersonationController::class, 'start'])
         ->middleware('superadmin');
+});
+
+/*
+ * Channels (Task 13). `auth:sanctum` gates all of it.
+ *
+ * `providers` is a catalogue endpoint (no tenant), so it sits outside the
+ * `organization` group entirely.
+ *
+ * `{provider}/callback` deliberately does NOT require the `organization`
+ * middleware/X-Organization header — see IntegrationController::callback()
+ * and OAuthStateService's docblocks for why: the organization for the
+ * connect is the one bound to the OAuth `state`, resolved by
+ * OAuthStateService, never anything this request could otherwise supply.
+ * Every other route here (list, auth-url, and the `{id}`-scoped actions)
+ * is a normal tenant-scoped action and requires it, same as
+ * organizations/current/* above. `auth-url` additionally requires
+ * `role:ADMIN`: starting a connect flow carries the same authorization
+ * bar as completing one (see IntegrationPolicy::manage()).
+ */
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('providers', [IntegrationController::class, 'providers']);
+
+    Route::prefix('integrations')->group(function () {
+        Route::post('{provider}/callback', [IntegrationController::class, 'callback']);
+
+        Route::middleware('organization')->group(function () {
+            Route::get('/', [IntegrationController::class, 'index']);
+            Route::post('{provider}/auth-url', [IntegrationController::class, 'authUrl'])
+                ->middleware('role:ADMIN');
+            Route::get('{id}/options/{option}', [IntegrationController::class, 'options']);
+            Route::put('{id}', [IntegrationController::class, 'update']);
+            Route::post('{id}/disable', [IntegrationController::class, 'disable']);
+            Route::post('{id}/enable', [IntegrationController::class, 'enable']);
+            Route::delete('{id}', [IntegrationController::class, 'destroy']);
+        });
+    });
 });
