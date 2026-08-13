@@ -12,6 +12,7 @@ use App\Social\Exceptions\ProviderTransientException;
 use App\Social\Exceptions\UnknownProviderOptionException;
 use App\Social\ProviderRegistry;
 use App\Social\Providers\SlackProvider;
+use App\Support\SafeRemoteHost;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 
@@ -27,7 +28,20 @@ use Illuminate\Support\Facades\Http;
  * (settings.channel_id) populated via the generic SupportsOptions hook
  * (GET /api/integrations/{id}/options/channels), backed here by
  * conversations.list.
+ *
+ * DNS is faked for every test via SafeRemoteHost::fake() (same
+ * convention as MastodonProviderTest/DiscordProviderTest) so
+ * uploadMedia()'s host-pin check on the files.slack.com upload url
+ * (Task 15 review, Finding 3) never touches real DNS/network.
  */
+
+beforeEach(function () {
+    SafeRemoteHost::fake(['files.slack.com' => ['198.51.100.30']]);
+});
+
+afterEach(function () {
+    SafeRemoteHost::stopFaking();
+});
 
 /**
  * @return array<string, mixed>
@@ -148,6 +162,29 @@ it('uploads media via the three-step external upload flow and returns a MediaDto
     expect($uploaded->remoteId)->toBe('F0123ABCXYZ');
 });
 
+// --- Task 15 review, Finding 3: the upload url returned by
+// files.getUploadURLExternal is a network target exactly like Discord's
+// webhook url, and must be pinned to a slack.com host the same way.
+
+it('rejects an upload url that does not point at a slack.com host', function () {
+    $tampered = slackFixture('slack_get_upload_url');
+    $tampered['upload_url'] = 'https://evil.internal/steal-this';
+
+    Http::fake([
+        'slack.com/api/files.getUploadURLExternal' => Http::response($tampered),
+    ]);
+
+    $integration = slackIntegration();
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png');
+    $provider = app(ProviderRegistry::class)->get('slack');
+    expect($provider)->toBeInstanceOf(SlackProvider::class);
+    /** @var SlackProvider $provider */
+    expect(fn () => $provider->uploadMedia($integration, $media))
+        ->toThrow(ProviderPermanentException::class);
+
+    Http::assertNotSent(fn ($request) => str_contains($request->url(), 'evil.internal'));
+});
+
 // --- post(): happy path --------------------------------------------------
 
 it('publishes a message and returns the ts as the release id', function () {
@@ -165,6 +202,26 @@ it('publishes a message and returns the ts as the release id', function () {
         && $request['channel'] === 'C0EAQDV4Z'
         && $request['text'] === 'hello'
         && ! isset($request['thread_ts']));
+});
+
+// --- Task 15 review, Minor 3: a media-only post (no caption) must not
+// be rejected by Slack's `no_text` validation -- Task 25's editor will
+// let users compose exactly this.
+
+it('publishes a media-only post (empty content) without tripping Slack\'s no_text rejection', function () {
+    Http::fake([
+        'slack.com/api/chat.postMessage' => Http::response(slackFixture('slack_post_message')),
+        'slack.com/api/files.completeUploadExternal' => Http::response(slackFixture('slack_complete_upload')),
+    ]);
+
+    $integration = slackIntegration();
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png', remoteId: 'F0123ABCXYZ');
+    $result = app(ProviderRegistry::class)->get('slack')->post($integration, [new PostPayloadDto('', [$media])]);
+
+    expect($result)->toHaveCount(1);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'chat.postMessage')
+        && $request['text'] !== '');
 });
 
 it('publishes a thread where every reply anchors to the thread root ts, not the previous reply', function () {
@@ -199,6 +256,65 @@ it('publishes media by sharing pre-uploaded files alongside the message', functi
     Http::assertSent(fn ($request) => str_contains($request->url(), 'files.completeUploadExternal')
         && $request['channel_id'] === 'C0EAQDV4Z'
         && $request['thread_ts'] === '1503435956.000247');
+});
+
+// --- Task 15 review, Finding 1 (CRITICAL): chat.postMessage genuinely
+// publishes a live message the instant it succeeds -- a subsequent
+// files.completeUploadExternal failure must never cause that published
+// message to be lost from $published (which would make a pipeline retry
+// post it a second time, and would orphan it forever if this had been
+// the last chain segment).
+
+it('records the published text message even when attaching its media fails, instead of losing it', function () {
+    Http::fake([
+        'slack.com/api/chat.postMessage' => Http::response(slackFixture('slack_post_message')),
+        'slack.com/api/files.completeUploadExternal' => Http::response(['ok' => false, 'error' => 'internal_error'], 503),
+    ]);
+
+    $integration = slackIntegration();
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png', remoteId: 'F0123ABCXYZ');
+
+    try {
+        app(ProviderRegistry::class)->get('slack')->post($integration, [new PostPayloadDto('with media', [$media])]);
+        test()->fail('Expected ProviderPartialFailureException.');
+    } catch (ProviderPartialFailureException $e) {
+        // The text message's own ts is in $published -- the pipeline's
+        // documented contract (ProviderPartialFailureException's
+        // docblock) is to persist every index present here and never
+        // retry/re-post it, which is exactly what keeps a retry from
+        // duplicating this message.
+        expect($e->published)->toHaveCount(1)
+            ->and($e->published[0]->releaseId)->toBe('1503435956.000247');
+    }
+
+    // Exactly one chat.postMessage call happened -- the invariant this
+    // finding asked to be tested: a retry (which, per the pipeline
+    // contract above, would never re-include an index already present
+    // in $published) cannot produce a second visible message, because
+    // the provider never told the pipeline this one was missing.
+    Http::assertSentCount(2); // chat.postMessage + the failed completeUploadExternal attempt
+});
+
+it('records every already-published segment, including a media-attach failure on a later segment', function () {
+    Http::fake([
+        'slack.com/api/chat.postMessage' => Http::sequence()
+            ->push(slackFixture('slack_post_message'))
+            ->push(slackFixture('slack_post_message_reply')),
+        'slack.com/api/files.completeUploadExternal' => Http::response(['ok' => false, 'error' => 'internal_error'], 503),
+    ]);
+
+    $integration = slackIntegration();
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png', remoteId: 'F0123ABCXYZ');
+    $chain = [new PostPayloadDto('first, text only'), new PostPayloadDto('second, with media', [$media])];
+
+    try {
+        app(ProviderRegistry::class)->get('slack')->post($integration, $chain);
+        test()->fail('Expected ProviderPartialFailureException.');
+    } catch (ProviderPartialFailureException $e) {
+        expect($e->published)->toHaveCount(2)
+            ->and($e->published[0]->releaseId)->toBe('1503435956.000247')
+            ->and($e->published[1]->releaseId)->toBe('1503435957.000300');
+    }
 });
 
 it('rejects publishing media that was never pre-uploaded', function () {

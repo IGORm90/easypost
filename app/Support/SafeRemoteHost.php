@@ -82,8 +82,19 @@ final class SafeRemoteHost
     {
         $parts = parse_url($url);
 
+        // Deliberately does NOT embed $url in the exception (review
+        // finding on Task 15): unlike Mastodon's bare instance host (the
+        // only caller when this method was first written), Discord's
+        // webhook url IS the credential -- a malformed/tampered stored
+        // value could still contain it verbatim even though it fails to
+        // parse as a URL at all, and this is the one branch here that
+        // had direct access to the raw, unparsed input rather than an
+        // already-extracted host/scheme. Every other branch below only
+        // ever embeds a value parse_url() or DNS resolution already
+        // pulled apart (a bare host, a scheme, a resolved IP) -- never
+        // the original credential-bearing string.
         if (! is_array($parts) || ! isset($parts['scheme'], $parts['host'])) {
-            throw UnsafeRemoteHostException::forHost($url, 'is not a valid absolute URL');
+            throw UnsafeRemoteHostException::forMalformedUrl();
         }
 
         if (strtolower($parts['scheme']) !== 'https') {

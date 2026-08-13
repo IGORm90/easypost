@@ -97,3 +97,22 @@ it('rejects a malformed URL', function () {
     expect(fn () => SafeRemoteHost::assertSafeUrl('not-a-url'))
         ->toThrow(UnsafeRemoteHostException::class);
 });
+
+// --- Task 15 review, Finding 2 (Important): a caller may feed a
+// credential-bearing string through assertSafeUrl() (Discord's stored
+// webhook url IS its credential). If that string is malformed enough
+// that parse_url() can't extract a scheme/host from it, the raw input
+// is all this method has left -- and must NOT echo it back, or a
+// tampered/corrupted stored credential leaks into the exception message
+// (and from there, into logs).
+
+it('does not embed the raw input in the exception message for a malformed, credential-bearing URL', function () {
+    $secret = 'super-secret-webhook-token-xyz789';
+
+    try {
+        SafeRemoteHost::assertSafeUrl("not a url at all {$secret}");
+        test()->fail('Expected UnsafeRemoteHostException.');
+    } catch (UnsafeRemoteHostException $e) {
+        expect($e->getMessage())->not->toContain($secret);
+    }
+});

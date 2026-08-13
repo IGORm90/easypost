@@ -257,10 +257,18 @@ class DiscordProvider implements SocialProviderInterface
 
         try {
             return $this->validatedWebhookUrl($token);
-        } catch (ProviderPermanentException $e) {
-            throw new ProviderPermanentException(
-                "This Discord channel's webhook url is no longer safe to use: {$e->getMessage()}",
-            );
+        } catch (ProviderPermanentException) {
+            // Deliberately a fresh, fixed message -- NOT $e->getMessage()
+            // (Task 15 review, Finding 2): the webhook url is a live
+            // credential, and forwarding whatever validatedWebhookUrl()
+            // threw would make this call site trust that nothing
+            // upstream (SafeRemoteHost today, whatever validates it
+            // next) ever puts the raw value in its own message. That
+            // trust was misplaced once already (SafeRemoteHost's
+            // malformed-URL branch used to do exactly that) -- this
+            // call site does not re-embed a caught message, full stop,
+            // regardless of whether the current upstream is safe.
+            throw new ProviderPermanentException("This Discord channel's webhook url is no longer safe to use.");
         }
     }
 
@@ -268,8 +276,8 @@ class DiscordProvider implements SocialProviderInterface
     {
         try {
             $host = SafeRemoteHost::assertSafeUrl($url);
-        } catch (UnsafeRemoteHostException $e) {
-            throw new ProviderPermanentException("Discord webhook url is not safe to use: {$e->getMessage()}");
+        } catch (UnsafeRemoteHostException) {
+            throw new ProviderPermanentException('Discord webhook url is not safe to use.');
         }
 
         if ($host !== 'discord.com' && ! str_ends_with($host, '.discord.com')) {

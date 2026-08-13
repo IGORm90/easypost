@@ -19,6 +19,8 @@ use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use App\Social\Exceptions\UnknownProviderOptionException;
+use App\Support\Exceptions\UnsafeRemoteHostException;
+use App\Support\SafeRemoteHost;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
@@ -229,15 +231,18 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
             throw new ProviderPermanentException('Slack did not return an upload url/file id.');
         }
 
-        // Not run through SafeRemoteHost, deliberately: unlike Discord's
-        // webhook url (a long-lived, persisted credential this app
-        // reuses on every future publish -- see DiscordProvider's
-        // docblock for why THAT gets a host-pin check as defense in
-        // depth), $uploadUrl is single-use, ephemeral, and freshly
-        // returned by an authenticated call this same method just made
-        // to Slack's own API -- there is no persisted value here an
-        // attacker could tamper with between issuance and use, and
-        // nothing about it is user-supplied at any point.
+        // Pinned through SafeRemoteHost plus an explicit *.slack.com
+        // host check, mirroring DiscordProvider::validatedWebhookUrl()
+        // (Task 15 review, Finding 3): $uploadUrl is single-use and
+        // freshly returned by an authenticated call this same method
+        // just made, but that is exactly the same category of value
+        // Discord's webhook url is (a network target taken verbatim from
+        // a provider API response, never typed by a user) -- treating
+        // the two inconsistently was the actual bug, not a considered
+        // difference. Defends against a malformed/unexpected
+        // upload_url in a future API response, not against the current
+        // request being tampered with in flight.
+        $this->assertUploadUrlIsSlackHosted($uploadUrl);
 
         $this->call(
             fn (): Response => Http::attach('file', (string) file_get_contents($media->path), $filename)
@@ -280,8 +285,23 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
                 $threadTs = $payload->replyToReleaseId;
             }
 
+            // publishText() and the media share below are deliberately
+            // TWO separate try/catch points, not one (Task 15 review,
+            // Finding 1 -- CRITICAL): chat.postMessage genuinely
+            // publishes a live, visible message the instant it succeeds,
+            // before files.completeUploadExternal is ever attempted.
+            // Treating the two as a single failable unit meant a
+            // completeUploadExternal failure (rate limit, expired
+            // upload, 5xx) propagated past the point where $results[$index]
+            // was ever set -- so the pipeline was told this segment
+            // never published (losing track of a message actually live
+            // in the customer's Slack channel) and, on retry, posted it
+            // a second time. $results[$index] is now recorded
+            // immediately after chat.postMessage succeeds, BEFORE the
+            // media share is attempted, so a subsequent media failure
+            // can never erase a text message that is already live.
             try {
-                $result = $this->publishSegment($token, $channelId, $payload, $threadTs);
+                $result = $this->publishText($token, $channelId, $payload, $threadTs);
             } catch (ProviderException $e) {
                 if ($results !== []) {
                     throw new ProviderPartialFailureException($e->getMessage(), $results, $e);
@@ -292,12 +312,28 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
 
             $results[$index] = $result;
             $threadTs ??= $result->releaseId;
+
+            if ($payload->media !== []) {
+                try {
+                    $this->shareUploadedMedia($token, $channelId, $payload->media, $result->releaseId);
+                } catch (ProviderException $e) {
+                    // $results already carries this segment's text
+                    // message (see above) -- always a partial failure
+                    // from here, never a plain rethrow, since something
+                    // WAS published even if this is chain index 0.
+                    throw new ProviderPartialFailureException(
+                        "Slack message was published but attaching media failed: {$e->getMessage()}",
+                        $results,
+                        $e,
+                    );
+                }
+            }
         }
 
         return $results;
     }
 
-    private function publishSegment(string $token, string $channelId, PostPayloadDto $payload, ?string $threadTs): PostResultDto
+    private function publishText(string $token, string $channelId, PostPayloadDto $payload, ?string $threadTs): PostResultDto
     {
         // Validated before any request goes out (mirrors
         // MastodonProvider::publishSegment()): a media item missing its
@@ -311,10 +347,24 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
             }
         }
 
+        // Slack's chat.postMessage rejects an empty `text` outright
+        // (error: no_text) unless blocks/attachments are given, which
+        // this provider does not build -- and Task 25's editor will let
+        // users compose a media-only post with no caption at all (Task
+        // 15 review, Minor 3). Every publishText() call posts a
+        // standalone text message (see this class's docblock: media is
+        // always a companion completeUploadExternal share, never
+        // embedded in the same call), so a single space is substituted
+        // for genuinely empty content -- Slack's own documented
+        // workaround for a caption-less attachment-carrying message,
+        // not a byte of the caller's content changed when $payload->content
+        // is non-empty.
+        $text = $payload->content !== '' ? $payload->content : ' ';
+
         $body = $this->call(
             fn (): Response => Http::withToken($token)->asForm()->post(self::API_BASE.'/chat.postMessage', array_filter([
                 'channel' => $channelId,
-                'text' => $payload->content,
+                'text' => $text,
                 'thread_ts' => $threadTs,
             ], static fn (mixed $value): bool => $value !== null)),
             'posting a message',
@@ -324,10 +374,6 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
 
         if (! is_string($ts) || $ts === '') {
             throw new ProviderPermanentException('Slack chat.postMessage response did not include a ts.');
-        }
-
-        if ($payload->media !== []) {
-            $this->shareUploadedMedia($token, $channelId, $payload->media, $ts);
         }
 
         return new PostResultDto(releaseId: $ts);
@@ -358,6 +404,25 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
             ]),
             'sharing uploaded media',
         );
+    }
+
+    /**
+     * Mirrors DiscordProvider::validatedWebhookUrl() -- see the call
+     * site in uploadMedia() for why this exists (Task 15 review, Finding
+     * 3). Mapped to ProviderPermanentException: retrying will not change
+     * what Slack just returned.
+     */
+    private function assertUploadUrlIsSlackHosted(string $uploadUrl): void
+    {
+        try {
+            $host = SafeRemoteHost::assertSafeUrl($uploadUrl);
+        } catch (UnsafeRemoteHostException) {
+            throw new ProviderPermanentException('Slack upload url is not safe to use.');
+        }
+
+        if ($host !== 'slack.com' && ! str_ends_with($host, '.slack.com')) {
+            throw new ProviderPermanentException("Slack upload url host [{$host}] is not a slack.com host.");
+        }
     }
 
     /**

@@ -34,4 +34,17 @@ class UnsafeRemoteHostException extends RuntimeException
     {
         return new self("URL scheme [{$scheme}] is not allowed; only https is.");
     }
+
+    /**
+     * Distinct from forHost(): used only when the input couldn't even be
+     * parsed into a scheme/host, meaning SafeRemoteHost::assertSafeUrl()
+     * is holding nothing but the raw, unparsed input -- which for a
+     * credential-bearing URL (e.g. a Discord webhook url) may still
+     * contain the credential itself even though it isn't a valid URL.
+     * Deliberately does not echo that input back.
+     */
+    public static function forMalformedUrl(): self
+    {
+        return new self('The supplied value is not a valid absolute URL.');
+    }
 }
