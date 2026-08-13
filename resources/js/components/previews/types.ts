@@ -4,6 +4,18 @@
  * never touch `media_ids` (Tasks 27-29 build media; until then it is
  * always `[]`, and no preview here renders a media placeholder off of
  * it — see registry.ts's docblock for why).
+ *
+ * Pointer for whoever builds Task 27-29's media picker: this type is
+ * where a `media` (or `media_ids`) field will need to be added once
+ * there is something to preview. That change fans out to at least three
+ * places, all currently text-only on purpose:
+ *  - `PostEditorModal.vue`'s `activePreviewSegments` computed, which
+ *    currently maps only `content` and drops `media_ids` entirely;
+ *  - each of the six `Preview*.vue` components' `hasContent` computed,
+ *    which currently means "has non-empty text" and will need to mean
+ *    "has text OR media" so a media-only, textless segment still shows
+ *    something instead of the empty-state placeholder;
+ *  - this interface itself.
  */
 export interface PreviewSegment {
     content: string;

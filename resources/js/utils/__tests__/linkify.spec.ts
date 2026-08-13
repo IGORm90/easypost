@@ -72,3 +72,18 @@ it('a malformed http-prefixed candidate that URL() cannot parse falls back to pl
     const parts = linkify('http://[::not-a-valid-host');
     expect(parts.every((p) => p.type === 'text')).toBe(true);
 });
+
+it('rejects a URL carrying userinfo — the displayed host and the navigated-to host would differ', () => {
+    // "https://good.com@evil.com" parses with `username: 'good.com'` and
+    // `hostname: 'evil.com'` — the visible text reads "good.com" but the
+    // href would navigate to evil.com. Not self-targeted-only: Task 22's
+    // public share page renders this same content to strangers.
+    const parts = linkify('see https://good.com@evil.com for details');
+    expect(parts.some((p) => p.type === 'link')).toBe(false);
+    expect(parts.map((p) => p.value).join('')).toBe('see https://good.com@evil.com for details');
+});
+
+it('rejects a URL carrying a userinfo password too', () => {
+    const parts = linkify('https://user:pass@evil.com/steal');
+    expect(parts.some((p) => p.type === 'link')).toBe(false);
+});
