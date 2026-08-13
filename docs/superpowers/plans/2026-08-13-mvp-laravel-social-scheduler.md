@@ -765,7 +765,8 @@ interface SocialProviderInterface
     public function identifier(): string;                 // 'telegram'
     public function name(): string;                       // 'Telegram'
     public function capabilities(): ProviderCapabilities;
-    public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto;
+    /** @param array<string,mixed> $params  НЕДОВЕРЕННЫЙ ввод из запроса; всё, что становится сетевой целью, обязано пройти SafeRemoteHost */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;
     public function authenticate(array $params, string $redirectUri): AuthResultDto;
     /**
      * @param  PostPayloadDto[] $chain  тред: первый элемент — корень
