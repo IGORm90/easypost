@@ -234,10 +234,40 @@ class PublishService
                 return;
             }
 
+            // Same due-date grace as lockGroupIfQueued() — post-review
+            // fix (finding 2, second defect). Without this, a group
+            // dragged further into the future while a now-dead job for
+            // its OLD schedule is still mid-retry gets marked ERROR the
+            // moment that dead job exhausts and this method runs, even
+            // though nothing has actually gone wrong yet — it just isn't
+            // due. The redispatched job for the NEW date then finds
+            // ERROR (not QUEUE) and no-ops on the state check above,
+            // just like the original swallowed-redispatch bug: a post
+            // that should still publish, silently doesn't. See
+            // isDueNow()'s docblock for why this predicate must stay a
+            // single shared source of truth between the two callers.
+            if (! $this->isDueNow($group)) {
+                return;
+            }
+
+            // lockForUpdate() — post-review fix (finding 2, first
+            // defect). Without it, this SELECT could read a snapshot
+            // taken just BEFORE a concurrent, still-in-flight
+            // publishGroup() run commits a segment's release_id, and the
+            // subsequent markAllError() below (a plain by-primary-key
+            // UPDATE, no state predicate) would then overwrite that
+            // freshly-PUBLISHED row with ERROR — no duplicate publish,
+            // but the product would show a post that DID go out as
+            // failed. Locking here forces this query to wait for any
+            // such concurrent transaction to finish, then re-read the
+            // qualifying rows fresh — exactly the same reasoning
+            // publishChannel() already applies to its own pending-rows
+            // read.
             $stillPending = Post::withoutGlobalScope('organization')
                 ->where('post_group_id', $group->id)
                 ->whereNull('release_id')
                 ->where('state', PostState::QUEUE->value)
+                ->lockForUpdate()
                 ->get();
 
             $this->markAllError($stillPending, $reason);
@@ -285,15 +315,37 @@ class PublishService
                 return null;
             }
 
-            if (
-                $group->publish_date !== null
-                && $group->publish_date->isAfter(now()->addSeconds(self::PUBLISH_DATE_GRACE_SECONDS))
-            ) {
+            if (! $this->isDueNow($group)) {
                 return null;
             }
 
             return $group;
         });
+    }
+
+    /**
+     * True iff `$group->publish_date` is not materially in the future —
+     * see `PUBLISH_DATE_GRACE_SECONDS`. A single shared predicate
+     * between `lockGroupIfQueued()` (should this run publish anything at
+     * all right now?) and `abandonGroup()` (should retries-exhausted be
+     * allowed to settle this group to ERROR right now?) — post-review
+     * fix, finding 2's second defect: an earlier revision only applied
+     * this check in `lockGroupIfQueued()`, so `abandonGroup()` could mark
+     * a group `ERROR` purely because a stale, already-superseded job's
+     * retries ran out, even though the group had since been rescheduled
+     * further into the future and was never actually due yet. Keeping
+     * this as one method both callers share is deliberate: the two
+     * checks answering a subtly different question ("act now?" vs.
+     * "settle now?") from independently-maintained copies of the same
+     * arithmetic is exactly how they would eventually drift apart.
+     */
+    private function isDueNow(PostGroup $group): bool
+    {
+        if ($group->publish_date === null) {
+            return true;
+        }
+
+        return ! $group->publish_date->isAfter(now()->addSeconds(self::PUBLISH_DATE_GRACE_SECONDS));
     }
 
     /**

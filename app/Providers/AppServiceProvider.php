@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Listeners\ClearOrganizationContext;
+use App\Listeners\LogUniqueJobSkipped;
 use App\Models\PostGroup;
 use App\Policies\PostPolicy;
 use App\Services\Auth\Socialite\OidcProvider;
@@ -10,6 +11,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Queue\Events\UniqueJobSkipped;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -41,6 +43,11 @@ class AppServiceProvider extends ServiceProvider
             [JobProcessing::class, JobProcessed::class, JobFailed::class],
             ClearOrganizationContext::class,
         );
+
+        // See App\Listeners\LogUniqueJobSkipped: a swallowed ShouldBeUnique
+        // dispatch (PublishPostJob's lock, or any future unique job's)
+        // must never be invisible.
+        Event::listen(UniqueJobSkipped::class, LogUniqueJobSkipped::class);
 
         // laravel/socialite ships no generic OpenID Connect driver (only
         // provider-specific ones), so "oidc" is registered here against

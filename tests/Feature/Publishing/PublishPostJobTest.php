@@ -7,11 +7,16 @@ use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
+use App\Services\Posts\PostGroupService;
 use App\Services\Posts\PublishService;
 use App\Support\OrganizationContext;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Queue\Jobs\FakeJob;
 use Illuminate\Queue\MaxAttemptsExceededException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
+use Tests\Support\ShortResultProvider;
 
 /*
  * Task 30: PublishPostJob / PublishService — the actual act of
@@ -140,6 +145,19 @@ it('publishes a multi-segment thread in one call, mapping each result onto the c
         ->and($provider->publishedChains()[0][0]->content)->toBe('root')
         ->and($provider->publishedChains()[0][1]->content)->toBe('reply one')
         ->and($provider->publishedChains()[0][2]->content)->toBe('reply two');
+
+    // The mapping itself, not just distinctness (review finding 5,
+    // round 2): FakeProvider mints random ids, so two segments merely
+    // being different from each other does not prove row i got RESULT
+    // i — reversing $results[$index] <-> $pending[$index] would still
+    // leave every id distinct. publishedSegments() records ids in the
+    // exact order post() produced them, so row i's release_id must equal
+    // publishedSegments()[i]'s.
+    $segments = $provider->publishedSegments();
+    expect($segments)->toHaveCount(3)
+        ->and($segments[0]['releaseId'])->toBe($root->release_id)
+        ->and($segments[1]['releaseId'])->toBe($replyOne->release_id)
+        ->and($segments[2]['releaseId'])->toBe($replyTwo->release_id);
 });
 
 it('resumes a two-segment pending remainder behind an already-published prefix, anchoring the first pending segment', function () {
@@ -177,6 +195,15 @@ it('resumes a two-segment pending remainder behind an already-published prefix, 
         ->and($sentChain[0]->replyToReleaseId)->toBe('previously-released-root')
         ->and($sentChain[1]->content)->toBe('reply two')
         ->and($sentChain[1]->replyToReleaseId)->toBeNull();
+
+    // Mapping, not just distinctness (review finding 5, round 2) — see
+    // the identical note in the three-segment test above. Only the two
+    // NEW segments were ever sent through post(), so publishedSegments()
+    // has exactly two entries here, in order.
+    $segments = $provider->publishedSegments();
+    expect($segments)->toHaveCount(2)
+        ->and($segments[0]['releaseId'])->toBe($replyOne->release_id)
+        ->and($segments[1]['releaseId'])->toBe($replyTwo->release_id);
 });
 
 it('is idempotent: a second run does not publish twice', function () {
@@ -386,23 +413,31 @@ it('does publish a group whose publish_date has just passed, within the grace wi
         ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
 });
 
-it('redispatches PublishPostJob when the calendar moves publish_date on an already-QUEUE group', function () {
-    // Built directly (not via POST /api/posts) so this test isolates
-    // updateDate()'s OWN dispatch from the unrelated fact that
-    // PublishPostJob's ShouldBeUnique lock — a real Cache lock, not
-    // touched by Queue::fake() — would still be held by a prior
-    // create()-time dispatch for the same group id at this point in a
-    // real request sequence, and would silently swallow a same-instant
-    // redispatch. That interaction is real and is called out in
-    // updateDate()'s docblock and this task's fix report as the
-    // residual gap the due-date guard (not the redispatch) is what
-    // actually protects against; it is not what this test is for.
+it('redispatches PublishPostJob when the calendar moves publish_date, even while an earlier dispatch still holds the unique lock', function () {
+    // Review finding 1, round 2: PublishPostJob's ShouldBeUnique lock is
+    // a real Cache lock, acquired at dispatch() time with a fixed 3600s
+    // TTL independent of ->delay() and NOT touched by Queue::fake() —
+    // Illuminate\Foundation\Bus\PendingDispatch::shouldDispatch() checks
+    // it via the real cache before Queue::fake() ever sees the push.
+    // Without updateDate()'s forceRedispatch fix, a lock already held
+    // for this group (simulating an earlier drag's still-pending
+    // dispatch, or create()'s own dispatch moments earlier — a
+    // multi-drag calendar session, not an edge case) would silently
+    // swallow this one, per PendingDispatch::shouldDispatch() dispatching
+    // UniqueJobSkipped and returning false instead of pushing. Acquiring
+    // the lock manually first, exactly like
+    // TokenRefreshTest's equivalent ShouldBeUnique coverage, proves the
+    // fix directly rather than relying on real timing.
     Queue::fake();
 
     $org = Organization::factory()->create();
     actingAsMember($org);
     $group = queuedGroup($org, now()->addHours(2));
     publishableChannel($org, $group, ['channel A']);
+
+    $inFlight = new PublishPostJob($group->id);
+    $lock = Cache::lock(UniqueLock::getKey($inFlight), $inFlight->uniqueFor);
+    expect($lock->get())->toBeTrue();
 
     $newDate = now()->addHours(10);
 
@@ -412,6 +447,44 @@ it('redispatches PublishPostJob when the calendar moves publish_date on an alrea
 
     Queue::assertPushed(PublishPostJob::class, 1);
     Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id);
+});
+
+it('redispatches successfully across two consecutive reschedules of the same group (a multi-drag session)', function () {
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org, now()->addHours(2));
+    publishableChannel($org, $group, ['channel A']);
+
+    app(PostGroupService::class)->updateDate($group, now()->addHours(5));
+    app(PostGroupService::class)->updateDate($group, now()->addHours(10));
+
+    // Both drags reached the queue — never just the first, which is
+    // exactly the bug: pre-fix, the second (and every subsequent) drag
+    // within the same hour would have been silently dropped.
+    Queue::assertPushed(PublishPostJob::class, 2);
+});
+
+it('logs when a ShouldBeUnique dispatch is silently skipped', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+
+    $job = new PublishPostJob($group->id);
+    $lock = Cache::lock(UniqueLock::getKey($job), $job->uniqueFor);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        Log::shouldReceive('warning')
+            ->once()
+            ->with('unique_job.skipped', [
+                'job' => PublishPostJob::class,
+                'unique_id' => $group->id,
+            ]);
+
+        PublishPostJob::dispatch($group->id);
+    } finally {
+        $lock->release();
+    }
 });
 
 // --- Retries exhausted (review finding 3) ---------------------------------
@@ -460,6 +533,27 @@ it('failed() is a no-op once the group already resolved to PUBLISHED', function 
         ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
 });
 
+it('failed() does not error a group that has since been rescheduled further into the future', function () {
+    // Review finding 2, second defect: a group dragged into the future
+    // while a now-superseded job for its OLD schedule is still mid-retry
+    // must not be marked ERROR just because that dead job's retries ran
+    // out — it isn't due yet, and the redispatched job for the NEW date
+    // (see the redispatch tests above) is what should get to publish it.
+    // Without abandonGroup()'s due-date grace, this would wrongly settle
+    // the group to ERROR, and the redispatched job would then find ERROR
+    // (not QUEUE) and silently no-op — the post never publishes at all.
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org, now()->addHours(6));
+    [, $posts] = publishableChannel($org, $group, ['channel A']);
+
+    $job = new PublishPostJob($group->id);
+    $job->failed(new MaxAttemptsExceededException('too many attempts'));
+
+    expect($posts[0]->fresh()->state)->toBe(PostState::QUEUE)
+        ->and($posts[0]->fresh()->error)->toBeNull()
+        ->and($group->fresh()->state)->toBe(PostState::QUEUE);
+});
+
 // --- Partial thread failure / resumption --------------------------------
 
 it('persists the published prefix of a partial thread failure and resumes with the anchor, never duplicating the root', function () {
@@ -500,6 +594,60 @@ it('persists the published prefix of a partial thread failure and resumes with t
         ->and($reply->fresh()->release_id)->not->toBeNull()
         ->and($group->fresh()->state)->toBe(PostState::PUBLISHED)
         ->and($provider->rootReleaseIds())->toBe([$rootReleaseId]);
+});
+
+// --- Provider contract violation (Minor 6) --------------------------------
+
+it('never throws on a provider returning fewer results than the chain, and retries the unresolved tail instead', function () {
+    // ShortResultProvider always returns one fewer result than the chain
+    // it was given, WITHOUT throwing — the exact contract violation
+    // publishChannel()'s array_key_exists() guard exists for. Throwing
+    // here instead would unwind the transaction and discard the
+    // release_id already resolved for the segment that DID come back,
+    // even though it is already live on the network — turning a
+    // provider bug into a duplicate-publish setup on the very next run.
+    config()->set('social.providers.short_result', ShortResultProvider::class);
+
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'short_result',
+    ]);
+    $root = Post::create([
+        'post_group_id' => $group->id,
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'parent_post_id' => null,
+        'order' => 0,
+        'content' => 'root',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+    $reply = Post::create([
+        'post_group_id' => $group->id,
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'parent_post_id' => $root->id,
+        'order' => 1,
+        'content' => 'reply',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+
+    $threw = null;
+    try {
+        app(PublishService::class)->publishGroup($group->id);
+    } catch (PublishRetryNeededException $e) {
+        $threw = $e;
+    }
+
+    expect($threw)->not->toBeNull()
+        ->and($root->fresh()->state)->toBe(PostState::PUBLISHED)
+        ->and($root->fresh()->release_id)->not->toBeNull()
+        ->and($reply->fresh()->state)->toBe(PostState::QUEUE)
+        ->and($reply->fresh()->release_id)->toBeNull()
+        ->and($group->fresh()->state)->toBe(PostState::QUEUE);
 });
 
 // --- Wiring: PostGroupService dispatches this job ------------------------

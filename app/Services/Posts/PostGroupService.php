@@ -9,6 +9,7 @@ use App\Models\Post;
 use App\Models\PostGroup;
 use Carbon\CarbonInterface;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -142,7 +143,12 @@ class PostGroupService
             return $group->fresh(['posts.media', 'tags']);
         });
 
-        $this->dispatchPublishIfQueued($group);
+        // forceRedispatch: true — see dispatchPublishIfQueued()'s
+        // docblock. update() can move an already-QUEUE group's
+        // publish_date exactly like updateDate() can (schedule type,
+        // new publish_date in the payload), so it carries the identical
+        // swallowed-redispatch risk and needs the identical fix.
+        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
 
         return $group;
     }
@@ -212,10 +218,33 @@ class PostGroupService
      * group (same guard `create()`/`update()` use), so this stays safe
      * to call unconditionally.
      *
-     * This does not, by itself, guarantee the new date's job actually
-     * gets enqueued — see `PublishService::lockGroupIfQueued()`'s
-     * docblock for why that guard, not this redispatch, is the half of
-     * the fix that makes a stale job harmless regardless.
+     * `forceRedispatch: true` — second post-review correction (finding
+     * 1, round 2). `PublishPostJob`'s `ShouldBeUnique` lock is a real
+     * `Cache` lock acquired at DISPATCH time with a fixed 3600s TTL,
+     * completely independent of `->delay()` — see
+     * `Illuminate\Bus\UniqueLock::acquire()`. Without force-releasing it
+     * first, a multi-drag calendar session (the normal way this endpoint
+     * is used, not an edge case) would see only the FIRST drag's
+     * dispatch actually reach the queue: every subsequent drag within
+     * the following hour silently drops (`UniqueJobSkipped`, now logged
+     * — see `App\Listeners\LogUniqueJobSkipped` — but still dropped),
+     * leaving the job for the FIRST drag's date as the only one that
+     * will ever run. Dragging later than that stale job's date means it
+     * exits harmlessly on `PublishService::lockGroupIfQueued()`'s
+     * due-date guard (see that method) and — because a plain `return`
+     * from `handle()` is a SUCCESSFUL completion, not a failure —
+     * finishes, releases its own lock, and is gone: nothing in
+     * `failed_jobs`, `failed()` never runs, and the post is never
+     * published, with no record anywhere that it should have been.
+     * Dragging earlier publishes hours late. `dispatchPublishIfQueued()`
+     * below force-releases the lock immediately before its own dispatch
+     * call, so THIS dispatch always wins the race for the lock — the
+     * worst remaining case is a stale job from an even-earlier drag that
+     * simply no-ops on the due-date guard once this one supersedes it.
+     * That guard, plus `PublishService::publishChannel()`'s per-row
+     * `lockForUpdate()`/`release_id` filter, are what keep this safe
+     * against the duplicate-publish risk force-releasing a lock would
+     * otherwise reopen — see `dispatchPublishIfQueued()`'s docblock.
      */
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
@@ -224,7 +253,7 @@ class PostGroupService
         $group->publish_date = $publishDate;
         $group->save();
 
-        $this->dispatchPublishIfQueued($group);
+        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
 
         return $group;
     }
@@ -360,11 +389,46 @@ class PostGroupService
      *    `tests/Feature/Publishing/PublishPostJobTest.php` is what
      *    exercises the job for real, by constructing and calling it
      *    directly rather than through dispatch().
+     *
+     * $forceRedispatch (post-review addition, finding 1 round 2):
+     * force-releases `PublishPostJob`'s `ShouldBeUnique` lock for `$group`
+     * immediately before dispatching — see `update()`/`updateDate()`'s
+     * docblocks for why a redispatch on a RESCHEDULE otherwise gets
+     * silently dropped by that lock for up to an hour, which is a
+     * missed-publish bug, not a merely-annoying one. `false` for
+     * `create()`: a brand-new group cannot already hold a lock from an
+     * earlier dispatch for the SAME group id (`uniqueId()` is the
+     * group's own freshly-minted ulid), so there is nothing to release
+     * there and no reason to pay the extra cache round-trip on the
+     * common path. Releasing a lock that isn't held is a harmless no-op
+     * either way (`Illuminate\Bus\UniqueLock::release()` -> `Cache::lock(...)
+     * ->forceRelease()`, which simply deletes a cache key that may not
+     * exist) — `true` is never unsafe to pass, only unnecessary on
+     * `create()`.
+     *
+     * Safety: force-releasing this lock reopens exactly the race
+     * `ShouldBeUnique` exists to prevent — a second dispatch for the
+     * SAME group now can reach the queue while an earlier one is still
+     * pending/executing. Two guards, both already in place, are what
+     * keep that race from ever producing a duplicate publish: the due-
+     * date check in `PublishService::lockGroupIfQueued()` (a stale job —
+     * the one whose lock was just force-released — that pops LATE simply
+     * no-ops instead of publishing early) and `publishChannel()`'s own
+     * per-row `lockForUpdate()` + `release_id IS NULL` filter (even two
+     * genuinely-concurrent runs of the SAME group can only ever publish
+     * a given segment once — see `PublishService`'s class docblock,
+     * idempotency point 4). Force-releasing without either of those
+     * would have been unsafe; with both, the worst case is a stale job
+     * that does nothing.
      */
-    private function dispatchPublishIfQueued(PostGroup $group): void
+    private function dispatchPublishIfQueued(PostGroup $group, bool $forceRedispatch = false): void
     {
         if ($group->state !== PostState::QUEUE) {
             return;
+        }
+
+        if ($forceRedispatch) {
+            app(UniqueLock::class)->release(new PublishPostJob($group->id));
         }
 
         PublishPostJob::dispatch($group->id)->delay($group->publish_date);
