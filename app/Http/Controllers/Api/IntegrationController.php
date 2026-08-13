@@ -15,6 +15,9 @@ use App\Services\Integrations\OAuthStateService;
 use App\Social\Contracts\ManualTokenAuth;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsOptions;
+use App\Social\Exceptions\ProviderAuthException;
+use App\Social\Exceptions\ProviderPermanentException;
+use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\UnknownProviderException;
 use App\Social\Exceptions\UnknownProviderOptionException;
 use App\Social\ProviderRegistry;
@@ -128,7 +131,35 @@ class IntegrationController extends Controller
             return response()->json(['message' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $auth = $providerInstance->authenticate($request->except('state'), $this->redirectUri());
+        try {
+            $auth = $providerInstance->authenticate($request->except('state'), $this->redirectUri());
+        } catch (ProviderAuthException|ProviderPermanentException) {
+            // Both mean "this attempt cannot succeed as submitted" — a
+            // rejected credential (bad Telegram bot token/chat id, a
+            // revoked Bluesky app password, Mastodon's OAuth code
+            // exchange rejected, ...) or a malformed/permanently-invalid
+            // request the provider will never accept by retrying. Task
+            // 17 review, Important finding: previously uncaught here,
+            // so the single most likely user error in the connect flow
+            // (a mistyped manual-token credential) surfaced as a raw
+            // 500 — indistinguishable in monitoring from an actual
+            // application bug, and the frontend had no way to show a
+            // "check your input" message instead of a generic failure.
+            // The message is a fixed, generic string — never
+            // $e->getMessage() — because provider exception messages
+            // are built for logs (MapsHttpErrors/authErrorFor()
+            // interpolate the provider's own response body) and must
+            // not be echoed back to the client.
+            return response()->json(['message' => 'This channel could not be connected. Check the details and try again.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (ProviderRateLimitException) {
+            // The provider itself asked us to back off — not our
+            // server's fault (so not a 5xx) and not the user's bad
+            // input either (so not a 422); 429 is the accurate status
+            // for both a human reading the response and any client-side
+            // retry logic that inspects it.
+            return response()->json(['message' => 'The provider is rate-limiting this request. Please try again shortly.'], Response::HTTP_TOO_MANY_REQUESTS);
+        }
+
         $integration = $this->integrations->connect($organization, $providerInstance->identifier(), $auth);
 
         return response()->json(new IntegrationResource($integration), Response::HTTP_CREATED);

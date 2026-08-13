@@ -261,6 +261,39 @@ it('rejects reusing a state a second time (single-use)', function () {
 });
 
 /*
+ * Task 17 review, Important finding: callback() never mapped
+ * ProviderAuthException to a 4xx, so the single most likely user error
+ * in the manual-connect flow this task built (a mistyped Telegram bot
+ * token) came back as a raw 500 — indistinguishable in monitoring from
+ * an actual application bug. Runs against the REAL TelegramProvider
+ * (not the 'fake' provider the rest of this file uses), Http::fake()d
+ * to reproduce exactly the 401 Telegram itself returns for a bad
+ * bot_token/chat_id, per the same fixture TelegramProviderTest uses.
+ */
+it('maps a rejected manual-provider credential to 422, not a raw 500', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'ADMIN');
+    $state = test()->postJson('/api/integrations/telegram/auth-url')->json('state');
+
+    Http::fake([
+        'api.telegram.org/bot*/getChat*' => Http::response(
+            json_decode(file_get_contents(base_path('tests/Fixtures/social/telegram_error_unauthorized.json')), true),
+            401,
+        ),
+    ]);
+
+    $response = $this->postJson('/api/integrations/telegram/callback', [
+        'state' => $state,
+        'bot_token' => 'bad-token',
+        'chat_id' => '123',
+    ]);
+
+    $response->assertStatus(422);
+    expect($response->json('message'))->not->toContain('Unauthorized') // never echoes the provider's own error text
+        ->and(Integration::withoutGlobalScope('organization')->count())->toBe(0);
+});
+
+/*
  * Concurrent-connect race (Task 12's partial unique index). Deterministic
  * simulation rather than genuine multi-process concurrency: a test-only
  * IntegrationService subclass forces the FIRST upsert lookup (the one
