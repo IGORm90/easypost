@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\OrganizationRole;
 use App\Http\Middleware\ResolveOrganization;
 use App\Models\Organization;
 use App\Models\User;
@@ -16,8 +17,9 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * organization id and no authenticated user all still fail closed with a
  * real membership check, exactly as they did against the always-false
  * stub — just now for the honest reason (no matching row) instead of a
- * hardcoded `return false`. The last two tests are new: they prove the
- * middleware actually admits a real member and rejects a real non-member.
+ * hardcoded `return false`. The rest are new: they prove the middleware
+ * actually admits a real member, rejects a real non-member, and rejects a
+ * malformed header with a clean 403 rather than a raw QueryException.
  */
 afterEach(function () {
     OrganizationContext::clear();
@@ -67,10 +69,29 @@ it('rejects requests with no authenticated user', function () {
         ->toThrow(HttpException::class);
 });
 
+it('rejects requests with a malformed X-Organization header instead of raising a raw query error', function () {
+    $request = Request::create('/api/whatever', 'GET');
+    // Too long for the char(26) column, and not a valid ULID at all — this
+    // must not reach the database.
+    $request->headers->set('X-Organization', 'not-a-ulid-'.str_repeat('x', 40));
+    $request->setUserResolver(fn () => new User);
+
+    $middleware = new ResolveOrganization;
+
+    try {
+        $middleware->handle($request, fn ($r) => new Response);
+        expect(false)->toBeTrue('Expected a 403 HttpException to be thrown.');
+    } catch (HttpException $e) {
+        expect($e->getStatusCode())->toBe(403);
+    }
+
+    expect(OrganizationContext::id())->toBeNull();
+});
+
 it('admits a real member of the organization and puts it in OrganizationContext', function () {
     $org = Organization::factory()->create();
     $user = User::factory()->create();
-    $org->members()->attach($user, ['id' => (string) Str::ulid(), 'role' => 'ADMIN']);
+    $org->addMember($user, OrganizationRole::ADMIN);
 
     $request = Request::create('/api/whatever', 'GET');
     $request->headers->set('X-Organization', $org->id);
@@ -89,7 +110,7 @@ it('rejects a real user who is authenticated but not a member of the requested o
     $otherOrg = Organization::factory()->create();
     $user = User::factory()->create();
     // Member of $otherOrg, not of $org.
-    $otherOrg->members()->attach($user, ['id' => (string) Str::ulid(), 'role' => 'USER']);
+    $otherOrg->addMember($user, OrganizationRole::USER);
 
     $request = Request::create('/api/whatever', 'GET');
     $request->headers->set('X-Organization', $org->id);

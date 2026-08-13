@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Support\OrganizationContext;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -23,6 +24,14 @@ use Symfony\Component\HttpFoundation\Response;
  * exists()-then-find() pair. It returns null — and this class then aborts
  * with 403 — for all three "not admitted" cases: no membership row, no
  * authenticated user, and an organization id that doesn't exist at all.
+ *
+ * The header value is validated as a well-formed ULID *before* it reaches
+ * any query: `organization_id`/`id` columns are `char(26)`, so a header
+ * that isn't a 26-character ULID (too long, too short, wrong alphabet)
+ * would otherwise hit the database and raise a raw QueryException — a
+ * denial arriving as a 500 instead of the clean 403 every other rejection
+ * path returns, which is a bug in a component whose entire job is to fail
+ * closed predictably.
  */
 class ResolveOrganization
 {
@@ -30,8 +39,8 @@ class ResolveOrganization
     {
         $organizationId = $request->header('X-Organization');
 
-        if (! is_string($organizationId) || $organizationId === '') {
-            abort(403, 'Missing X-Organization header.');
+        if (! is_string($organizationId) || $organizationId === '' || ! Str::isUlid($organizationId)) {
+            abort(403, 'Missing or malformed X-Organization header.');
         }
 
         $user = $request->user();

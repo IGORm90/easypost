@@ -17,9 +17,9 @@ return new class extends Migration
             $table->string('email')->nullable();
             $table->string('token')->unique();
             $table->enum('role', ['SUPERADMIN', 'ADMIN', 'USER']);
-            $table->timestamp('expires_at');
-            $table->timestamp('accepted_at')->nullable();
-            $table->timestamps();
+            $table->timestampTz('expires_at');
+            $table->timestampTz('accepted_at')->nullable();
+            $table->timestampsTz();
         });
     }
 

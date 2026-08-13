@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('slug')->unique();
             $table->foreignUlid('owner_id')->constrained('users');
-            $table->timestamps();
+            $table->timestampsTz();
         });
     }
 

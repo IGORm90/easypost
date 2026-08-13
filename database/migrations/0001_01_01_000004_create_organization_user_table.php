@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignUlid('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignUlid('user_id')->constrained()->cascadeOnDelete();
             $table->enum('role', ['SUPERADMIN', 'ADMIN', 'USER']);
-            $table->timestamps();
+            $table->timestampsTz();
 
             $table->unique(['organization_id', 'user_id']);
         });

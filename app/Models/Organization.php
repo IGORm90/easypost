@@ -44,6 +44,29 @@ class Organization extends Model
     }
 
     /**
+     * The preferred, ergonomic way to create a membership row.
+     *
+     * `organization_user.id` has no database default. This is safe either
+     * way in this codebase: `members()` is declared with
+     * `->using(OrganizationUser::class)`, so `BelongsToMany::attach()`
+     * already routes through `attachUsingCustomClass()`, which instantiates
+     * a real `OrganizationUser` and calls `save()` on it — `HasUlids`'
+     * `creating` hook fires and a ULID is generated, verified directly
+     * against the database (see the covering test). This method exists for
+     * ergonomics, not to route around a bug: `OrganizationUser::create([...])`
+     * is a one-line call versus `attach()`'s pivot-array shape, and it
+     * returns the created `OrganizationUser` instead of void.
+     */
+    public function addMember(User $user, OrganizationRole $role): OrganizationUser
+    {
+        return OrganizationUser::create([
+            'organization_id' => $this->id,
+            'user_id' => $user->id,
+            'role' => $role,
+        ]);
+    }
+
+    /**
      * Returns the caller's role in this organization, or null if they are
      * not a member.
      *
