@@ -52,6 +52,58 @@ it('persists media_ids to media_post with order preserved and reads it back in o
     expect($firstMedia)->toHaveKeys(['id', 'url', 'thumbnail_url', 'mime', 'width', 'height']);
     expect($firstMedia['id'])->toBe($media[2]->id);
     expect($firstMedia['mime'])->toBe($media[2]->mime_type);
+    // Real values, not the pre-review-fix hardcoded null -- MediaFactory
+    // always sets both.
+    expect($firstMedia['width'])->toBe($media[2]->width);
+    expect($firstMedia['height'])->toBe($media[2]->height);
+});
+
+it('rejects an object-shaped media_ids instead of 500ing on a non-integer pivot order', function () {
+    // Review Finding 1: {"a": "<ulid>"} used to pass the old 'array'-only
+    // rule, reach PostGroupService::attachMedia() with the string key
+    // 'a' used directly as the pivot's unsigned-integer `order`, and
+    // blow up as an uncaught QueryException instead of a clean 422.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $media = Media::factory()->for($org)->create();
+
+    $response = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => ['a' => $media->id]]]],
+        ],
+    ]);
+
+    $response->assertStatus(422);
+    expect(PostGroup::count())->toBe(0);
+    expect(Post::count())->toBe(0);
+});
+
+it('rejects duplicate media ids within one segment instead of silently reordering them', function () {
+    // Review Minor 2: [A, B, A] used to be silently rewritten to [B, A]
+    // by attachMedia()'s id-keyed pivot array -- a media_post row can
+    // only exist once per (media_id, post_id) pair regardless, so the
+    // duplicate quietly discarded the client's stated order. Ordering is
+    // content, so this must now be a 422, not a guess.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $media = Media::factory()->for($org)->count(2)->create();
+
+    $response = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => [$media[0]->id, $media[1]->id, $media[0]->id]]]],
+        ],
+    ]);
+
+    $response->assertStatus(422);
+    // 'distinct' is applied per-element (see ValidatesPostChains'
+    // docblock), so the error lands on the offending indices, not the
+    // parent array field.
+    $response->assertJsonValidationErrors(['posts.0.value.0.media_ids.0', 'posts.0.value.0.media_ids.2']);
+    expect(PostGroup::count())->toBe(0);
 });
 
 it('rejects a media id belonging to another organization with 422', function () {

@@ -90,12 +90,35 @@ trait ValidatesPostChains
             'posts.*.settings' => ['sometimes', 'nullable', 'array'],
             'posts.*.value' => ['required', 'array', 'min:1'],
             'posts.*.value.*.content' => ['required', 'string'],
-            'posts.*.value.*.media_ids' => ['sometimes', 'array'],
+            // 'list': review Finding 1 — an object-shaped media_ids
+            // (`{"a": "<ulid>"}`) previously passed 'array' alone, then
+            // reached PostGroupService::attachMedia() with a non-integer
+            // array key used directly as the pivot's `order` value,
+            // producing an uncaught QueryException instead of a 422 (the
+            // unsigned-integer `order` column rejects a string like
+            // 'a'). 'list' rejects any non-sequential-integer-keyed
+            // input here, which is also what makes this class's own
+            // `@param list<string>` annotations on attachMedia() and
+            // friends actually true rather than merely hoped for.
+            'posts.*.value.*.media_ids' => ['sometimes', 'array', 'list'],
             // ulid shape + existence/ownership, both enforced here — see
-            // this trait's docblock ("media_ids").
+            // this trait's docblock ("media_ids"). 'distinct' (review
+            // Minor 2): without it, `[A, B, A]` was silently rewritten to
+            // `[B, A]` by attachMedia()'s id-keyed pivot array (a
+            // media_post row can only exist once per (media_id, post_id)
+            // pair regardless), quietly discarding the client's stated
+            // order/intent instead of rejecting the malformed input.
+            // Ordering is content — see Post::media()'s docblock — so a
+            // request that can't state a coherent order must fail
+            // loudly, not have one guessed. Applied on the `.*` element
+            // (not the parent array) per Laravel's own convention for
+            // per-array-instance distinctness on a nested wildcard field
+            // — same placement `posts.*.integration_id`'s `distinct`
+            // uses above, one level up.
             'posts.*.value.*.media_ids.*' => [
                 'string',
                 'ulid',
+                'distinct',
                 Rule::exists('media', 'id')->where('organization_id', OrganizationContext::id()),
             ],
         ];

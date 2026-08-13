@@ -20,12 +20,12 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * `media_ids` keeps the flat id-list shape PUT already accepts, so a GET
  * response still round-trips straight into PUT (PostGroupResource's
  * contract); `media` is the richer per-attachment shape the brief calls
- * for, for rendering. `width`/`height` are always null: Task 27's
- * `Media` rows never captured image dimensions (no column stores them),
- * and this task does not add disk/pixel reads to a read-time resource —
- * a future task that wants real dimensions must capture them once at
- * upload time, on `Media` itself, the same way `size_bytes` already is.
- * Both keys rely on `posts.media` being eager-loaded (see
+ * for, for rendering. `width`/`height` come straight off `Media`'s own
+ * columns (post-review addition: captured once at upload/import time by
+ * MediaUploadService::extractDimensions(), never read from disk here) —
+ * null for video (and any image `getimagesize()` couldn't parse), same
+ * as `thumbnail_url` falling back to null. Both keys rely on
+ * `posts.media` being eager-loaded (see
  * PostGroupService's `fresh()`/`loadMissing()` calls and
  * PostController's `load()` calls) — `whenLoaded()` guards against an
  * accidental N+1 if some future caller forgets to.
@@ -48,8 +48,8 @@ class PostResource extends JsonResource
                 'url' => $media->url(),
                 'thumbnail_url' => $media->thumbnailUrl(),
                 'mime' => $media->mime_type,
-                'width' => null,
-                'height' => null,
+                'width' => $media->width,
+                'height' => $media->height,
             ])->values()->all(), []),
             'order' => $this->order,
             'parent_post_id' => $this->parent_post_id,

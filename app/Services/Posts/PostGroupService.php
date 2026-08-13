@@ -34,6 +34,19 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  * unverified client input needing a second ownership check — see that
  * trait's docblock.
  *
+ * Orphaned jsonb (review Minor 7, stated no-op): this migration away
+ * from Task 20's `settings->media_ids` placeholder does not migrate or
+ * clear any `media_ids` key an already-persisted `Post.settings` value
+ * might still carry from before this task landed — `PostGroupResource`'s
+ * no-longer-stripping `channelSettings()` means such a value would now
+ * be echoed back verbatim inside `posts[].settings` instead of being
+ * hidden. This is a deliberate no-op, not an oversight: this is an
+ * unreleased MVP with no production data, so no row anywhere actually
+ * carries a leftover `settings->media_ids` key to begin with. A project
+ * that already had real users at this point would need a one-off
+ * migration to strip that key from every existing `Post.settings`
+ * before deploying this change.
+ *
  * Editability rule (the brief's central question): a group may be
  * replaced (PUT) or deleted only while NONE of its Post rows carry a
  * `release_id` — i.e. nothing in it has actually gone out to a network

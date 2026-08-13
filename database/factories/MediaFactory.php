@@ -30,6 +30,8 @@ class MediaFactory extends Factory
             'thumbnail_path' => null,
             'mime_type' => 'image/jpeg',
             'size_bytes' => fake()->numberBetween(1_000, 5_000_000),
+            'width' => fake()->numberBetween(200, 4000),
+            'height' => fake()->numberBetween(200, 4000),
             'original_filename' => fake()->word().'.jpg',
         ];
     }

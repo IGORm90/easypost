@@ -444,6 +444,7 @@ final class MediaUploadService
         $this->writeToDisk($path, $localPath, $mime);
 
         $thumbnailPath = $this->maybeStoreThumbnail($localPath, $mime, $organization->id, $ulid, $extension);
+        [$width, $height] = $this->extractDimensions($localPath, $mime);
 
         /** @var Media */
         return Media::query()->create([
@@ -453,9 +454,50 @@ final class MediaUploadService
             'thumbnail_path' => $thumbnailPath,
             'mime_type' => $mime,
             'size_bytes' => $sizeBytes,
+            'width' => $width,
+            'height' => $height,
             'original_filename' => $this->sanitizeFilename($originalFilename),
             'created_by' => $createdBy,
         ]);
+    }
+
+    /**
+     * Task 28 review ruling: pixel dimensions are captured ONCE here, at
+     * upload/import time, on the local temp file this service already
+     * has open — never re-derived later by reading the stored object
+     * back off the `media` disk (same "captured once, at write time"
+     * rule `size_bytes` already follows — see this class's and
+     * MediaDto's docblocks). This is legitimate precisely because it is
+     * upload time, not validation/read time: the Global Constraint this
+     * project enforces ("no reading file contents or sizes from disk at
+     * validation time") is about PostValidationService not stat'ing
+     * $media->path when deciding whether a post may be scheduled, not
+     * about this service, whose entire job is reading the file it was
+     * just handed.
+     *
+     * Images only — `getimagesize()` has no meaning for video/mp4, so
+     * both columns stay null for every non-image mime, same as
+     * `thumbnail_path`. `@`-suppressed: a file that sniffed as an
+     * allowed image mime but that GD/`getimagesize()` still can't parse
+     * (truncated, corrupt, an edge-case codec variant) must not fail the
+     * whole upload over metadata that's nice-to-have, not required —
+     * same "best-effort" posture as maybeStoreThumbnail() just above.
+     *
+     * @return array{0: int|null, 1: int|null}
+     */
+    private function extractDimensions(string $localPath, string $mime): array
+    {
+        if (! str_starts_with($mime, 'image/')) {
+            return [null, null];
+        }
+
+        $size = @getimagesize($localPath);
+
+        if ($size === false) {
+            return [null, null];
+        }
+
+        return [$size[0], $size[1]];
     }
 
     /**

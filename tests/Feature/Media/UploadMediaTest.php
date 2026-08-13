@@ -109,7 +109,22 @@ it('does not generate a separate thumbnail for an image already smaller than the
     expect(Media::sole()->thumbnail_path)->toBeNull();
 });
 
-it('stores an mp4 video with no thumbnail', function () {
+it('captures width and height from the uploaded image', function () {
+    // Task 28 review ruling: dimensions are captured once at upload
+    // time (MediaUploadService::extractDimensions()), never re-derived
+    // later by reading the stored object back off disk.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 800, 600)])
+        ->assertCreated();
+
+    $media = Media::sole();
+    expect($media->width)->toBe(800)->and($media->height)->toBe(600);
+});
+
+it('leaves width and height null for an mp4 video', function () {
     Storage::fake('media');
     $org = Organization::factory()->create();
     actingAsMember($org);
@@ -126,6 +141,9 @@ it('stores an mp4 video with no thumbnail', function () {
         ->assertCreated()
         ->assertJsonPath('data.mime', 'video/mp4')
         ->assertJsonPath('data.thumbnail_url', null);
+
+    $media = Media::sole();
+    expect($media->width)->toBeNull()->and($media->height)->toBeNull();
 });
 
 it('stores the file at org/{org_id}/{ulid}.{ext} on the media disk', function () {
@@ -283,7 +301,12 @@ it('imports media from a safe http url', function () {
         ->assertCreated()
         ->assertJsonPath('data.mime', 'image/jpeg');
 
-    expect(Media::sole()->size_bytes)->toBe(strlen($bytes));
+    $media = Media::sole();
+    expect($media->size_bytes)->toBe(strlen($bytes));
+    // Same extractDimensions() path as a direct upload -- storeFromUrl()
+    // funnels through the same persist() call, on the downloaded temp
+    // file.
+    expect($media->width)->toBe(400)->and($media->height)->toBe(300);
 });
 
 it('rejects a from-url download whose actual body exceeds the configured size cap, regardless of the declared Content-Length', function () {

@@ -28,6 +28,8 @@ use Illuminate\Support\Facades\Storage;
  * @property string|null $thumbnail_path
  * @property string $mime_type
  * @property int $size_bytes
+ * @property int|null $width
+ * @property int|null $height
  * @property string $original_filename
  * @property string|null $created_by
  */
@@ -46,6 +48,8 @@ class Media extends Model
         'thumbnail_path',
         'mime_type',
         'size_bytes',
+        'width',
+        'height',
         'original_filename',
         'created_by',
     ];
@@ -57,6 +61,8 @@ class Media extends Model
     {
         return [
             'size_bytes' => 'integer',
+            'width' => 'integer',
+            'height' => 'integer',
         ];
     }
 
