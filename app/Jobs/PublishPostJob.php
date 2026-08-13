@@ -109,7 +109,20 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 3600;
 
-    public function __construct(public readonly string $postGroupId) {}
+    /**
+     * @param  int  $queueVersion  Task 31: the `post_groups.queue_version`
+     *                             this job was dispatched for — see
+     *                             `PostGroupService::dispatchPublishIfQueued()`
+     *                             and `PublishService::lockGroupIfQueued()`'s
+     *                             docblocks. Always a real value from
+     *                             production dispatch; every caller must
+     *                             supply the group's value AT DISPATCH TIME,
+     *                             never a value computed or re-read later.
+     */
+    public function __construct(
+        public readonly string $postGroupId,
+        public readonly int $queueVersion,
+    ) {}
 
     public function uniqueId(): string
     {
@@ -119,7 +132,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
     public function handle(PublishService $service): void
     {
         try {
-            $service->publishGroup($this->postGroupId);
+            $service->publishGroup($this->postGroupId, $this->queueVersion);
         } catch (PublishRetryNeededException $e) {
             // A rate limit's retryAfterSeconds is honoured but capped at
             // this attempt's own backoff-schedule position — never
@@ -182,7 +195,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
             ? "Publishing failed after the maximum number of attempts: {$e->getMessage()}"
             : 'Publishing failed after the maximum number of attempts.';
 
-        app(PublishService::class)->abandonGroup($this->postGroupId, $reason);
+        app(PublishService::class)->abandonGroup($this->postGroupId, $reason, $this->queueVersion);
     }
 
     /**

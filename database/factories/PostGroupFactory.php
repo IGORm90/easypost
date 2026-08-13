@@ -25,6 +25,7 @@ class PostGroupFactory extends Factory
             'created_by' => User::factory(),
             'error' => null,
             'share_token' => null,
+            'queue_version' => 0,
         ];
     }
 }

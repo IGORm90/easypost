@@ -248,10 +248,72 @@ class PostGroupService
      */
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
-        $this->guardEditable($group);
+        $group = DB::transaction(function () use ($group, $publishDate) {
+            $this->guardEditable($group);
 
-        $group->publish_date = $publishDate;
-        $group->save();
+            $group->publish_date = $publishDate;
+            $group->save();
+
+            return $group;
+        });
+
+        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
+
+        return $group;
+    }
+
+    /**
+     * `POST /api/posts/{group}/retry` (Task 31) — the manual "try again"
+     * a customer clicks after a group settled to `ERROR` (some or all of
+     * its channels failed; see `PublishService::finalizeGroupState()`).
+     * Only `ERROR -> QUEUE` is accepted; every other current state is a
+     * 422, not a silent no-op — a customer clicking retry on a group
+     * that's still `QUEUE` (nothing has failed yet) or already
+     * `PUBLISHED` (nothing left to retry) needs to be told clearly that
+     * neither is the action they think it is, not have the request
+     * quietly do nothing.
+     *
+     * Segment-level, this is deliberately narrow: only `Post` rows still
+     * `ERROR` (which — under this codebase's invariants, see
+     * `Post`/`PostStateMachine`'s docblocks — always carry a null
+     * `release_id`; nothing ever sets `ERROR` on a row that already went
+     * out) move back to `QUEUE`. A sibling segment or channel that
+     * already succeeded stays exactly `PUBLISHED`, completely untouched
+     * by this method — it is `PublishService::publishChannel()`'s own
+     * `state = QUEUE AND release_id IS NULL` filter (hardened for
+     * exactly this endpoint — see that method's docblock) that then
+     * guarantees the resulting job re-sends ONLY those rows, resuming any
+     * partially-published thread anchored to its last published segment.
+     *
+     * `publish_date` is reset to `now()`: a retry is an immediate
+     * republish, not a return to whatever the group's original schedule
+     * happened to be.
+     */
+    public function retry(PostGroup $group): PostGroup
+    {
+        $group = DB::transaction(function () use ($group) {
+            if ($group->state !== PostState::ERROR) {
+                throw ValidationException::withMessages([
+                    'state' => ["Only a failed post can be retried (current state: {$group->state->value})."],
+                ]);
+            }
+
+            $this->stateMachine->transition($group, PostState::QUEUE);
+
+            $group->publish_date = Carbon::now();
+            $group->save();
+
+            $group->posts()
+                ->where('state', PostState::ERROR->value)
+                ->whereNull('release_id')
+                ->get()
+                ->each(function (Post $post): void {
+                    $post->error = null;
+                    $this->stateMachine->transition($post, PostState::QUEUE);
+                });
+
+            return $group->fresh(['posts.media', 'tags']);
+        });
 
         $this->dispatchPublishIfQueued($group, forceRedispatch: true);
 
@@ -273,9 +335,19 @@ class PostGroupService
      */
     public function delete(PostGroup $group): void
     {
-        $this->guardEditable($group);
+        DB::transaction(function () use ($group): void {
+            $this->guardEditable($group);
 
-        $group->delete();
+            $group->delete();
+        });
+
+        // Task 31: nothing further to do to "cancel" whatever
+        // PublishPostJob is already sitting delayed in the queue for
+        // this group — see guardEditable()'s docblock for why a job that
+        // fires after this point is already harmless by construction,
+        // and this class's docblock ("Deletion mirrors the edit rule")
+        // for why a group with any released segment could never reach
+        // this line in the first place.
     }
 
     /**
@@ -427,20 +499,74 @@ class PostGroupService
             return;
         }
 
+        // Task 31: bump BEFORE dispatching, and dispatch with the freshly
+        // bumped value — see PublishService::lockGroupIfQueued()'s
+        // docblock for why this makes any job dispatched for an earlier
+        // generation of this group's schedule a guaranteed no-op, and
+        // increment() (not a plain +1/save()) because it issues its own
+        // atomic `UPDATE ... SET queue_version = queue_version + 1` and
+        // refreshes the in-memory attribute to match, rather than trusting
+        // whatever value this possibly-stale `$group` instance already
+        // holds in memory.
+        $group->increment('queue_version');
+
         if ($forceRedispatch) {
-            app(UniqueLock::class)->release(new PublishPostJob($group->id));
+            app(UniqueLock::class)->release(new PublishPostJob($group->id, $group->queue_version));
         }
 
-        PublishPostJob::dispatch($group->id)->delay($group->publish_date);
+        PublishPostJob::dispatch($group->id, $group->queue_version)->delay($group->publish_date);
     }
 
     /**
-     * A group may be replaced or deleted only while every one of its
-     * segments has never been released — see this class's docblock.
+     * A group may be replaced, rescheduled, or deleted only while every
+     * one of its segments has never been released — see this class's
+     * docblock. Callers MUST invoke this from inside their own
+     * `DB::transaction()` (every caller does — `create()`/`update()`
+     * already did, `updateDate()`/`delete()` now wrap it too) for the
+     * lock below to mean anything: `lockForUpdate()` outside an explicit
+     * transaction is released the instant its own SELECT completes,
+     * giving no protection at all.
+     *
+     * Task 31 hardening — deleting (or editing) a group mid-publish: the
+     * previous version of this check was a single unlocked read
+     * (`$group->posts()->whereNotNull('release_id')->exists()`), which
+     * left a real window open. `PublishService::publishChannel()` commits
+     * per CHANNEL, not for the whole group (see that class's docblock),
+     * so a group can sit with SOME channels already published and others
+     * still `QUEUE` while a `publishChannel()` transaction for one of the
+     * remaining channels is genuinely in flight — lock acquired on its
+     * pending rows, provider call made, `release_id` not yet committed.
+     * An unlocked read landing in exactly that gap would see "nothing
+     * published yet" for that channel, and a subsequent delete/replace
+     * would then discard the very rows that transaction is about to mark
+     * `PUBLISHED` — not a duplicate publish, but a message that is live
+     * on the network with NO local record it was ever sent, and (for
+     * delete) the whole group gone. The `lockForUpdate()` read below
+     * closes that: it targets the exact same predicate
+     * `publishChannel()`'s own re-lock uses (`state = QUEUE AND
+     * release_id IS NULL`), so this method is forced to wait for any such
+     * in-flight transaction to commit or roll back before its own
+     * `hasPublishedSegment` check runs — at which point that check, under
+     * Postgres READ COMMITTED, sees the freshly-committed truth rather
+     * than a stale snapshot. Proven directly with real OS-level
+     * concurrency (a sequential Pest call cannot reproduce this race) in
+     * `tests/Feature/Publishing/RescheduleTest.php`.
      */
     private function guardEditable(PostGroup $group): void
     {
-        if ($group->state === PostState::PUBLISHED || $group->posts()->whereNotNull('release_id')->exists()) {
+        Post::query()
+            ->where('post_group_id', $group->id)
+            ->whereNull('release_id')
+            ->where('state', PostState::QUEUE->value)
+            ->lockForUpdate()
+            ->get();
+
+        $hasPublishedSegment = Post::query()
+            ->where('post_group_id', $group->id)
+            ->whereNotNull('release_id')
+            ->exists();
+
+        if ($group->fresh()->state === PostState::PUBLISHED || $hasPublishedSegment) {
             throw new ConflictHttpException('This post has already been published and can no longer be edited or deleted.');
         }
     }

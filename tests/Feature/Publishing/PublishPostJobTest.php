@@ -314,7 +314,7 @@ it('releases the job with backoff on a transient error, leaving the group QUEUE'
 
     fakeProvider()->failNextPostTransiently('network blip');
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->withFakeQueueInteractions();
 
     $job->handle(app(PublishService::class));
@@ -336,7 +336,7 @@ it('honours the provider retryAfterSeconds on a rate limit when it is under the 
     // be honoured exactly.
     fakeProvider()->failNextPostWithRateLimit(45, 'slow down');
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->withFakeQueueInteractions();
 
     $job->handle(app(PublishService::class));
@@ -359,7 +359,7 @@ it('caps a rate-limit release at this attempt\'s own backoff position, never the
 
     fakeProvider()->failNextPostWithRateLimit(999_999, 'slow down for a very long time');
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->withFakeQueueInteractions();
     // Simulate the second attempt: backoff[1] = 300 is the ceiling here,
     // not backoff[0] = 60. $job->job is typed as the bare
@@ -461,7 +461,7 @@ it('redispatches PublishPostJob when the calendar moves publish_date, even while
     $group = queuedGroup($org, now()->addHours(2));
     publishableChannel($org, $group, ['channel A']);
 
-    $inFlight = new PublishPostJob($group->id);
+    $inFlight = new PublishPostJob($group->id, $group->queue_version);
     $lock = Cache::lock(UniqueLock::getKey($inFlight), $inFlight->uniqueFor);
     expect($lock->get())->toBeTrue();
 
@@ -495,7 +495,7 @@ it('logs when a ShouldBeUnique dispatch is silently skipped', function () {
     $org = Organization::factory()->create();
     $group = queuedGroup($org);
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $lock = Cache::lock(UniqueLock::getKey($job), $job->uniqueFor);
     expect($lock->get())->toBeTrue();
 
@@ -507,7 +507,7 @@ it('logs when a ShouldBeUnique dispatch is silently skipped', function () {
                 'unique_id' => $group->id,
             ]);
 
-        PublishPostJob::dispatch($group->id);
+        PublishPostJob::dispatch($group->id, $group->queue_version);
     } finally {
         $lock->release();
     }
@@ -530,7 +530,7 @@ it('errors every still-pending post and finalizes the group when the job fails f
         'published_at' => now()->subMinute(),
     ]);
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->failed(new MaxAttemptsExceededException('PublishPostJob has been attempted too many times.'));
 
     expect($postsA[0]->fresh()->state)->toBe(PostState::PUBLISHED)
@@ -551,7 +551,7 @@ it('failed() is a no-op once the group already resolved to PUBLISHED', function 
     app(PublishService::class)->publishGroup($group->id);
     expect($group->fresh()->state)->toBe(PostState::PUBLISHED);
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->failed(new MaxAttemptsExceededException('too many attempts'));
 
     expect($provider->publishedChains())->toHaveCount(1)
@@ -572,7 +572,7 @@ it('failed() does not error a group that has since been rescheduled further into
     $group = queuedGroup($org, now()->addHours(6));
     [, $posts] = publishableChannel($org, $group, ['channel A']);
 
-    $job = new PublishPostJob($group->id);
+    $job = new PublishPostJob($group->id, $group->queue_version);
     $job->failed(new MaxAttemptsExceededException('too many attempts'));
 
     expect($posts[0]->fresh()->state)->toBe(PostState::QUEUE)

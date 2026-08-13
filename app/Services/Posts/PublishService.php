@@ -89,7 +89,12 @@ use Illuminate\Support\Facades\DB;
  *    scoped to one channel's pending rows, not the whole group and not
  *    the whole run — see the next section for why holding one lock
  *    across the ENTIRE run (all channels, one HTTP call each) was
- *    rejected.
+ *    rejected. `queue_version` (Task 31, compared in `lockGroupIfQueued()`)
+ *    is a THIRD, independent layer, not a substitute for either of the
+ *    two above: it stops a job from a SUPERSEDED schedule generation from
+ *    ever reaching `publishChannel()` at all (a reschedule case), whereas
+ *    the two layers above stop two genuinely-concurrent SAME-generation
+ *    runs from double-publishing a segment. All three hold simultaneously.
  *
  *    This re-lock's `WHERE` MUST filter on `state = QUEUE` as well as
  *    `release_id IS NULL` — post-review fix, not a simplification to
@@ -187,13 +192,22 @@ class PublishService
     ) {}
 
     /**
+     * @param  int|null  $queueVersion  Task 31: the `post_groups.queue_version`
+     *                                  this call was dispatched for — see
+     *                                  `lockGroupIfQueued()`'s docblock. Null
+     *                                  means "no opinion, act regardless of
+     *                                  the group's current version" — used
+     *                                  by every caller other than
+     *                                  `PublishPostJob` (which always passes
+     *                                  a real value).
+     *
      * @throws PublishRetryNeededException when at least one channel needs
      *                                     to be attempted again later —
      *                                     caught only by `PublishPostJob`.
      */
-    public function publishGroup(string $postGroupId): void
+    public function publishGroup(string $postGroupId, ?int $queueVersion = null): void
     {
-        $group = $this->lockGroupIfQueued($postGroupId);
+        $group = $this->lockGroupIfQueued($postGroupId, $queueVersion);
 
         if ($group === null) {
             return;
@@ -246,9 +260,9 @@ class PublishService
      * already published or errored some/all channels and finalized the
      * group itself; nothing here should second-guess that outcome.
      */
-    public function abandonGroup(string $postGroupId, string $reason): void
+    public function abandonGroup(string $postGroupId, string $reason, ?int $queueVersion = null): void
     {
-        DB::transaction(function () use ($postGroupId, $reason): void {
+        DB::transaction(function () use ($postGroupId, $reason, $queueVersion): void {
             /** @var PostGroup|null $group */
             $group = PostGroup::withoutGlobalScope('organization')
                 ->whereKey($postGroupId)
@@ -256,6 +270,16 @@ class PublishService
                 ->first();
 
             if ($group === null || $group->state !== PostState::QUEUE) {
+                return;
+            }
+
+            // Task 31: same reasoning as lockGroupIfQueued()'s queue_version
+            // check below — a stale job's OWN retries running out must not
+            // be allowed to error a group that has since been superseded by
+            // a new schedule generation, even in the residual case where
+            // isDueNow()'s due-date grace (checked next) would not by
+            // itself have caught it.
+            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
                 return;
             }
 
@@ -311,6 +335,30 @@ class PublishService
      * whole run — see the class docblock's "why the group-level lock is
      * short" section.
      *
+     * `$queueVersion` (Task 31) is compared to `$group->queue_version`
+     * INSIDE this same `lockForUpdate()` transaction, not before it and
+     * not by the caller beforehand — that placement is the entire point.
+     * `PostGroupService::dispatchPublishIfQueued()` bumps this column
+     * every single time it (re)dispatches `PublishPostJob` for a group,
+     * and hands the freshly-bumped value to that specific job instance. A
+     * job holding an OLDER value is, by construction, one whose schedule
+     * generation has since been superseded — most commonly by a
+     * reschedule, but the identical mechanism also covers "two instances
+     * of this job somehow both reach the queue for the same group" (the
+     * `ShouldBeUnique` lock's fixed 3600s TTL is independent of
+     * `->delay()`, see `dispatchPublishIfQueued()`'s docblock — a real
+     * race, not merely a hypothetical). Because the comparison happens
+     * under the SAME row lock as the state check, and against the value
+     * physically stored on the row at that exact instant, a stale job
+     * cannot slip past it even if it wins the race to acquire the lock
+     * first: whichever job runs first simply sees whatever `queue_version`
+     * happens to be committed at that moment, and only a job whose own
+     * version matches it exactly is allowed through. This closes a gap
+     * the due-date check below does not: a group can be rescheduled to a
+     * new date that has ALSO already passed by the time the stale job
+     * fires (`isDueNow()` only rejects a date materially in the FUTURE),
+     * in which case the due-date check alone would let it through.
+     *
      * The due-date check is what makes a STALE job — one dispatched for
      * an old `publish_date` that `PostGroupService::updateDate()`/
      * `update()` has since moved into the future — harmless regardless
@@ -327,9 +375,9 @@ class PublishService
      * is a missed-publish failure mode, not a duplicate-publish one, and
      * is called out in this task's report.
      */
-    private function lockGroupIfQueued(string $postGroupId): ?PostGroup
+    private function lockGroupIfQueued(string $postGroupId, ?int $queueVersion): ?PostGroup
     {
-        return DB::transaction(function () use ($postGroupId): ?PostGroup {
+        return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostGroup {
             /** @var PostGroup|null $group */
             $group = PostGroup::withoutGlobalScope('organization')
                 ->whereKey($postGroupId)
@@ -337,6 +385,10 @@ class PublishService
                 ->first();
 
             if ($group === null || $group->state !== PostState::QUEUE) {
+                return null;
+            }
+
+            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
                 return null;
             }
 

@@ -166,6 +166,7 @@ Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(func
     Route::delete('{group}', [PostController::class, 'destroy']);
     Route::post('{group}/duplicate', [PostController::class, 'duplicate']);
     Route::patch('{group}/date', [PostController::class, 'updateDate']);
+    Route::post('{group}/retry', [PostController::class, 'retry']);
 
     // Task 22. `{group}` is resolved/authorized inside each controller
     // the same PostGroup::query()->findOrFail() + Gate::authorize() way

@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $organization_id
  * @property PostState $state
  * @property CarbonInterface|null $publish_date
+ * @property int $queue_version
  * @property string|null $created_by
  * @property string|null $error
  * @property string|null $share_token
@@ -45,6 +46,7 @@ class PostGroup extends Model
         'created_by',
         'error',
         'share_token',
+        'queue_version',
     ];
 
     /**
@@ -55,6 +57,7 @@ class PostGroup extends Model
         return [
             'state' => PostState::class,
             'publish_date' => 'datetime',
+            'queue_version' => 'integer',
         ];
     }
 

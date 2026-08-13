@@ -100,6 +100,21 @@ class PostController extends Controller
     }
 
     /**
+     * POST /api/posts/{group}/retry (Task 31) — the manual "try again"
+     * after a group settled to `ERROR`. Same 'manage' bar as
+     * update/destroy/updateDate. `PostGroupService::retry()` throws a
+     * `ValidationException` (422) for anything other than `ERROR` —
+     * deliberately not a silent no-op, see that method's docblock.
+     */
+    public function retry(string $group): JsonResponse
+    {
+        $group = $this->findAuthorized($group, 'manage');
+        $group = $this->groups->retry($group);
+
+        return response()->json(new PostGroupResource($group->load(['posts.media', 'tags'])));
+    }
+
+    /**
      * POST /api/posts/{group}/share (Task 22) — mints (or replaces) the
      * group's public share_token and returns the public URL for it.
      * Same 'manage' bar as update/destroy: minting a link that makes
