@@ -1,6 +1,9 @@
 <?php
 
+use App\Social\Providers\BlueskyProvider;
+use App\Social\Providers\DiscordProvider;
 use App\Social\Providers\MastodonProvider;
+use App\Social\Providers\SlackProvider;
 use App\Social\Providers\TelegramProvider;
 
 return [
@@ -27,7 +30,9 @@ return [
     'providers' => [
         'telegram' => TelegramProvider::class,
         'mastodon' => MastodonProvider::class,
-        // Remaining providers (Bluesky, Discord, Slack) land here in Task 15.
+        'bluesky' => BlueskyProvider::class,
+        'discord' => DiscordProvider::class,
+        'slack' => SlackProvider::class,
     ],
 
 ];

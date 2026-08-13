@@ -1,0 +1,17 @@
+{
+    "access_token": "discord-access-token-abc",
+    "token_type": "Bearer",
+    "expires_in": 604800,
+    "refresh_token": "discord-refresh-token-xyz",
+    "scope": "webhook.incoming",
+    "webhook": {
+        "id": "223704706495545344",
+        "type": 1,
+        "channel_id": "223704706495545344",
+        "guild_id": "290926798626357999",
+        "name": "captain-hook",
+        "avatar": null,
+        "token": "7Vt0nyDNlksBSMK2E2ADv1UkV5hFCzRc7VOvV9G9DEIYQhCSTUhqZgFEUeoLkuC00qtR",
+        "url": "https://discord.com/api/webhooks/223704706495545344/7Vt0nyDNlksBSMK2E2ADv1UkV5hFCzRc7VOvV9G9DEIYQhCSTUhqZgFEUeoLkuC00qtR"
+    }
+}

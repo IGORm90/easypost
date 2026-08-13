@@ -33,6 +33,22 @@ return [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
+
+        // Distinct from 'notifications' above (this app's own Slack alert
+        // channel): these are the OAuth app credentials Task 15's
+        // SlackProvider uses to let end users connect THEIR Slack
+        // workspace as a publishing channel.
+        'integration' => [
+            'client_id' => env('SLACK_INTEGRATION_CLIENT_ID'),
+            'client_secret' => env('SLACK_INTEGRATION_CLIENT_SECRET'),
+        ],
+    ],
+
+    // OAuth app credentials for Task 15's DiscordProvider (connecting a
+    // Discord channel via the `webhook.incoming` scope).
+    'discord' => [
+        'client_id' => env('DISCORD_CLIENT_ID'),
+        'client_secret' => env('DISCORD_CLIENT_SECRET'),
     ],
 
     'github' => [

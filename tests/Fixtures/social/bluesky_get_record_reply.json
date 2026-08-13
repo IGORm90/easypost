@@ -1,0 +1,19 @@
+{
+    "uri": "at://did:plc:abc123xyz456/app.bsky.feed.post/3k2abcreply002",
+    "cid": "bafyreigh2akiscaildcreply0020000000000000000000000000000000000",
+    "value": {
+        "$type": "app.bsky.feed.post",
+        "text": "second segment",
+        "createdAt": "2026-08-13T00:00:01.000Z",
+        "reply": {
+            "root": {
+                "uri": "at://did:plc:abc123xyz456/app.bsky.feed.post/3k2abcroot001",
+                "cid": "bafyreigh2akiscaildcroot0010000000000000000000000000000000000"
+            },
+            "parent": {
+                "uri": "at://did:plc:abc123xyz456/app.bsky.feed.post/3k2abcroot001",
+                "cid": "bafyreigh2akiscaildcroot0010000000000000000000000000000000000"
+            }
+        }
+    }
+}
