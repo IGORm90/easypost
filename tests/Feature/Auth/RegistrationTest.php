@@ -17,6 +17,23 @@ it('registers a user and creates their first organization', function () {
         ->assertJsonPath('organization.name', "Ann's workspace");
 });
 
+it('lets a freshly registered user log in with the password they registered with', function () {
+    // Guards against the register/login suites passing independently while
+    // registration is actually broken end-to-end — e.g. if the `hashed`
+    // cast on User (Task 5, outside this diff) were ever dropped, this
+    // would still register fine and every login test would still pass
+    // (they all seed via Hash::make() directly), while no registered user
+    // could ever actually log in.
+    $this->postJson('/api/auth/register', [
+        'name' => 'Ann', 'email' => 'ann@example.com', 'password' => 'secret1234',
+    ])->assertCreated();
+
+    $this->withHeader('Referer', config('app.url'))
+        ->postJson('/api/auth/login', ['email' => 'ann@example.com', 'password' => 'secret1234'])
+        ->assertOk()
+        ->assertJsonPath('user.email', 'ann@example.com');
+});
+
 it('rejects duplicate emails', function () {
     User::factory()->create(['email' => 'ann@example.com']);
     $this->postJson('/api/auth/register', ['name' => 'A', 'email' => 'ann@example.com', 'password' => 'secret1234'])

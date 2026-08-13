@@ -46,16 +46,36 @@ class AuthService
         $email = Str::lower($email);
         $throttleKey = $this->throttleKey($email, $ip);
 
-        if (RateLimiter::tooManyAttempts($throttleKey, self::MAX_ATTEMPTS)) {
+        // Hit-then-check, not check-then-hit: RateLimiter::hit() is a
+        // single atomic cache increment, and the threshold decision below
+        // uses that call's own return value — the up-to-date count that
+        // already includes this request. The previous tooManyAttempts()
+        // (read) ... Hash::check() (slow) ... hit() (write, failure-only)
+        // sequence left a window where concurrent requests could each read
+        // a stale "not yet at the limit" count before any of them recorded
+        // a hit, letting a burst slip past MAX_ATTEMPTS.
+        $attempts = RateLimiter::hit($throttleKey, self::DECAY_SECONDS);
+
+        if ($attempts > self::MAX_ATTEMPTS) {
             $this->throwLockoutException($throttleKey);
         }
 
         $user = User::firstWhere('email', $email);
 
-        $passwordMatches = Hash::check($password, $user->password ?? self::DUMMY_HASH);
+        // Ternary, not `$user?->password ?? self::DUMMY_HASH`: the
+        // nullsafe form still reads cleanly, but PHPStan's `nullsafe.neverNull`
+        // rule flags it as unnecessary here (it only cares whether the
+        // expression's *value* changes, and a plain `->` read on null also
+        // evaluates to null in PHP 8 rather than throwing) — while PHP
+        // itself still emits "Attempt to read property on null" as a
+        // real warning on every request against an unregistered email,
+        // the single most security-sensitive path in this method. This
+        // form reaches level 6 clean and never evaluates `->password`
+        // when $user is null, so neither problem applies.
+        $hashedPassword = $user === null ? self::DUMMY_HASH : $user->password;
+        $passwordMatches = Hash::check($password, $hashedPassword);
 
         if (! $user || ! $passwordMatches) {
-            RateLimiter::hit($throttleKey, self::DECAY_SECONDS);
             $this->throwInvalidCredentialsException();
         }
 
