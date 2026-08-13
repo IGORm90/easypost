@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
+        api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
@@ -16,6 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'organization' => ResolveOrganization::class,
         ]);
+
+        // Lets Sanctum authenticate first-party SPA requests (from
+        // SANCTUM_STATEFUL_DOMAINS) via the encrypted session cookie
+        // instead of a bearer token, and applies the 'web' group's
+        // cookie/session/CSRF middleware ahead of the api routes.
+        $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
