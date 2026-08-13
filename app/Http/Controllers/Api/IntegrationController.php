@@ -94,7 +94,13 @@ class IntegrationController extends Controller
         $state = $this->states->generate($this->currentOrganization(), $this->currentUser());
         $authUrl = $providerInstance->generateAuthUrl($state, $this->redirectUri(), $request->all());
 
-        return response()->json(['url' => $authUrl->url, 'state' => $state]);
+        // `extra` (Task 14 review, Finding 3) must round-trip back to the
+        // frontend: it's the provider's own AuthUrlDto docblock contract
+        // ("the caller must persist... and hand back on the callback"),
+        // e.g. Mastodon's chosen instance host, which the frontend must
+        // resupply on `callback()` since this controller has no session/
+        // storage of its own to remember it across the redirect.
+        return response()->json(['url' => $authUrl->url, 'state' => $state, 'extra' => $authUrl->extra]);
     }
 
     /**

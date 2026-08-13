@@ -10,6 +10,8 @@ use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use App\Social\ProviderRegistry;
 use App\Social\Providers\MastodonProvider;
+use App\Support\SafeRemoteHost;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
@@ -19,7 +21,21 @@ use Illuminate\Support\Facades\Http;
  * `POST /api/v2/media` requires. See MastodonProvider's class docblock
  * for why generateAuthUrl() needed a `$params` channel this task added
  * to SocialProviderInterface.
+ *
+ * DNS is faked for every test via SafeRemoteHost::fake() (Task 14
+ * review, Finding 1) so none of this ever touches real DNS/network:
+ * 'mastodon.social' is pinned to a public documentation-range address
+ * by default here; SSRF-specific tests below override the fake map with
+ * a private/metadata address for the host they're exercising.
  */
+
+beforeEach(function () {
+    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10']]);
+});
+
+afterEach(function () {
+    SafeRemoteHost::stopFaking();
+});
 
 /**
  * @return array<string, mixed>
@@ -298,4 +314,117 @@ it('does not throw a partial failure exception when the very first segment fails
 
     expect(fn () => app(ProviderRegistry::class)->get('mastodon')->post($integration, [new PostPayloadDto('first')]))
         ->toThrow(ProviderPermanentException::class);
+});
+
+// --- Task 14 review, Finding 1 (CRITICAL): the instance host is a
+// server-side-request target an org admin controls end to end, so it
+// must be checked against App\Support\SafeRemoteHost both when first
+// accepted (generateAuthUrl/authenticate) AND every time a previously-
+// accepted, now-stored host is reused (post/uploadMedia) -- DNS answers
+// change, so a host safe at connect time can resolve privately later.
+
+it('rejects generateAuthUrl() when the instance host resolves to a private/metadata address', function () {
+    SafeRemoteHost::fake(['evil.internal' => ['169.254.169.254']]);
+    Http::fake();
+
+    $provider = app(ProviderRegistry::class)->get('mastodon');
+
+    expect(fn () => $provider->generateAuthUrl('state', 'https://app.test/callback', ['instance' => 'evil.internal']))
+        ->toThrow(InvalidArgumentException::class);
+
+    Http::assertNothingSent();
+});
+
+it('rejects authenticate() when the instance host resolves to a private/metadata address', function () {
+    SafeRemoteHost::fake(['evil.internal' => ['127.0.0.1']]);
+    Http::fake();
+
+    $provider = app(ProviderRegistry::class)->get('mastodon');
+
+    expect(fn () => $provider->authenticate(['instance' => 'evil.internal', 'code' => 'x'], 'https://app.test/callback'))
+        ->toThrow(InvalidArgumentException::class);
+
+    Http::assertNothingSent();
+});
+
+it('rejects publishing when a stored channel\'s instance host now resolves to a private address (DNS rebinding)', function () {
+    // The channel connected fine (its host resolved publicly at connect
+    // time -- see the file-level beforeEach), but by the time a
+    // scheduled publish runs, the same hostname now resolves to the
+    // cloud-metadata address. hostFor() must catch this on every use,
+    // not just once at connect time.
+    SafeRemoteHost::fake(['mastodon.social' => ['169.254.169.254']]);
+    Http::fake();
+
+    $integration = mastodonIntegration(); // settings.instance = 'mastodon.social'
+
+    expect(fn () => app(ProviderRegistry::class)->get('mastodon')->post($integration, [new PostPayloadDto('hello')]))
+        ->toThrow(ProviderPermanentException::class);
+
+    Http::assertNothingSent();
+});
+
+it('rejects uploadMedia() when a stored channel\'s instance host now resolves to a private address', function () {
+    SafeRemoteHost::fake(['mastodon.social' => ['10.0.0.5']]);
+    Http::fake();
+
+    $integration = mastodonIntegration();
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png');
+
+    $provider = app(ProviderRegistry::class)->get('mastodon');
+    expect($provider)->toBeInstanceOf(MastodonProvider::class);
+    /** @var MastodonProvider $provider */
+    expect(fn () => $provider->uploadMedia($integration, $media))
+        ->toThrow(ProviderPermanentException::class);
+
+    Http::assertNothingSent();
+});
+
+it('propagates the underlying reason through UnsafeRemoteHostException for a rejected instance', function () {
+    SafeRemoteHost::fake(['evil.internal' => ['169.254.169.254']]);
+    Http::fake();
+
+    $provider = app(ProviderRegistry::class)->get('mastodon');
+
+    try {
+        $provider->generateAuthUrl('state', 'https://app.test/callback', ['instance' => 'evil.internal']);
+        test()->fail('Expected InvalidArgumentException.');
+    } catch (InvalidArgumentException $e) {
+        expect($e->getMessage())->toContain('169.254.169.254');
+    }
+});
+
+// --- Task 14 review, Finding 2: verified for Mastodon too, even though
+// its credentials travel via the Authorization header rather than the
+// URL -- the policy is "never chain a raw transport exception", not
+// "only when a secret is known to be in the URL today".
+
+it('does not leak the access token through the exception chain on a network-level failure', function () {
+    $token = 'super-secret-mastodon-token-abc123';
+
+    Http::fake([
+        'mastodon.social/api/v1/statuses' => function () use ($token) {
+            throw new ConnectionException(
+                "cURL error 6: Could not resolve host for https://mastodon.social/api/v1/statuses (Authorization: Bearer {$token})",
+            );
+        },
+    ]);
+
+    $integration = mastodonIntegration(['token' => $token]);
+
+    try {
+        app(ProviderRegistry::class)->get('mastodon')->post($integration, [new PostPayloadDto('hello')]);
+        test()->fail('Expected ProviderTransientException.');
+    } catch (ProviderTransientException $e) {
+        $messages = [];
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            $messages[] = $current->getMessage();
+        }
+
+        expect($messages)->not->toBeEmpty();
+
+        foreach ($messages as $message) {
+            expect($message)->not->toContain($token);
+        }
+    }
 });

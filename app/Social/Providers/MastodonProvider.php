@@ -15,6 +15,8 @@ use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderTransientException;
+use App\Support\Exceptions\UnsafeRemoteHostException;
+use App\Support\SafeRemoteHost;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
@@ -319,6 +321,20 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         return $app;
     }
 
+    /**
+     * Resolves the stored instance host for an already-connected channel
+     * AND re-validates it against SafeRemoteHost before returning --
+     * deliberately, not just at connect time (Task 14 review, Finding
+     * 1): DNS answers change, so a host that resolved to a public
+     * address when the channel was connected can resolve somewhere
+     * unsafe (e.g. 169.254.169.254) by the time a later scheduled
+     * publish runs. Every caller of post()/uploadMedia() goes through
+     * this single choke point, so re-validation happens on every use,
+     * not just once. Mapped to ProviderPermanentException (not
+     * transient): retrying won't change what the channel's stored host
+     * currently resolves to, and this needs a human to look at the
+     * channel, not an automatic retry.
+     */
     private function hostFor(Integration $integration): string
     {
         $host = $integration->settings['instance'] ?? null;
@@ -327,9 +343,28 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new ProviderPermanentException('This Mastodon channel has no instance host recorded in its settings.');
         }
 
+        try {
+            SafeRemoteHost::assertSafeHost($host);
+        } catch (UnsafeRemoteHostException $e) {
+            throw new ProviderPermanentException(
+                "This Mastodon channel's instance host is no longer safe to connect to: {$e->getMessage()}",
+            );
+        }
+
         return $host;
     }
 
+    /**
+     * Validates connect-time input: format first (a cheap rejection for
+     * obvious garbage before any network call), then SafeRemoteHost
+     * (Task 14 review, Finding 1) so an org admin cannot aim the
+     * connect flow -- and therefore every future scheduled publish
+     * through this channel -- at a loopback, private, link-local (e.g.
+     * the 169.254.169.254 cloud-metadata address) or otherwise reserved
+     * address. Both failure modes are the caller's fault (bad/unsafe
+     * input), not a live-network outcome, so both throw
+     * InvalidArgumentException rather than a ProviderException.
+     */
     private function normalizeHost(mixed $instance): string
     {
         if (! is_string($instance) || $instance === '') {
@@ -343,7 +378,11 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new InvalidArgumentException("Mastodon instance host [{$instance}] is not a valid hostname.");
         }
 
-        return $host;
+        try {
+            return SafeRemoteHost::assertSafeUrl("https://{$host}");
+        } catch (UnsafeRemoteHostException $e) {
+            throw new InvalidArgumentException("Mastodon instance host [{$host}] is not safe to connect to: {$e->getMessage()}");
+        }
     }
 
     /**
@@ -365,13 +404,24 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         return (array) $response->json();
     }
 
+    /**
+     * Deliberately does NOT attach the caught ConnectionException as
+     * $previous (Task 14 review, Finding 2 -- applied here too, even
+     * though Mastodon's own credentials travel via the Authorization
+     * header rather than the URL: the policy is "never chain a raw
+     * transport exception," not "only when this specific provider is
+     * known to embed a secret in the URL today," since that's exactly
+     * the kind of assumption a future code change could quietly
+     * invalidate). See TelegramProvider::send() for the fuller
+     * rationale.
+     */
     private function send(Closure $call): Response
     {
         try {
             /** @var Response $response */
             $response = $call();
-        } catch (ConnectionException $e) {
-            throw new ProviderTransientException('Network error while calling the Mastodon API.', 0, $e);
+        } catch (ConnectionException) {
+            throw new ProviderTransientException('Network error while calling the Mastodon API.');
         }
 
         return $response;

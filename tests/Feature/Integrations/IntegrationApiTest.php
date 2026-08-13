@@ -4,6 +4,8 @@ use App\Models\Integration;
 use App\Models\Organization;
 use App\Services\Integrations\IntegrationService;
 use App\Social\Dto\AuthResultDto;
+use App\Support\SafeRemoteHost;
+use Illuminate\Support\Facades\Http;
 use Tests\Support\NoOptionsFakeProvider;
 
 /*
@@ -98,8 +100,48 @@ it('generates an auth url and a state for an admin', function () {
 
     $response = $this->postJson('/api/integrations/fake/auth-url');
 
-    $response->assertOk()->assertJsonStructure(['url', 'state']);
+    $response->assertOk()->assertJsonStructure(['url', 'state', 'extra']);
     expect($response->json('url'))->toContain('state='.$response->json('state'));
+});
+
+it('returns the provider\'s extra payload from auth-url (Task 14 review, Finding 3)', function () {
+    // AuthUrlDto::$extra is documented as "the caller must persist...
+    // and hand back on the callback" -- it must actually reach the
+    // frontend for that to be possible. FakeProvider always returns
+    // extra: ['state' => $state], which doubles as an easy assertion
+    // that the *same* response's `state` and `extra.state` agree.
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'ADMIN');
+
+    $response = $this->postJson('/api/integrations/fake/auth-url');
+
+    $response->assertOk();
+    expect($response->json('extra'))->toBe(['state' => $response->json('state')]);
+});
+
+it('forwards query/body params from auth-url into generateAuthUrl (Task 14 review, Finding 4)', function () {
+    // Mastodon needs the frontend-supplied instance host to reach
+    // generateAuthUrl(); this proves the controller's generic
+    // pass-through actually works end to end against a real registered
+    // provider, not just the interface signature.
+    Http::fake([
+        'mastodon.social/api/v1/apps' => Http::response([
+            'client_id' => 'test-client-id',
+            'client_secret' => 'test-client-secret',
+        ]),
+    ]);
+    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10']]);
+
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'ADMIN');
+
+    $response = $this->postJson('/api/integrations/mastodon/auth-url', ['instance' => 'mastodon.social']);
+
+    $response->assertOk();
+    expect($response->json('url'))->toContain('https://mastodon.social/oauth/authorize')
+        ->and($response->json('extra'))->toBe(['instance' => 'mastodon.social']);
+
+    SafeRemoteHost::stopFaking();
 });
 
 it('rejects auth-url for a non-admin member', function () {

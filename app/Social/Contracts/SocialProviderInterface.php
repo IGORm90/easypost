@@ -60,6 +60,21 @@ interface SocialProviderInterface
      * providers like Telegram) are unaffected. Providers that need a key
      * $params doesn't have MUST throw rather than guess.
      *
+     * SECURITY: $params is UNTRUSTED request input — IntegrationController
+     * forwards `$request->all()` verbatim (Task 14 review, Finding 4), the
+     * same way `callback()` forwards `$request->except('state')` to
+     * authenticate() below; neither the controller nor this interface
+     * validates its shape or contents for any given provider. A provider
+     * MUST validate whatever it reads from $params before use, and in
+     * particular MUST NOT build a server-side request target (a host to
+     * connect to, a URL to fetch) from it without first checking that
+     * target through App\Support\SafeRemoteHost — an admin-controlled
+     * value reaching an outbound HTTP call is exactly the shape of an
+     * SSRF primitive (see MastodonProvider's instance-host handling for
+     * the reference implementation: validated both when first accepted
+     * from $params AND again every time a previously-accepted, now-stored
+     * value is reused, since DNS answers change).
+     *
      * @param  array<string, mixed>  $params
      */
     public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;

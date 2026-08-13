@@ -11,6 +11,7 @@ use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use App\Social\ProviderRegistry;
 use App\Social\Providers\TelegramProvider;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 
 /*
@@ -261,4 +262,69 @@ it('does not throw a partial failure exception when the very first segment fails
 
     expect(fn () => app(ProviderRegistry::class)->get('telegram')->post($integration, [new PostPayloadDto('first')]))
         ->toThrow(ProviderPermanentException::class);
+});
+
+// --- Task 14 review, Finding 2: the bot token must never ride along in
+// the exception chain. Guzzle's ConnectionException message conventionally
+// embeds the full request URI, and every Telegram API call in this
+// provider embeds the bot token in that URI's path
+// (https://api.telegram.org/bot{token}/{method}) -- so a naive
+// "wrap the caught exception as $previous" would leak a live credential
+// to any logger/error-tracker that serialises the whole chain.
+
+it('does not leak the bot token through the exception chain on a network-level failure', function () {
+    $token = 'super-secret-bot-token-987654:ZZYYXX';
+
+    Http::fake([
+        'api.telegram.org/*' => function () use ($token) {
+            // Mirrors the real shape: Guzzle/cURL connection failures
+            // report the full request URI, token included, in their
+            // message.
+            throw new ConnectionException(
+                "cURL error 6: Could not resolve host for https://api.telegram.org/bot{$token}/sendMessage",
+            );
+        },
+    ]);
+
+    $integration = telegramIntegration(['token' => $token]);
+
+    try {
+        app(ProviderRegistry::class)->get('telegram')->post($integration, [new PostPayloadDto('hello')]);
+        test()->fail('Expected ProviderTransientException.');
+    } catch (ProviderTransientException $e) {
+        $messages = [];
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            $messages[] = $current->getMessage();
+        }
+
+        // The chain must exist and be more than a fluke of "no previous
+        // at all" -- assert on the actual chain contents, not just the
+        // absence of an exception.
+        expect($messages)->not->toBeEmpty();
+
+        foreach ($messages as $message) {
+            expect($message)->not->toContain($token);
+        }
+    }
+});
+
+it('does not leak the bot token through the exception chain when authenticate() hits a network-level failure', function () {
+    $token = 'super-secret-bot-token-111222:AABBCC';
+
+    Http::fake([
+        'api.telegram.org/*' => function () use ($token) {
+            throw new ConnectionException(
+                "cURL error 6: Could not resolve host for https://api.telegram.org/bot{$token}/getChat",
+            );
+        },
+    ]);
+
+    try {
+        app(ProviderRegistry::class)->get('telegram')->authenticate(['bot_token' => $token, 'chat_id' => '-100'], 'https://app.test/callback');
+        test()->fail('Expected ProviderTransientException.');
+    } catch (ProviderTransientException $e) {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            expect($current->getMessage())->not->toContain($token);
+        }
+    }
 });

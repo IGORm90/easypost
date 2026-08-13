@@ -304,13 +304,29 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
         return $body;
     }
 
+    /**
+     * Deliberately does NOT attach the caught ConnectionException as
+     * $previous (Task 14 review, Finding 2): every Telegram API call
+     * this provider makes embeds the bot token in the URL PATH
+     * (`https://api.telegram.org/bot{token}/{method}`), and Guzzle's
+     * connection-exception message conventionally includes the full
+     * request URI. The top-level ProviderTransientException message
+     * here is already token-free, but chaining the original exception
+     * would let any logger/error-tracker that serialises the full
+     * exception chain (Sentry, a Monolog handler that walks
+     * getPrevious()...) print a live bot token -- exactly the "tokens
+     * must never appear in ... thrown context" constraint. A generic,
+     * previous-less exception is the fix; a redacted message would still
+     * require trusting every future Guzzle version's message format not
+     * to change shape.
+     */
     private function send(Closure $call): Response
     {
         try {
             /** @var Response $response */
             $response = $call();
-        } catch (ConnectionException $e) {
-            throw new ProviderTransientException('Network error while calling the Telegram API.', 0, $e);
+        } catch (ConnectionException) {
+            throw new ProviderTransientException('Network error while calling the Telegram API.');
         }
 
         return $response;
