@@ -3,12 +3,15 @@
 namespace App\Providers;
 
 use App\Listeners\ClearOrganizationContext;
+use App\Models\PostGroup;
+use App\Policies\PostPolicy;
 use App\Services\Auth\Socialite\OidcProvider;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Socialite\Facades\Socialite;
 
@@ -27,6 +30,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Explicit binding, not naming-convention auto-discovery: this
+        // policy is named `PostPolicy` per the task-20 brief, not
+        // `PostGroupPolicy`, which is what Laravel's App\Models\X ->
+        // App\Policies\XPolicy convention would look for on its own.
+        Gate::policy(PostGroup::class, PostPolicy::class);
+
         // See App\Listeners\ClearOrganizationContext for why all three events.
         Event::listen(
             [JobProcessing::class, JobProcessed::class, JobFailed::class],

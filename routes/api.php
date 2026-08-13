@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\InviteController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\PostController;
 use App\Http\Controllers\Api\ProfileController;
 use Illuminate\Support\Facades\Route;
 
@@ -132,4 +133,22 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('{id}', [IntegrationController::class, 'destroy']);
         });
     });
+});
+
+/*
+ * Post group CRUD (Task 20). `auth:sanctum` + `organization` gate all of
+ * it — plain membership is enough (no `role:` requirement): scheduling
+ * and editing posts is everyday content work for any member, same bar as
+ * PostPolicy documents. `{group}` is resolved and authorized inside
+ * PostController, not via route-model binding, so a wrong-organization
+ * id 404s exactly like a nonexistent one (see PostController's
+ * docblock).
+ */
+Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(function () {
+    Route::post('/', [PostController::class, 'store']);
+    Route::get('{group}', [PostController::class, 'show']);
+    Route::put('{group}', [PostController::class, 'update']);
+    Route::delete('{group}', [PostController::class, 'destroy']);
+    Route::post('{group}/duplicate', [PostController::class, 'duplicate']);
+    Route::patch('{group}/date', [PostController::class, 'updateDate']);
 });
