@@ -236,12 +236,29 @@ class PostGroupService
         }
     }
 
+    /**
+     * `draft` without an explicit `publish_date` gets `now()` — a
+     * placeholder, not a commitment (see this class's docblock and
+     * SlotFinderService::isOccupied(), which deliberately excludes DRAFT
+     * groups from "occupied" regardless of what this returns for one).
+     * Task 24 found that leaving it `null` made a dateless draft
+     * permanently invisible to `GET /api/calendar`
+     * (`CalendarService::forRange()`'s `whereBetween('publish_date', ...)`
+     * never matches a NULL column, in any range) — there is no other
+     * screen in this MVP that lists drafts, so a draft saved without a
+     * date would silently disappear. Stamping `now()` here lands it on
+     * today's calendar entry instead, where Task 24's UI already renders
+     * it as visually distinct (dashed border, neutral badge) from a real
+     * scheduled post. A draft created WITH an explicit date keeps
+     * exactly that date — this only fills in the gap when the caller
+     * gave none.
+     */
     private function resolvePublishDate(string $type, ?string $publishDate): ?CarbonInterface
     {
         return match ($type) {
             'now' => Carbon::now(),
             'schedule' => Carbon::parse($publishDate),
-            'draft' => $publishDate !== null ? Carbon::parse($publishDate) : null,
+            'draft' => $publishDate !== null ? Carbon::parse($publishDate) : Carbon::now(),
             default => null,
         };
     }

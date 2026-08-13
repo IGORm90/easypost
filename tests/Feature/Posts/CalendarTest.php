@@ -106,3 +106,83 @@ it('does not widen the calendar result when a tag id belongs to another organiza
     $response->assertOk();
     expect($response->json())->toBe([]);
 });
+
+/*
+ * A DRAFT group's publish_date is optional at the request level, but
+ * PostGroupService::resolvePublishDate() fills in now() when none is
+ * given (Task 24 fix) — without that, a dateless draft would carry a
+ * NULL publish_date, which whereBetween() never matches in ANY range,
+ * making the draft permanently invisible on the only screen that lists
+ * posts. These two cases cover both directions end to end, through the
+ * real POST /api/posts endpoint rather than a factory, so they exercise
+ * PostGroupService itself, not just the read side.
+ */
+
+it('a draft created with no publish_date lands on today and is returned by GET /api/calendar for a range covering today', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $create = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'dateless draft']]],
+        ],
+    ]);
+
+    $create->assertCreated();
+    $groupId = $create->json('id');
+
+    $group = PostGroup::findOrFail($groupId);
+    expect($group->state)->toBe(PostState::DRAFT)
+        ->and($group->publish_date)->not->toBeNull()
+        ->and($group->publish_date->isToday())->toBeTrue()
+        ->and($group->publish_date->utcOffset())->toBe(0);
+
+    $response = $this->getJson('/api/calendar?'.http_build_query([
+        'from' => now()->startOfDay()->toIso8601String(),
+        'to' => now()->endOfDay()->toIso8601String(),
+    ]));
+
+    $response->assertOk();
+    $ids = collect((array) $response->json())->pluck('id');
+    expect($ids)->toContain($groupId);
+});
+
+it('a draft created WITH an explicit publish_date keeps it, appearing only in a range covering that date, not today', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $future = now()->addWeek();
+
+    $create = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'publish_date' => $future->toIso8601String(),
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'dated draft']]],
+        ],
+    ]);
+
+    $create->assertCreated();
+    $groupId = $create->json('id');
+
+    $group = PostGroup::findOrFail($groupId);
+    expect($group->publish_date->isSameDay($future))->toBeTrue();
+
+    // Present in a range covering the explicit future date...
+    $futureRange = $this->getJson('/api/calendar?'.http_build_query([
+        'from' => $future->copy()->subDay()->toIso8601String(),
+        'to' => $future->copy()->addDay()->toIso8601String(),
+    ]));
+    $futureRange->assertOk();
+    expect(collect((array) $futureRange->json())->pluck('id'))->toContain($groupId);
+
+    // ...and absent from a range covering only today — the given date
+    // was kept verbatim, not silently overwritten with now().
+    $todayRange = $this->getJson('/api/calendar?'.http_build_query([
+        'from' => now()->startOfDay()->toIso8601String(),
+        'to' => now()->endOfDay()->toIso8601String(),
+    ]));
+    $todayRange->assertOk();
+    expect(collect((array) $todayRange->json())->pluck('id'))->not->toContain($groupId);
+});

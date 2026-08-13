@@ -105,8 +105,12 @@ trait ValidatesPostChains
      * in the past can never be published. `type=now` ignores whatever
      * `publish_date` was sent (PostGroupService always stamps `now()`
      * itself — see its docblock); `type=draft` has no date requirement
-     * at all, since a draft may sit on the calendar with no slot, an
-     * arbitrary placeholder date, or none.
+     * at all — a caller may give it an arbitrary placeholder date, or
+     * none. When none is given, `PostGroupService::resolvePublishDate()`
+     * fills in `now()` itself (not this class's job — validation only
+     * decides whether a value is *required*, never what a missing one
+     * defaults to), so the draft still lands on today's `GET
+     * /api/calendar` instead of being unfindable.
      */
     private function validatePublishDate(Validator $validator): void
     {
