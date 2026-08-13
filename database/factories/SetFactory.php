@@ -19,7 +19,10 @@ class SetFactory extends Factory
         return [
             'organization_id' => Organization::factory(),
             'name' => fake()->words(3, true),
-            'content' => ['segments' => []],
+            // Task 23 defines the shape: {integration_ids: string[]}. See
+            // SetService/SetResource — the raw jsonb column stores exactly
+            // this array under this key.
+            'content' => ['integration_ids' => []],
         ];
     }
 }

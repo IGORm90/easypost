@@ -13,6 +13,8 @@ use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\Api\PostController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\PublicPostController;
+use App\Http\Controllers\Api\SetController;
+use App\Http\Controllers\Api\SignatureController;
 use App\Http\Controllers\Api\TagController;
 use Illuminate\Support\Facades\Route;
 
@@ -202,5 +204,30 @@ Route::middleware(['auth:sanctum', 'organization'])->group(function () {
         Route::post('/', [TagController::class, 'store']);
         Route::put('{tag}', [TagController::class, 'update']);
         Route::delete('{tag}', [TagController::class, 'destroy']);
+    });
+});
+
+/*
+ * Sets and signatures (Task 23). Same auth/organization bar as tags
+ * above — plain membership, no `role:` requirement: saving a channel
+ * preset or a reusable signature is everyday content work, not an
+ * administrative action. `{set}`/`{signature}`-scoped actions are
+ * resolved and authorized inside their controllers the same
+ * `Model::query()->findOrFail()` way as `{tag}` above, not via route-model
+ * binding — see SetController's/SignatureController's docblocks.
+ */
+Route::middleware(['auth:sanctum', 'organization'])->group(function () {
+    Route::prefix('sets')->group(function () {
+        Route::get('/', [SetController::class, 'index']);
+        Route::post('/', [SetController::class, 'store']);
+        Route::put('{set}', [SetController::class, 'update']);
+        Route::delete('{set}', [SetController::class, 'destroy']);
+    });
+
+    Route::prefix('signatures')->group(function () {
+        Route::get('/', [SignatureController::class, 'index']);
+        Route::post('/', [SignatureController::class, 'store']);
+        Route::put('{signature}', [SignatureController::class, 'update']);
+        Route::delete('{signature}', [SignatureController::class, 'destroy']);
     });
 });
