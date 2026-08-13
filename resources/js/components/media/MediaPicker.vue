@@ -57,7 +57,17 @@ watch(
         searchInput.value = store.search;
         loadError.value = false;
 
-        if (store.items.length === 0) {
+        // `store.page === 0`, NOT `store.items.length === 0` (review
+        // finding 2): PostEditorModal.vue hydrates the store with an
+        // existing group's already-attached media before this picker
+        // ever opens, so on the most common path — editing an existing
+        // post and adding more media — `items` already has one or two
+        // entries and the old length check skipped fetching page 1
+        // entirely, leaving the user looking at only what was already
+        // attached. `page` only advances from an actual `fetch()` call,
+        // so it stays the correct "have we ever paged through the
+        // library" signal regardless of what `hydrate()` seeded in.
+        if (store.page === 0) {
             void loadInitial();
         }
     },

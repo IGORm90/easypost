@@ -1,5 +1,5 @@
 import type { ProviderCapabilities } from '../../stores/integrations';
-import type { MediaItem } from '../../stores/media';
+import type { AttachedMedia } from '../../stores/media';
 
 export type { ProviderCapabilities };
 
@@ -63,16 +63,20 @@ export interface PostGroupApi {
             media_ids: string[];
             /**
              * The richer per-attachment shape `PostResource` sends
-             * alongside `media_ids` (Task 28) — present only when
-             * `posts.media` was eager-loaded server-side, which it
-             * always is on this endpoint. `PostEditorModal.vue` feeds
-             * this into `useMediaStore().hydrate()` on load so
-             * `ThreadEditor.vue`'s attached-media thumbnails and
-             * `MediaPicker.vue`'s "already selected" state resolve
-             * correctly for media the picker itself may never have
-             * paged through.
+             * alongside `media_ids` (Task 28) — `id`/`url`/
+             * `thumbnail_url`/`mime`/`width`/`height` only (review
+             * finding 4: NOT the full `MediaItem` shape — `PostResource`
+             * never sends `original_filename`/`size_bytes`/
+             * `created_at`, see `AttachedMedia`'s own docblock).
+             * Present only when `posts.media` was eager-loaded
+             * server-side, which it always is on this endpoint.
+             * `PostEditorModal.vue` feeds this into
+             * `useMediaStore().hydrate()` on load so `ThreadEditor.vue`'s
+             * attached-media thumbnails and `MediaPicker.vue`'s
+             * "already selected" state resolve correctly for media the
+             * picker itself may never have paged through.
              */
-            media?: MediaItem[];
+            media?: AttachedMedia[];
             order: number;
             parent_post_id: string | null;
             state: string;

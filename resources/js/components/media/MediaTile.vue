@@ -22,6 +22,9 @@ import type { MediaItem } from '../../stores/media';
  * rename nothing server-side, but the upload form filename is
  * attacker-controlled) — it is only ever placed through `{{ }}`
  * interpolation/`:alt`/`:title` here, which Vue escapes; never `v-html`.
+ *
+ * A `pending` (still-uploading) tile can be neither selected nor
+ * deleted — see `canSelect`/`canDelete` below.
  */
 const props = withDefaults(
     defineProps<{
@@ -55,8 +58,19 @@ const aspectStyle = computed(() => {
     return {};
 });
 
+// A `pending` placeholder's id (`pending-<uuid>`) is a client-only
+// stand-in the server has never heard of — review finding 3: letting it
+// into a selection sends a dead id to `POST/PUT /api/posts`, which 422s
+// the WHOLE post over `Rule::exists('media','id')`, and finding
+// "cheap and real": `DELETE /media/pending-...` can only ever fail.
+// Both the selectable toggle and the delete control are disabled/hidden
+// below while `item.pending`, so neither path can ever reach a
+// placeholder id.
+const canSelect = computed(() => props.selectable && !props.item.pending);
+const canDelete = computed(() => props.deletable && !props.item.pending);
+
 function onClick(): void {
-    if (props.selectable) {
+    if (canSelect.value) {
         emit('toggle');
     }
 }
@@ -69,7 +83,7 @@ function onClick(): void {
             class="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             :style="aspectStyle"
             :aria-pressed="selectable ? selected : undefined"
-            :disabled="!selectable"
+            :disabled="!canSelect"
             @click="onClick"
         >
             <img v-if="previewSrc" :src="previewSrc" :alt="item.original_filename" loading="lazy" class="h-full w-full object-cover" />
@@ -100,7 +114,7 @@ function onClick(): void {
         <div class="flex items-center gap-1 px-2 py-1.5">
             <span class="flex-1 truncate text-xs text-muted" :title="item.original_filename">{{ item.original_filename }}</span>
             <button
-                v-if="deletable"
+                v-if="canDelete"
                 type="button"
                 class="shrink-0 rounded-xl px-1 text-xs text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 :aria-label="t('media.delete')"

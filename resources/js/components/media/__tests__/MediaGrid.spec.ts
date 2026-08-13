@@ -87,3 +87,20 @@ it('emits delete with the item id when the delete button is clicked (deletable g
 
     expect(w.emitted('delete')).toEqual([['med-a']]);
 });
+
+it('a pending (still-uploading) tile cannot be selected — review finding 3', async () => {
+    const w = mount(MediaGrid, { props: { items: [image({ pending: true })], selectable: true } });
+
+    const button = w.get('button');
+    expect((button.element as HTMLButtonElement).disabled).toBe(true);
+
+    await button.trigger('click');
+    expect(w.emitted('toggle')).toBeFalsy();
+});
+
+it('a pending (still-uploading) tile offers no delete control — review "cheap and real" fix', () => {
+    const w = mount(MediaGrid, { props: { items: [image({ pending: true })], deletable: true } });
+
+    const deleteLabel = i18n.global.t('media.delete');
+    expect(w.find(`button[aria-label="${deleteLabel}"]`).exists()).toBe(false);
+});

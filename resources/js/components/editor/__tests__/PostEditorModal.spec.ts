@@ -332,6 +332,105 @@ it('the signature warning survives a 409 re-target — it tracks content provena
     expect(w.text()).toContain('may already include a signature');
 });
 
+it("attaching media to one channel does not freeze that channel's live sync with the shared textarea — Task 29 review, finding 5", async () => {
+    const channelB: Integration = { ...bluesky(), id: 'int-2', name: 'My Bluesky 2' };
+
+    get.mockImplementation((url: string) => {
+        if (url === '/integrations') return Promise.resolve({ data: [bluesky(), channelB] });
+        if (url === '/providers') return Promise.resolve({ data: [blueskyProvider()] });
+        if (url === '/sets') return Promise.resolve({ data: [] });
+        if (url === '/signatures') return Promise.resolve({ data: [] });
+        if (url === '/tags') return Promise.resolve({ data: [] });
+        if (url === '/media') {
+            return Promise.resolve({
+                data: {
+                    data: [
+                        {
+                            id: 'med-a',
+                            url: 'https://cdn.example.com/a.jpg',
+                            thumbnail_url: null,
+                            mime: 'image/jpeg',
+                            size_bytes: 10,
+                            width: 100,
+                            height: 100,
+                            original_filename: 'a.jpg',
+                            created_at: '',
+                        },
+                    ],
+                    meta: { current_page: 1, last_page: 1 },
+                },
+            });
+        }
+        return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+
+    const w = mount(PostEditorModal, {
+        props: { open: true, groupId: null },
+        global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+
+    // One `.setValue(true)` per checkbox, re-querying between them: this
+    // component re-renders the whole checkbox list on the first
+    // selection (revealing the previously-hidden common-content/tabs
+    // sections shifts enough of the surrounding tree that VTU's earlier
+    // wrapper reference for the second checkbox goes stale), so reusing
+    // a `findAll()` captured before either click silently clicks a
+    // detached node for the second checkbox.
+    await w.findAll('input[type="checkbox"]')[0].setValue(true); // int-1, channel A
+    await flushPromises();
+    await w.findAll('input[type="checkbox"]')[1].setValue(true); // int-2, channel B
+    await flushPromises();
+    await w.get('#common-content').setValue('Hello');
+    await flushPromises();
+
+    // Channel A (int-1) is the active tab by default (first selected).
+    // Attach media to its root segment.
+    await w.get('[data-testid="media-attach-0"]').trigger('click');
+    await flushPromises();
+
+    // MediaTile and ChannelTab both render `aria-pressed` buttons; the
+    // channel tabs come first in the DOM, the picker's one tile is last.
+    const pressable = w.findAll('button[aria-pressed]');
+    await pressable[pressable.length - 1].trigger('click');
+    await w.get('[data-testid="media-picker-confirm"]').trigger('click');
+    await flushPromises();
+
+    // Continue typing in the SHARED textarea AFTER attaching media to A
+    // — this is the exact repro: before the fix, A silently stopped
+    // mirroring `commonContent` the moment media was attached.
+    await w.get('#common-content').setValue('Hello world');
+    await flushPromises();
+
+    const tabB = w.findAll('button').find((b) => b.text().includes('My Bluesky 2'));
+    await tabB!.trigger('click');
+    expect((w.get('#thread-segment-0').element as HTMLTextAreaElement).value).toBe('Hello world');
+
+    const tabA = w.findAll('button').find((b) => b.text().includes('My Bluesky') && !b.text().includes('My Bluesky 2'));
+    await tabA!.trigger('click');
+    // The bug: this would still read "Hello" here, silently diverged
+    // from what channel B (and the shared textarea) show.
+    expect((w.get('#thread-segment-0').element as HTMLTextAreaElement).value).toBe('Hello world');
+
+    post.mockResolvedValueOnce({ data: { id: 'group-1' } });
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    // Both channels publish the SAME, latest text — and A's media_ids
+    // survived the content sync (onCommonContentInput preserves the
+    // existing segment's media_ids, only its content is replaced).
+    expect(post).toHaveBeenCalledWith(
+        '/posts',
+        expect.objectContaining({
+            posts: expect.arrayContaining([
+                expect.objectContaining({ integration_id: 'int-1', value: [{ content: 'Hello world', media_ids: ['med-a'] }] }),
+                expect.objectContaining({ integration_id: 'int-2', value: [{ content: 'Hello world', media_ids: [] }] }),
+            ]),
+        }),
+    );
+});
+
 it("the publish-date picker converts through the profile timezone, not the test runner's own zone — Task 25 review, Finding 3", async () => {
     const auth = useAuthStore();
     auth.user = {

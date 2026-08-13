@@ -227,13 +227,38 @@ function onCommonContentInput(value: string): void {
     }
 }
 
+/**
+ * Only a genuine TEXT edit (typing, or adding/removing a thread
+ * segment) marks a channel as diverged from the shared `commonContent`
+ * field — never a media-only change. Task 29 review, finding 5:
+ * previously this set `dirty = true` on ANY `update:modelValue` from
+ * ThreadEditor, including one produced purely by attaching/removing
+ * media through MediaPicker (media_ids changed, content untouched).
+ * That silently froze `onCommonContentInput()`'s live mirroring for
+ * that one channel — select two channels, type "Hello", attach an
+ * image to channel A, keep typing "Hello world": B kept syncing and
+ * would publish "Hello world", A silently stopped syncing right when
+ * media was attached and would still publish "Hello", with nothing on
+ * screen indicating the two had diverged. `dirty` is only ever set to
+ * `true` here, never back to `false` — once genuinely edited, a
+ * channel stays independent even if a later update happens to be
+ * media-only again.
+ */
+function contentChanged(previous: ChannelDraft['segments'], next: ChannelDraft['segments']): boolean {
+    return previous.length !== next.length || next.some((segment, index) => segment.content !== previous[index]?.content);
+}
+
 function onSegmentsUpdate(channelId: string, segments: ChannelDraft['segments']): void {
     const draft = channelDrafts[channelId];
     if (!draft) {
         return;
     }
+
+    if (contentChanged(draft.segments, segments)) {
+        draft.dirty = true;
+    }
+
     draft.segments = segments;
-    draft.dirty = true;
 }
 
 function newDraft(): ChannelDraft {

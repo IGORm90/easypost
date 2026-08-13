@@ -145,6 +145,28 @@ it("blocks selecting past this channel's own maxImages", async () => {
     w.unmount();
 });
 
+it('fetches page 1 even when the store already has hydrated (not fetched) items — review finding 2', async () => {
+    const store = useMediaStore();
+    // Simulates PostEditorModal.vue's loadGroup() seeding the store from
+    // an existing group's already-attached media BEFORE the picker ever
+    // opens — `items` is non-empty, but `page` is still 0 because no
+    // `fetch()` has actually run yet. Editing an existing post and
+    // adding more media is the most common path there is; gating on
+    // `items.length === 0` would skip page 1 entirely here and leave
+    // the user looking only at what was already attached.
+    store.hydrate([{ id: 'a', url: image('a').url, thumbnail_url: null, mime: 'image/jpeg', width: 400, height: 300 }]);
+    expect(store.page).toBe(0);
+
+    get.mockResolvedValueOnce({ data: { data: [image('b'), image('c')], meta: { current_page: 1, last_page: 1 } } });
+
+    const w = mount(MediaPicker, { props: { open: true, modelValue: [] }, attachTo: document.body });
+    await flushPromises();
+
+    expect(get).toHaveBeenCalledWith('/media', { params: { page: 1, search: undefined } });
+    expect(store.items.map((item) => item.id)).toEqual(['a', 'b', 'c']);
+    w.unmount();
+});
+
 it('re-opening with a different modelValue re-stages selection from it, not from the previous session', async () => {
     const store = useMediaStore();
     store.$patch({ items: [image('a'), image('b')], hasMore: false });
