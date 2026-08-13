@@ -35,4 +35,34 @@ return [
         ],
     ],
 
+    'github' => [
+        'client_id' => env('GITHUB_CLIENT_ID'),
+        'client_secret' => env('GITHUB_CLIENT_SECRET'),
+        'redirect' => env('GITHUB_REDIRECT_URI'),
+    ],
+
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
+    ],
+
+    // Generic OpenID Connect. laravel/socialite has no built-in generic
+    // OIDC driver, so this is consumed by the custom one registered in
+    // AppServiceProvider (App\Services\Auth\Socialite\OidcProvider) —
+    // points at whatever OIDC-compliant identity provider the deployment
+    // configures (Okta, Keycloak, Azure AD, ...).
+    'oidc' => [
+        'client_id' => env('OIDC_CLIENT_ID'),
+        'client_secret' => env('OIDC_CLIENT_SECRET'),
+        'redirect' => env('OIDC_REDIRECT_URI'),
+        'base_url' => env('OIDC_BASE_URL'),
+    ],
+
+    // Where SocialAuthController::callback() sends the browser after a
+    // successful OAuth login. Deliberately read from config (never from a
+    // request parameter) so the callback can't be turned into an open
+    // redirect by an attacker-supplied `?redirect=` value.
+    'oauth_spa_redirect_url' => env('OAUTH_SPA_REDIRECT_URL', env('APP_URL', 'http://localhost')),
+
 ];

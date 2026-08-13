@@ -3,11 +3,17 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\SocialAuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
+
+    Route::prefix('oauth')->group(function () {
+        Route::get('{driver}/redirect', [SocialAuthController::class, 'redirect']);
+        Route::get('{driver}/callback', [SocialAuthController::class, 'callback']);
+    });
 
     Route::post('password/forgot', [PasswordResetController::class, 'forgot']);
     Route::post('password/reset', [PasswordResetController::class, 'reset']);
