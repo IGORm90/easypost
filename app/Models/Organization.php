@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * @property string $name
  * @property string $slug
  * @property string $owner_id
+ * @property string|null $shortlink_provider
  */
 class Organization extends Model
 {
@@ -22,7 +23,7 @@ class Organization extends Model
     use HasFactory, HasUlids;
 
     /** @var list<string> */
-    protected $fillable = ['name', 'slug', 'owner_id'];
+    protected $fillable = ['name', 'slug', 'owner_id', 'shortlink_provider'];
 
     /**
      * @return BelongsTo<User, $this>

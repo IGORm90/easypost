@@ -32,6 +32,21 @@ class OrganizationService
     }
 
     /**
+     * Updates the current organization's settings. Only {name,
+     * shortlink_provider} are ever accepted here (see
+     * UpdateOrganizationRequest::rules()) — mass-assignment-safe the same
+     * way RegisterRequest is for User::create().
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public function updateSettings(Organization $organization, array $data): Organization
+    {
+        $organization->update($data);
+
+        return $organization;
+    }
+
+    /**
      * Appends a short random suffix so two organizations with the same
      * human-readable name (e.g. two users both named "Ann") never collide
      * on the `slug` unique index.
