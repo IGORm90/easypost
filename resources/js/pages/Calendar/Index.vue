@@ -23,7 +23,10 @@ const selectedTags = ref<string[]>([]);
 const availableTags = ref<CalendarTag[]>([]);
 const range = ref<{ from: string; to: string } | null>(null);
 const loading = ref(false);
-const errorMessage = ref<string | null>(null);
+// One toast slot for both errors and neutral notices (e.g. the
+// editor-not-built-yet seam below) — `variant` decides which Toast
+// styling applies, `text` decides what it says.
+const notice = ref<{ text: string; variant: 'danger' | 'neutral' } | null>(null);
 
 // Renders in the signed-in user's own profile timezone, not the
 // browser's — same source CalendarGrid.vue's timeZone option consumes,
@@ -52,9 +55,9 @@ async function load(): Promise<void> {
             customer: customer.value.trim() || undefined,
             tags: selectedTags.value.length ? selectedTags.value : undefined,
         });
-        errorMessage.value = null;
+        notice.value = null;
     } catch {
-        errorMessage.value = t('calendar.loadError');
+        notice.value = { text: t('calendar.loadError'), variant: 'danger' };
     } finally {
         loading.value = false;
     }
@@ -93,7 +96,10 @@ watch(
 onMounted(loadTags);
 
 function onBlocked(payload: { groupId: string; status?: number }): void {
-    errorMessage.value = payload.status === 409 ? t('calendar.toast.moveConflict') : t('calendar.toast.moveError');
+    notice.value = {
+        text: payload.status === 409 ? t('calendar.toast.moveConflict') : t('calendar.toast.moveError'),
+        variant: 'danger',
+    };
 
     if (payload.status === 409) {
         // The 409 means the group was published in the moments between
@@ -109,15 +115,18 @@ function onBlocked(payload: { groupId: string; status?: number }): void {
 }
 
 function onGridError(): void {
-    errorMessage.value = t('calendar.toast.removeError');
+    notice.value = { text: t('calendar.toast.removeError'), variant: 'danger' };
 }
 
 function onEdit(groupId: string): void {
     // Seam for Task 25 (post editor modal): this task's brief explicitly
     // excludes building the editor. Clicking a card already reaches this
-    // handler with the right group id — Task 25 only needs to open a
-    // modal here, nothing upstream changes.
+    // handler with the right group id and, until Task 25 opens a real
+    // modal here, tells the user why nothing happened instead of
+    // silently doing nothing (a click with no visible effect reads as a
+    // bug, not as "not built yet").
     void groupId;
+    notice.value = { text: t('calendar.editorPlaceholder'), variant: 'neutral' };
 }
 </script>
 
@@ -146,7 +155,7 @@ function onEdit(groupId: string): void {
                 </div>
             </div>
 
-            <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
+            <Toast v-if="notice" :variant="notice.variant" @dismiss="notice = null">{{ notice.text }}</Toast>
 
             <CalendarGrid
                 :entries="postsStore.entries"

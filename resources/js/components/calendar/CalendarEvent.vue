@@ -14,6 +14,13 @@ import type { CalendarEntry } from '../../stores/posts';
  * one state that changes *behaviour* (PUBLISHED → locked), an icon and a
  * dashed-vs-solid border on top of that — three independent signals, not
  * one.
+ *
+ * DRAFT is deliberately `neutral`, not `warning`, per color.md §3.8's
+ * own worked example: every card already carries an accent-coloured
+ * channel avatar, and accent/warning must never sit together in one
+ * component. "Черновик" stays distinguishable by the dashed border and
+ * the Badge's text alone — §3.8 explicitly reserves `--warning` for a
+ * state the user actually needs to act on, which a draft is not.
  */
 const props = defineProps<{
     entry: CalendarEntry;
@@ -31,7 +38,7 @@ const badgeStatus = computed(() => {
         case 'ERROR':
             return 'danger' as const;
         case 'DRAFT':
-            return 'warning' as const;
+            return 'neutral' as const;
         default:
             return 'scheduled' as const;
     }
