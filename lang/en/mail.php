@@ -20,4 +20,12 @@ return [
         'trouble' => 'If you did not request a password reset, no further action is required.',
     ],
 
+    'integration_broken' => [
+        'subject' => 'A channel needs to be reconnected',
+        'greeting' => 'Hello :name!',
+        'line' => 'We could not refresh the connection for ":channel". The account it was connected with has revoked or expired its access.',
+        'action_line' => 'Posts scheduled on this channel will not go out until it is reconnected.',
+        'trouble' => 'Please reconnect this channel from your organization settings.',
+    ],
+
 ];

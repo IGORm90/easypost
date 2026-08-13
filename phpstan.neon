@@ -24,3 +24,14 @@ parameters:
         -
             message: '#^Call to an undefined method (?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy)(?:\|(?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy))*::\w+\(\)\.$#'
             path: tests/*
+
+        # No mockery/phpstan-mockery extension is installed, so PHPStan sees a
+        # partial mock's PHPDoc-annotated intersection type (`Job&Mockery\MockInterface`)
+        # but not shouldReceive()'s dynamic fluent-expectation return, so it cannot
+        # resolve once()/with() on the Mockery\ExpectationInterface|HigherOrderMessage
+        # union that shouldReceive() actually returns at runtime. Same class of known,
+        # accepted static-analysis blind spot as the Pest waiver above — scoped to the
+        # one test file that uses Mockery::mock()->shouldReceive(), not app/tests broadly.
+        -
+            message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
+            path: tests/Feature/Integrations/TokenRefreshTest.php

@@ -5,6 +5,7 @@ namespace Tests\Support;
 use App\Models\Integration;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsOptions;
+use App\Social\Contracts\SupportsRefresh;
 use App\Social\Dto\AuthResultDto;
 use App\Social\Dto\AuthUrlDto;
 use App\Social\Dto\PostPayloadDto;
@@ -16,6 +17,7 @@ use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use App\Social\Exceptions\UnknownProviderOptionException;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -38,7 +40,7 @@ use Throwable;
  *   $provider->failNextPostWith(new ProviderRateLimitException('slow down', 30));
  *   $provider->post($integration, [$payload]); // throws that exception once
  */
-class FakeProvider implements SocialProviderInterface, SupportsOptions
+class FakeProvider implements SocialProviderInterface, SupportsOptions, SupportsRefresh
 {
     private ProviderCapabilities $capabilities;
 
@@ -46,6 +48,18 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions
     private ?Throwable $nextPostException = null;
 
     private ?Throwable $nextAuthenticateException = null;
+
+    /**
+     * Queued for the next refresh() call, then cleared — mirrors
+     * $nextAuthenticateException. Task 16's RefreshIntegrationTokenJob
+     * tests drive every refresh outcome (success, ProviderAuthException,
+     * ProviderTransientException, ProviderRateLimitException) through
+     * this instead of a real network.
+     */
+    private ?Throwable $nextRefreshException = null;
+
+    /** @var list<string> integration ids refresh() was called for, in call order. */
+    private array $refreshedIntegrationIds = [];
 
     /** @var array{succeedCount: int, message: string}|null */
     private ?array $nextPartialFailure = null;
@@ -138,6 +152,14 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions
         return $this;
     }
 
+    /** Queue an exception for the next refresh() call. Cleared after it fires once. */
+    public function failNextRefreshWith(Throwable $exception): self
+    {
+        $this->nextRefreshException = $exception;
+
+        return $this;
+    }
+
     /**
      * @param  array<string, mixed>  $params
      */
@@ -155,6 +177,35 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions
             token: 'fake-token-'.Str::random(16),
             refreshToken: 'fake-refresh-'.Str::random(16),
         );
+    }
+
+    /**
+     * SupportsRefresh implementation: returns a fresh token pair by
+     * default, or throws whatever failNextRefreshWith() queued.
+     */
+    public function refresh(Integration $i): AuthResultDto
+    {
+        $this->refreshedIntegrationIds[] = $i->id;
+
+        if ($this->nextRefreshException !== null) {
+            $exception = $this->nextRefreshException;
+            $this->nextRefreshException = null;
+            throw $exception;
+        }
+
+        return new AuthResultDto(
+            internalId: $i->internal_id,
+            name: $i->name,
+            token: 'fake-refreshed-token-'.Str::random(16),
+            refreshToken: 'fake-refreshed-refresh-'.Str::random(16),
+            expiresAt: CarbonImmutable::now()->addHour(),
+        );
+    }
+
+    /** @return list<string> */
+    public function refreshedIntegrationIds(): array
+    {
+        return $this->refreshedIntegrationIds;
     }
 
     /**
@@ -358,10 +409,12 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions
     {
         $this->nextPostException = null;
         $this->nextAuthenticateException = null;
+        $this->nextRefreshException = null;
         $this->nextPartialFailure = null;
         $this->refusesReplyToReleaseId = false;
         $this->publishedChains = [];
         $this->publishedSegments = [];
+        $this->refreshedIntegrationIds = [];
 
         return $this;
     }
