@@ -45,6 +45,33 @@ use App\Social\ProviderRegistry;
  * all) and maxThreadLength (how many segments the thread itself may
  * contain).
  *
+ * Media classification for maxImages/maxVideos: an attachment counts as
+ * an image if its mime type starts with 'image/', a video if it starts
+ * with 'video/', and counts toward NEITHER quota otherwise (Task 19
+ * review, Finding 2). ProviderCapabilities deliberately has no third
+ * bucket for other media kinds (audio, etc.), and folding an unknown
+ * kind into imageCount would both consume a quota it doesn't belong to
+ * and report a wrong `actual` on any resulting too_many_images error —
+ * which Task 25's editor renders verbatim. An attachment of an
+ * unrecognised kind is instead surfaced through the allowedMimeTypes
+ * check below (unsupported_mime), which is the correct diagnosis for
+ * it; if a provider's allowedMimeTypes ever included a non-image/video
+ * kind (none currently do), such an attachment would pass the mime
+ * check uncounted against any quota — an accepted, documented gap of
+ * the current two-bucket capability model, not something this service
+ * can close without ProviderCapabilities growing a field for it.
+ *
+ * File size: MediaDto::$sizeBytes is the only source read for
+ * file_too_large — this service never stats $media->path (Task 19
+ * review, Finding 1). Stat'ing the path silently degraded to "always
+ * passes" the moment $path stopped being a locally-stat-able file (e.g.
+ * Task 27 moving media to S3/MinIO, where $path becomes a storage key),
+ * and made validate()'s verdict depend on which machine/mount the code
+ * ran on — both violate this class's core contract. A null $sizeBytes
+ * (size genuinely not captured when the MediaDto was built) is treated
+ * as its own validation failure (`file_size_unknown`), never as "skip
+ * the check" — an unknown size must not silently read as a small one.
+ *
  * Character counting: uses mb_strlen($content, 'UTF-8'), i.e. counts
  * Unicode codepoints, not bytes (strlen() would badly over-count
  * Cyrillic and any other multi-byte script) and not grapheme clusters
@@ -134,11 +161,13 @@ final class PostValidationService
         $imageCount = 0;
         $videoCount = 0;
         foreach ($segment->media as $media) {
-            if (str_starts_with($media->mimeType, 'video/')) {
-                $videoCount++;
-            } else {
+            if (str_starts_with($media->mimeType, 'image/')) {
                 $imageCount++;
+            } elseif (str_starts_with($media->mimeType, 'video/')) {
+                $videoCount++;
             }
+            // Neither bucket for anything else -- see this class's
+            // docblock ("Media classification for maxImages/maxVideos").
         }
 
         if (trim($segment->content) === '' && $segment->media === []) {
@@ -146,8 +175,8 @@ final class PostValidationService
                 $index,
                 'empty_content',
                 'Post has no text content and no media attached.',
-                limit: null,
-                actual: null,
+                limit: 'non-empty text or at least one media attachment',
+                actual: 'empty',
             );
         }
 
@@ -186,8 +215,8 @@ final class PostValidationService
                 $index,
                 'mixed_media_not_supported',
                 'This network does not allow images and video in the same post.',
-                limit: null,
-                actual: null,
+                limit: 'single media type per post',
+                actual: "{$imageCount} image(s) and {$videoCount} video(s)",
             );
         }
 
@@ -215,14 +244,21 @@ final class PostValidationService
             );
         }
 
-        $size = $this->fileSize($media->path);
-        if ($size !== null && $size > $capabilities->maxFileSizeBytes) {
+        if ($media->sizeBytes === null) {
+            $errors[] = $this->error(
+                $index,
+                'file_size_unknown',
+                'This attachment has no known file size, so it cannot be checked against the file-size limit.',
+                limit: $capabilities->maxFileSizeBytes,
+                actual: 'unknown',
+            );
+        } elseif ($media->sizeBytes > $capabilities->maxFileSizeBytes) {
             $errors[] = $this->error(
                 $index,
                 'file_too_large',
-                "File is {$size} bytes, exceeding the {$capabilities->maxFileSizeBytes} byte limit.",
+                "File is {$media->sizeBytes} bytes, exceeding the {$capabilities->maxFileSizeBytes} byte limit.",
                 limit: $capabilities->maxFileSizeBytes,
-                actual: $size,
+                actual: $media->sizeBytes,
             );
         }
 
@@ -231,32 +267,12 @@ final class PostValidationService
                 $index,
                 'missing_alt_text',
                 'This network requires alt text on every media attachment.',
-                limit: null,
-                actual: null,
+                limit: 'alt text required',
+                actual: 'missing',
             );
         }
 
         return $errors;
-    }
-
-    /**
-     * Reads the file's size straight off disk (no Storage facade —
-     * MediaDto::$path is documented as "absolute local filesystem path
-     * (or storage-disk-resolved path)", i.e. already resolved to
-     * something plain PHP I/O can stat). Returns null — skipping the
-     * file_too_large check entirely rather than guessing — when the
-     * path doesn't resolve to a readable file, since MediaDto carries no
-     * size field of its own to fall back on.
-     */
-    private function fileSize(string $path): ?int
-    {
-        if (! is_file($path)) {
-            return null;
-        }
-
-        $size = filesize($path);
-
-        return $size === false ? null : $size;
     }
 
     /**

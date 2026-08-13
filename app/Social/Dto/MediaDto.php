@@ -20,14 +20,16 @@ namespace App\Social\Dto;
 final readonly class MediaDto
 {
     /**
-     * @param  string  $path  Absolute local filesystem path (or storage-disk-resolved path) to the media file.
+     * @param  string  $path  Absolute local filesystem path (or storage-disk-resolved path) to the media file. Task 19 review (Finding 1): PostValidationService::validate() must NOT stat this path — it stopped working the moment $path becomes an S3/MinIO key (Task 27) instead of a local file, at which point every attachment would silently pass file-size validation. $sizeBytes below is the only source of truth for that check.
      * @param  string  $mimeType  e.g. 'image/jpeg', 'video/mp4'.
+     * @param  int|null  $sizeBytes  File size in bytes, captured once by whatever creates this MediaDto (e.g. Task 27/28's upload/attachment code) — never re-derived later by reading $path off disk, since $path's meaning (local file vs. remote storage key) is not this DTO's concern. Null means "not known" and is a deliberate, distinct case: PostValidationService treats a null $sizeBytes as a validation failure (`file_size_unknown`), never as "skip the check" / "assume it's fine" — see that class's docblock for why silently treating unknown as valid was rejected.
      * @param  string|null  $altText  Accessibility description, when the network supports it.
      * @param  string|null  $remoteId  Provider-assigned handle returned by SupportsMedia::uploadMedia(), referenced when the post is created. Null before upload / for providers that don't pre-upload media.
      */
     public function __construct(
         public string $path,
         public string $mimeType,
+        public ?int $sizeBytes = null,
         public ?string $altText = null,
         public ?string $remoteId = null,
     ) {}
@@ -41,6 +43,6 @@ final readonly class MediaDto
      */
     public function withRemoteId(string $remoteId): self
     {
-        return new self($this->path, $this->mimeType, $this->altText, $remoteId);
+        return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId);
     }
 }
