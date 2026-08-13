@@ -324,6 +324,32 @@ it("rejects disabling another organization's channel as not found", function () 
     expect($foreign->fresh()->disabled)->toBeFalse();
 });
 
+/*
+ * disable/enable share findAuthorized() with every other {id}-scoped
+ * action, but that's exactly why each one still needs its own direct
+ * test: a copy-paste slip that broke only enable() would otherwise
+ * survive a green suite indefinitely, since nothing else exercises it
+ * independently of the "disables and re-enables" happy path above.
+ */
+it("rejects enabling another organization's channel as not found", function () {
+    $orgA = Organization::factory()->create();
+    $orgB = Organization::factory()->create();
+    $foreign = Integration::factory()->create(['organization_id' => $orgB->id, 'disabled' => true]);
+    actingAsMember($orgA, 'ADMIN');
+
+    $this->postJson("/api/integrations/{$foreign->id}/enable")->assertNotFound();
+    expect($foreign->fresh()->disabled)->toBeTrue();
+});
+
+it('rejects enable for a non-admin member', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create(['organization_id' => $org->id, 'disabled' => true]);
+    actingAsMember($org, 'USER');
+
+    $this->postJson("/api/integrations/{$integration->id}/enable")->assertForbidden();
+    expect($integration->fresh()->disabled)->toBeTrue();
+});
+
 it('soft-deletes a channel via DELETE and it disappears from the list', function () {
     $org = Organization::factory()->create();
     $integration = Integration::factory()->create(['organization_id' => $org->id]);
