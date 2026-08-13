@@ -15,8 +15,11 @@ use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
  * by that token. The task-22 brief calls the public endpoint "the whole
  * point" of this task — this class is where every one of its risks is
  * actually handled: token strength/uniqueness, revocation, the
- * indistinguishable-404 property, throttling, and the single deliberate
- * escape from tenant scoping.
+ * indistinguishable-404 property, throttling, and the two deliberate,
+ * narrowly-named (`withoutGlobalScope('organization')`, never the
+ * blanket `withoutGlobalScopes()`) escapes from tenant scoping — see
+ * findForPublic() and generateToken() below for why each needs it and
+ * why the named form matters for each.
  */
 class ShareService
 {
@@ -94,12 +97,27 @@ class ShareService
      *    fails closed on a null context — see that trait's docblock),
      *    not merely "nothing this tenant owns" as it would for a
      *    same-tenant caller. This lookup is the one and only place in
-     *    this feature that deliberately reaches for
-     *    `withoutGlobalScopes()` to step outside that — a public share
-     *    link has to work precisely BECAUSE the caller has no tenant
-     *    context, and share_token itself (unguessable, revocable) is
-     *    what stands in for the tenant check everywhere else in this
-     *    app.
+     *    this feature that deliberately steps outside that — and it does
+     *    so by NAME (`withoutGlobalScope('organization')`), never the
+     *    blanket `withoutGlobalScopes()`: the named form strips exactly
+     *    the one scope this method needs to bypass and leaves every
+     *    OTHER global scope Eloquent may ever attach to `PostGroup` fully
+     *    enforced. `PostGroup` has no soft-delete scope today, so the two
+     *    forms happen to behave identically right now — but the blanket
+     *    form is a silent trap for the day someone adds `SoftDeletes` to
+     *    `PostGroup` (an ordinary thing to want in a scheduler): with
+     *    `withoutGlobalScopes()`, a soft-deleted group would silently
+     *    become publicly servable again through this exact query, with
+     *    nothing here failing loudly to catch it. `withoutGlobalScope('organization')`
+     *    has no such failure mode — a future soft-delete scope keeps
+     *    applying automatically, the same protection IntegrationService's
+     *    upsert lookup and TokenRefreshService already rely on for
+     *    exactly this reason (see their docblocks). A public share link
+     *    has to work precisely BECAUSE the caller has no tenant context,
+     *    and share_token itself (unguessable, revocable) is what stands
+     *    in for the tenant check everywhere else in this app — it was
+     *    never meant to stand in for every OTHER scope this model might
+     *    ever carry.
      *
      * 2. Indistinguishability. `firstOrFail()` on `share_token = $token`
      *    can't tell apart three different reasons for finding nothing —
@@ -127,7 +145,7 @@ class ShareService
         $this->throttle($ip);
 
         /** @var PostGroup $group */
-        $group = PostGroup::withoutGlobalScopes()->where('share_token', $token)->firstOrFail();
+        $group = PostGroup::withoutGlobalScope('organization')->where('share_token', $token)->firstOrFail();
 
         OrganizationContext::set($group->organization);
 
@@ -143,11 +161,22 @@ class ShareService
         return $group;
     }
 
+    /**
+     * The second (and last) `withoutGlobalScope('organization')` call in
+     * this file — unlike findForPublic()'s, this one serves no data at
+     * all. It only asks "does ANY group, in any organization (including
+     * one a caller has no access to), already hold this candidate
+     * token?" and returns a bare boolean; nothing about the matched row,
+     * if any, is ever read or exposed. A collision here is already
+     * astronomically unlikely (see TOKEN_LENGTH's docblock) — this exists
+     * purely so that vanishing chance surfaces as "generate a different
+     * token" instead of an unhandled unique-constraint QueryException.
+     */
     private function generateToken(): string
     {
         do {
             $token = Str::random(self::TOKEN_LENGTH);
-        } while (PostGroup::withoutGlobalScopes()->where('share_token', $token)->exists());
+        } while (PostGroup::withoutGlobalScope('organization')->where('share_token', $token)->exists());
 
         return $token;
     }
