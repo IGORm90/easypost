@@ -16,7 +16,11 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * PostGroupService stores it: Task 28 (media attachment) hasn't landed
  * yet, so there is no `media` table to join against — see
  * PostGroupService's docblock for why the request's `media_ids` is kept
- * verbatim inside `settings` rather than resolved.
+ * verbatim inside `settings` rather than resolved. UNVERIFIED CLIENT
+ * INPUT: these ids are only shape-checked (well-formed ULIDs) on the way
+ * in, never checked for existence or organization ownership — a caller
+ * consuming this field must not assume any id here refers to a real,
+ * owned attachment until Task 28 re-validates it.
  *
  * @mixin Post
  */

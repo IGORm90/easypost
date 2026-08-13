@@ -36,6 +36,18 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  * with empty `media` — see StorePostRequest) becomes that task's job, not
  * a rewrite of this storage decision.
  *
+ * UNVERIFIED CLIENT INPUT: ValidatesPostChains only checks that each
+ * `media_ids` entry is a well-formed ULID string — it is never checked
+ * for existence or organization ownership here (no `Media` table exists
+ * to check against). Every value stored in `settings->media_ids` by
+ * `buildSegmentSettings()` below is therefore exactly what the client
+ * sent, unverified. Task 28 MUST re-validate existence and organization
+ * ownership before trusting any id read back out of this column — e.g.
+ * before joining on it or resolving it to a real file — since a value
+ * from another organization's media could otherwise be attached here
+ * with no error.
+ *
+
  * Editability rule (the brief's central question): a group may be
  * replaced (PUT) or deleted only while NONE of its Post rows carry a
  * `release_id` — i.e. nothing in it has actually gone out to a network

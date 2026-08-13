@@ -44,6 +44,18 @@ use Illuminate\Validation\Validator;
  * `validateChannelLimits()` below mirrors that split: it silently skips
  * any `integration_id` it cannot resolve within the current tenant,
  * leaving that case entirely to the service.
+ *
+ * `media_ids`: shape-checked only (must be well-formed ULIDs), NOT
+ * existence- or ownership-checked. There is no `media` table yet (Task
+ * 28 owns it), so nothing here can confirm a given id refers to a real
+ * attachment, let alone one belonging to this organization. Every
+ * `media_ids` value that reaches PostGroupService, and everything read
+ * back out of `settings->media_ids` by PostResource, must therefore be
+ * treated as UNVERIFIED CLIENT INPUT — Task 28 must re-validate
+ * existence and organization ownership before trusting any of it (e.g.
+ * before joining on it, or before handing it to a provider upload
+ * call). Scoping it to the current organization here is not possible
+ * without the `Media` model/table to scope against.
  */
 trait ValidatesPostChains
 {
@@ -68,7 +80,9 @@ trait ValidatesPostChains
             'posts.*.value' => ['required', 'array', 'min:1'],
             'posts.*.value.*.content' => ['required', 'string'],
             'posts.*.value.*.media_ids' => ['sometimes', 'array'],
-            'posts.*.value.*.media_ids.*' => ['string'],
+            // 'ulid': shape only — see this trait's docblock ("media_ids")
+            // for why existence/ownership cannot be checked here.
+            'posts.*.value.*.media_ids.*' => ['string', 'ulid'],
         ];
     }
 

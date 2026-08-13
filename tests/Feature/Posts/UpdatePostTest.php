@@ -165,6 +165,74 @@ it('refuses to PUT a group that already has a released segment', function () {
     expect(Post::sole()->release_id)->toBe('remote-1');
 });
 
+it('allows retrying an ERROR group by moving it back to QUEUE on PUT', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $group = createDraftGroup($org, $integration, 'failed attempt');
+    // No release_id anywhere: the group genuinely never published, it
+    // just failed before reaching the network — the exact case
+    // ERROR->QUEUE (PostStateMachine's declared retry transition) exists
+    // for.
+    $group->update(['state' => PostState::ERROR, 'error' => 'provider timed out']);
+    Post::query()->where('post_group_id', $group->id)->update(['state' => PostState::ERROR]);
+
+    $response = $this->putJson("/api/posts/{$group->id}", [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'retry']]]],
+    ]);
+
+    $response->assertOk();
+    expect($group->fresh()->state)->toBe(PostState::QUEUE);
+    expect(Post::sole()->state)->toBe(PostState::QUEUE);
+    expect(Post::sole()->content)->toBe('retry');
+});
+
+it('refuses PUT, DELETE and PATCH .../date on a group with a mix of released and unreleased segments', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $response = $this->postJson('/api/posts', [
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [
+                ['content' => 'segment 0'],
+                ['content' => 'segment 1'],
+                ['content' => 'segment 2'],
+                ['content' => 'segment 3'],
+                ['content' => 'segment 4'],
+            ]],
+        ],
+    ]);
+    $response->assertCreated();
+    $group = PostGroup::findOrFail($response->json('id'));
+
+    // Exactly the partial-failure shape the lock exists for: two of the
+    // five segments genuinely went out (release_id set), the other
+    // three did not.
+    $posts = Post::query()->where('post_group_id', $group->id)->orderBy('order')->get();
+    expect($posts)->toHaveCount(5);
+    Post::query()->whereIn('id', $posts->take(2)->pluck('id'))
+        ->update(['state' => PostState::PUBLISHED, 'release_id' => 'remote-partial']);
+
+    $this->putJson("/api/posts/{$group->id}", [
+        'type' => 'draft',
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'replacement']]]],
+    ])->assertStatus(409);
+
+    $this->patchJson("/api/posts/{$group->id}/date", [
+        'publish_date' => now()->addDay()->toIso8601String(),
+    ])->assertStatus(409);
+
+    $this->deleteJson("/api/posts/{$group->id}")->assertStatus(409);
+
+    // Untouched throughout: none of the three refusals mutated anything.
+    expect(Post::query()->where('post_group_id', $group->id)->count())->toBe(5);
+    expect(PostGroup::query()->find($group->id))->not->toBeNull();
+});
+
 it('rejects a publish_date in the past on PATCH .../date', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
