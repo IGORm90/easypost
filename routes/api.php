@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\ImpersonationController;
 use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\InviteController;
+use App\Http\Controllers\Api\MediaController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
@@ -230,4 +231,29 @@ Route::middleware(['auth:sanctum', 'organization'])->group(function () {
         Route::put('{signature}', [SignatureController::class, 'update']);
         Route::delete('{signature}', [SignatureController::class, 'destroy']);
     });
+});
+
+/*
+ * Media library (Task 27). Same auth/organization bar as sets/signatures
+ * above — plain membership, no `role:` requirement: uploading/browsing
+ * library assets is everyday content work. `{id}`-scoped destroy is
+ * resolved and authorized inside MediaController the same
+ * `Media::query()->findOrFail()` + `Gate::authorize()` way as
+ * IntegrationController's `{id}` actions, not via route-model binding.
+ *
+ * `from-url` additionally carries a `throttle` limiter of its own,
+ * tighter than the implicit per-minute default the rest of the API
+ * group relies on: unlike every other route in this file, it makes a
+ * server-side HTTP request on the caller's behalf (SSRF-guarded via
+ * App\Support\SafeRemoteHost, capped at 30s/100MB by
+ * MediaUploadService::download()) -- the throttle bounds how often a
+ * single caller can make this app hold a worker for that long, on top
+ * of (not instead of) the per-request cap. See MediaUploadService::
+ * download()'s docblock for the full reasoning.
+ */
+Route::middleware(['auth:sanctum', 'organization'])->prefix('media')->group(function () {
+    Route::get('/', [MediaController::class, 'index']);
+    Route::post('/', [MediaController::class, 'store']);
+    Route::post('from-url', [MediaController::class, 'importFromUrl'])->middleware('throttle:10,1');
+    Route::delete('{id}', [MediaController::class, 'destroy']);
 });

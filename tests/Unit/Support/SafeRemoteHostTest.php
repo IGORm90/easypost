@@ -46,6 +46,19 @@ dataset('unsafe addresses', [
     'IPv6 loopback' => ['::1'],
     'IPv6 link-local' => ['fe80::1'],
     'IPv6 unique-local' => ['fc00::1'],
+    // Task 27 review, gap 1: RFC 6598 shared/CGNAT space was previously
+    // unblocked -- FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+    // does not cover it (verified empirically, see isCgnat()'s
+    // docblock).
+    'IPv4 CGNAT (RFC6598 100.64/10, first address)' => ['100.64.0.0'],
+    'IPv4 CGNAT (RFC6598 100.64/10, mid-range)' => ['100.100.100.100'],
+    'IPv4 CGNAT (RFC6598 100.64/10, last address)' => ['100.127.255.255'],
+    // Task 27 review, gap 3: IPv6 multicast was previously verified only
+    // by hand, with no test covering it -- ff00::/8 passes PHP's own
+    // filter flags unchanged (same as IPv4 multicast above), so
+    // isMulticast()'s IPv6 branch is the only thing rejecting it.
+    'IPv6 multicast (all-nodes link-local)' => ['ff02::1'],
+    'IPv6 multicast (ff00::/8 boundary)' => ['ff00::'],
 ]);
 
 it('rejects a host resolving to an unsafe address', function (string $ip) {
@@ -115,4 +128,52 @@ it('does not embed the raw input in the exception message for a malformed, crede
     } catch (UnsafeRemoteHostException $e) {
         expect($e->getMessage())->not->toContain($secret);
     }
+});
+
+// --- Task 27 review, gap 1: CGNAT boundaries -----------------------------
+
+it('accepts addresses immediately outside the CGNAT range', function (string $ip) {
+    SafeRemoteHost::fake([]);
+
+    SafeRemoteHost::assertSafeHost($ip);
+})->with([
+    'just below 100.64.0.0/10' => ['100.63.255.255'],
+    'just above 100.64.0.0/10' => ['100.128.0.0'],
+])->throwsNoExceptions();
+
+// --- Task 27 review, gap 2: userinfo obfuscation -------------------------
+
+it('rejects a URL carrying userinfo even when the host itself would resolve safely', function () {
+    SafeRemoteHost::fake(['trusted.com' => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeUrl('https://evil-user@trusted.com/'))
+        ->toThrow(UnsafeRemoteHostException::class);
+});
+
+it('rejects a URL whose userinfo is itself used to disguise the real (unsafe) host', function () {
+    // parse_url()/curl agree the HOST is 127.0.0.1 here (everything
+    // before '@' is userinfo) -- assertSafeHost() already rejects this
+    // via the host check, but the explicit userinfo rejection above
+    // closes it unconditionally, without relying on that agreement.
+    SafeRemoteHost::fake([]);
+
+    expect(fn () => SafeRemoteHost::assertSafeUrl('https://trusted.com@127.0.0.1/'))
+        ->toThrow(UnsafeRemoteHostException::class);
+});
+
+// --- Task 27: $allowedSchemes ---------------------------------------------
+
+it('accepts a plain http URL when http is explicitly allowed', function () {
+    SafeRemoteHost::fake(['example.com' => ['198.51.100.10']]);
+
+    $host = SafeRemoteHost::assertSafeUrl('http://example.com/file.jpg', ['http', 'https']);
+
+    expect($host)->toBe('example.com');
+});
+
+it('still rejects a non-http(s) scheme even when http/https are both allowed', function () {
+    SafeRemoteHost::fake(['example.com' => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeUrl('ftp://example.com/file.jpg', ['http', 'https']))
+        ->toThrow(UnsafeRemoteHostException::class);
 });

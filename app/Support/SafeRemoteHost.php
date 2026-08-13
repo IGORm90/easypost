@@ -20,7 +20,11 @@ use App\Support\Exceptions\UnsafeRemoteHostException;
  * reserved -- for both IPv4 and IPv6, via PHP's own
  * FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE, which cover
  * these categories without this class having to hand-maintain CIDR
- * tables. assertSafeUrl() additionally requires the `https` scheme.
+ * tables, plus RFC 6598 CGNAT space and IPv4/IPv6 multicast (neither is
+ * covered by those flags — see isCgnat()/isMulticast()). assertSafeUrl()
+ * additionally requires the scheme to be in its (by default `['https']`)
+ * allow-list and rejects any URL carrying userinfo — see that method's
+ * own docblock.
  *
  * Two call sites, deliberately: assertSafeHost()/assertSafeUrl() must be
  * called both when a host is first accepted from a user (so an admin
@@ -74,11 +78,42 @@ final class SafeRemoteHost
     }
 
     /**
-     * Validates a full URL: scheme must be `https`, and the host must
-     * pass assertSafeHost(). Returns the (lowercased) host on success so
+     * Validates a full URL: scheme must be in $allowedSchemes (default
+     * `['https']`, preserving every pre-Task-27 caller's behaviour
+     * unchanged -- Mastodon's/Discord's URLs are always built or stored
+     * as https), the URL must carry no userinfo, and the host must pass
+     * assertSafeHost(). Returns the (lowercased) host on success so
      * callers don't have to re-parse the URL themselves.
+     *
+     * $allowedSchemes exists because Task 27 ("upload media by URL") is
+     * the first caller handed a whole, untrusted, user-supplied URL
+     * (every prior caller only ever validated a bare, already-typed-in
+     * host, or a URL this codebase itself assembled/stored) -- and it
+     * must accept plain `http` as well as `https`, which the previous
+     * hardcoded https-only check could not express without weakening it
+     * for every existing caller too.
+     *
+     * Userinfo rejection (`user@host` / `user:pass@host`) is Task 27
+     * review groundwork, not scheme-specific, so it applies unconditionally
+     * for every caller: parse_url() and this codebase's own resolution
+     * logic agree that the HOST component (not the userinfo) is what a
+     * request actually connects to, so `https://trusted.com@127.0.0.1/`
+     * was already being correctly rejected via its host (127.0.0.1) even
+     * before this check existed. It is added anyway as defense in depth
+     * against a *different* class of risk this method cannot rule out by
+     * construction: a parser-differential bypass, where some other URL
+     * parser in the request path (a proxy, a future HTTP client
+     * configuration, a different PHP/cURL version) disagrees with
+     * PHP's parse_url() about which component is the "real" host once
+     * userinfo is present. Userinfo has no legitimate use for any
+     * caller of this method (no request this application makes needs
+     * embedded Basic-Auth-style credentials in the URL itself), so the
+     * simplest closure is to refuse it outright rather than trust two
+     * different parsers to keep agreeing forever.
+     *
+     * @param  list<string>  $allowedSchemes
      */
-    public static function assertSafeUrl(string $url): string
+    public static function assertSafeUrl(string $url, array $allowedSchemes = ['https']): string
     {
         $parts = parse_url($url);
 
@@ -97,7 +132,13 @@ final class SafeRemoteHost
             throw UnsafeRemoteHostException::forMalformedUrl();
         }
 
-        if (strtolower($parts['scheme']) !== 'https') {
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            throw UnsafeRemoteHostException::forMalformedUrl();
+        }
+
+        $scheme = strtolower($parts['scheme']);
+
+        if (! in_array($scheme, array_map('strtolower', $allowedSchemes), true)) {
             throw UnsafeRemoteHostException::forScheme($parts['scheme']);
         }
 
@@ -130,7 +171,7 @@ final class SafeRemoteHost
                 FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
             );
 
-            if ($public === false || self::isMulticast($ip)) {
+            if ($public === false || self::isMulticast($ip) || self::isCgnat($ip)) {
                 throw UnsafeRemoteHostException::forHost($host, "resolves to a non-public address [{$ip}]");
             }
         }
@@ -158,6 +199,33 @@ final class SafeRemoteHost
         $long = ip2long($ip);
 
         return $long !== false && ($long & 0xF0000000) === 0xE0000000; // 224.0.0.0/4
+    }
+
+    /**
+     * Task 27 review, gap 1: RFC 6598 shared/CGNAT space (100.64.0.0/10)
+     * is neither RFC1918-private nor in PHP's "reserved" list, so
+     * FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE passes it as
+     * "public" -- verified empirically the same way isMulticast() was:
+     * `filter_var('100.64.0.5', ..., FILTER_FLAG_NO_PRIV_RANGE |
+     * FILTER_FLAG_NO_RES_RANGE)` returns the address unchanged on this
+     * project's PHP build. This range is carrier-grade NAT space, used
+     * internally by ISPs/cloud providers to address infrastructure not
+     * meant to be reachable from the public Internet (some cloud
+     * metadata-adjacent services live here) -- not a legitimate target
+     * for a server-side fetch this application makes on a user's behalf,
+     * same bar as RFC1918. No IPv6 equivalent exists (there is no IPv6
+     * CGNAT range), so this only ever runs for IPv4 addresses.
+     */
+    private static function isCgnat(string $ip): bool
+    {
+        if (str_contains($ip, ':')) {
+            return false;
+        }
+
+        $long = ip2long($ip);
+
+        // 100.64.0.0/10 == 100.64.0.0 - 100.127.255.255.
+        return $long !== false && ($long & 0xFFC00000) === 0x64400000;
     }
 
     /**

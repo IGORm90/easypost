@@ -60,6 +60,39 @@ return [
             'report' => false,
         ],
 
+        // Task 27: uploaded/imported media (post attachments and their
+        // generated thumbnails). Backed by S3 in production, MinIO in
+        // Docker (same credentials as 's3' above -- this project only
+        // has the one object-storage account, see docker-compose's
+        // `minio` service and .env's AWS_* block) -- kept as its own
+        // named disk, not an alias for 's3', so MediaUploadService can
+        // target it by a stable name that means "where media lives"
+        // regardless of what the generic 's3' disk is ever repurposed
+        // for later. Deliberately never 'public' or 'local': those
+        // disks live under this application's own storage/public tree,
+        // reachable through nginx's static file serving alongside
+        // application code -- see MediaUploadService's docblock for why
+        // user-uploaded content must never sit there. `visibility =>
+        // public` only controls the ACL S3/MinIO applies to written
+        // objects (so a generated URL can be fetched directly by
+        // browsers); it does not grant any ability to execute
+        // anything -- S3/MinIO serve raw bytes with the Content-Type
+        // this application sets at upload time, never interpreting a
+        // stored file as a script no matter its extension.
+        'media' => [
+            'driver' => 's3',
+            'key' => env('AWS_ACCESS_KEY_ID'),
+            'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            'region' => env('AWS_DEFAULT_REGION'),
+            'bucket' => env('AWS_BUCKET'),
+            'url' => env('AWS_URL'),
+            'endpoint' => env('AWS_ENDPOINT'),
+            'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'visibility' => 'public',
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*
