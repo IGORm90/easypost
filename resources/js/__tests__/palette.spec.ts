@@ -9,7 +9,11 @@ it('has no raw hex colors in components', () => {
 })
 
 it('has no default tailwind palette classes in components', () => {
-  const banned = /\b(?:bg|text|border|ring)-(?:gray|slate|zinc|neutral|stone|emerald|teal|green|red|amber|yellow|orange|blue|indigo)-\d{2,3}\b/
+  // Shaded palette classes (bg-gray-100, text-red-600, ...) *and* the
+  // shade-less defaults (text-white, bg-black, border-transparent, ...),
+  // which have no trailing -\d{2,3} and would otherwise slip past the
+  // first alternative undetected.
+  const banned = /\b(?:bg|text|border|ring)-(?:(?:gray|slate|zinc|neutral|stone|emerald|teal|green|red|amber|yellow|orange|blue|indigo)-\d{2,3}|white|black|transparent)\b/
   const offenders = sources.filter(f => banned.test(readFileSync(f, 'utf8')))
   expect(offenders).toEqual([])
 })

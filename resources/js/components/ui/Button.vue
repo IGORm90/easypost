@@ -25,7 +25,7 @@ const variantClasses: Record<Variant, string> = {
     primary: 'bg-primary text-on-primary hover:bg-primary-hover focus-visible:ring-primary',
     secondary: 'border border-border text-text hover:bg-surface-2 focus-visible:ring-border',
     ghost: 'text-muted hover:text-text focus-visible:ring-border',
-    danger: 'bg-danger text-white hover:opacity-90 focus-visible:ring-danger',
+    danger: 'bg-danger text-on-danger hover:opacity-90 focus-visible:ring-danger',
 };
 
 const classes = computed(() => variantClasses[props.variant]);

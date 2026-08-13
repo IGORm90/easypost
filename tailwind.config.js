@@ -18,6 +18,7 @@ export default {
                 success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
                 warning: { DEFAULT: 'var(--warning)', soft: 'var(--warning-soft)' },
                 danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
+                'on-danger': 'var(--on-danger)',
             },
             fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
             borderRadius: { xl: '0.75rem' },

@@ -22,6 +22,7 @@
     --warning-soft: #FAF0D2;
     --danger: #B91C1C;
     --danger-soft: #FADEDE;
+    --on-danger: #FFFFFF;
 }
 
 .dark {
@@ -45,6 +46,7 @@
     --warning-soft: #332A0B;
     --danger: #F87171;
     --danger-soft: #38191B;
+    --on-danger: #2A0A0A;
 }
 
 body {
