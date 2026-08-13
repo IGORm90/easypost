@@ -137,6 +137,23 @@ use Illuminate\Queue\SerializesModels;
  * inherits the same trade-off if it copies this shape: a real customer
  * post may retry into the same rate limit more than once rather than
  * waiting out the provider's full requested window in one release().
+ *
+ * Third thing Task 30 must know before copying this shape: the
+ * final-attempt guard above (return with no release()/fail()/delete())
+ * is NOT a neutral no-op the way it might look. CallQueuedHandler::call()
+ * treats a plain return from handle() as SUCCESSFUL completion -- the
+ * unique lock is released, the job is deleted, and NOTHING is written to
+ * failed_jobs; no JobFailed event fires either. So a job that dies this
+ * way is invisible to standard Laravel failure monitoring -- it looks
+ * exactly like every other successful run. For THIS job that is
+ * harmless: ScheduleTokenRefresh re-enumerates and retries regardless
+ * (see "Deliberate decision for THIS job" above), so nothing is lost by
+ * not recording the attempt. A publish job must NOT copy this: returning
+ * silently on exhaustion there would make an unpublished, unrecorded
+ * post look like a success everywhere -- failed_jobs, alerting, the
+ * user's own view of what happened. That job must fail loudly on its
+ * final attempt (let the exception propagate, or call fail() explicitly)
+ * rather than reuse this guard's plain return.
  */
 class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
 {
@@ -273,9 +290,14 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
                 // the moment it next sees attempts() > $tries, without
                 // calling handle() again). Releasing here would only
                 // hold the lock for a wait that can never be used, for
-                // no benefit -- give up quietly instead, the same
-                // outcome as any other exhausted-retries case for this
-                // job (see "Deliberate decision for THIS job" above).
+                // no benefit -- give up quietly instead. Same lock/
+                // self-heal outcome as any other exhausted-retries case
+                // for this job (see "Deliberate decision for THIS job"
+                // above) but NOT the same observability: this plain
+                // return is read by CallQueuedHandler::call() as a
+                // successful completion, not a failure -- nothing lands
+                // in failed_jobs, no JobFailed fires. See the class
+                // docblock's third Task-30 warning before copying this.
                 return;
             }
 
