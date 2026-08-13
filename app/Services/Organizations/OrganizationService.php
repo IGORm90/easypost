@@ -32,10 +32,10 @@ class OrganizationService
     }
 
     /**
-     * Updates the current organization's settings. Only {name,
-     * shortlink_provider} are ever accepted here (see
-     * UpdateOrganizationRequest::rules()) — mass-assignment-safe the same
-     * way RegisterRequest is for User::create().
+     * Updates the current organization's settings. Only {name} is ever
+     * accepted here (see UpdateOrganizationRequest::rules()) —
+     * mass-assignment-safe the same way RegisterRequest is for
+     * User::create().
      *
      * @param  array<string, mixed>  $data
      */

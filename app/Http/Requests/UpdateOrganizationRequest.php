@@ -9,9 +9,12 @@ use Illuminate\Foundation\Http\FormRequest;
  * least ADMIN in the current organization) is enforced by the `role:ADMIN`
  * route middleware, not here — see EnsureOrganizationRole.
  *
- * `shortlink_provider` has no fixed enum yet (see the migration that adds
- * it), so it's validated only as an optional short string, not against a
- * closed value list a later task would otherwise have to update here too.
+ * Only `name` is accepted. The brief's endpoint contract also lists
+ * `shortlink_provider`, but that's a post-MVP feature (short links aren't
+ * built yet) with no defined value space and no consumer — persisting an
+ * externally-writable column nobody validates the meaning of would just
+ * hand whoever builds short links later a pile of undefined production
+ * data to sort out. Deliberately deferred; see task-9-report.md.
  */
 class UpdateOrganizationRequest extends FormRequest
 {
@@ -27,7 +30,6 @@ class UpdateOrganizationRequest extends FormRequest
     {
         return [
             'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'shortlink_provider' => ['sometimes', 'nullable', 'string', 'max:50'],
         ];
     }
 }

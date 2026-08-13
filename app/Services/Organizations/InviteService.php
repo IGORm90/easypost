@@ -61,6 +61,23 @@ class InviteService
      *   3. expired -> 410 (was valid once, no longer is)
      *   4. addressed to a different email than the caller -> 403
      *   5. caller already a member -> 422
+     *
+     * The initial `$invite->accepted_at` read above is deliberately NOT
+     * the mechanism that makes this single-use — it only exists to fail
+     * fast/cheaply with the right status code for the common, non-racing
+     * case. Two concurrent accepts of the same token (entirely plausible
+     * for a null-email shareable link pasted into a team chat) could both
+     * pass that read before either had written, minting two memberships
+     * from one single-use invite — a classic TOCTOU gap. The actual gate
+     * is the conditional `UPDATE ... WHERE accepted_at IS NULL` inside the
+     * transaction below: it's a single atomic statement, so Postgres's own
+     * row-level locking guarantees that whichever of two concurrent
+     * accepts executes second — even if it read a stale "not yet
+     * accepted" state first — blocks until the first transaction resolves
+     * and then re-evaluates its WHERE clause against the now-current row,
+     * affecting 0 rows. `$claimed === 0` is what actually means "someone
+     * else already claimed this concurrently"; nothing upstream of it can
+     * be trusted for that purpose.
      */
     public function accept(string $token, User $user): Invite
     {
@@ -90,12 +107,19 @@ class InviteService
             ]);
         }
 
-        DB::transaction(function () use ($invite, $organization, $user) {
-            $organization->addMember($user, $invite->role);
-            $invite->forceFill(['accepted_at' => now()])->save();
-        });
+        return DB::transaction(function () use ($invite, $organization, $user) {
+            $claimed = Invite::whereKey($invite->id)
+                ->whereNull('accepted_at')
+                ->update(['accepted_at' => now()]);
 
-        return $invite->fresh(['organization']);
+            if ($claimed === 0) {
+                abort(422, 'This invite has already been accepted.');
+            }
+
+            $organization->addMember($user, $invite->role);
+
+            return $invite->fresh(['organization']);
+        });
     }
 
     /**

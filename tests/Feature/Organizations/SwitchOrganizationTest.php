@@ -35,12 +35,23 @@ it('updates the current organization settings as an ADMIN', function () {
 
     $this->putJson('/api/organizations/current', [
         'name' => 'Renamed Org',
-        'shortlink_provider' => 'bitly',
     ])->assertOk()
-        ->assertJsonPath('name', 'Renamed Org')
-        ->assertJsonPath('shortlink_provider', 'bitly');
+        ->assertJsonPath('name', 'Renamed Org');
 
     expect($org->fresh()->name)->toBe('Renamed Org');
+});
+
+it('ignores unknown fields such as shortlink_provider (not built yet, no defined value space)', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'ADMIN');
+
+    $this->putJson('/api/organizations/current', [
+        'name' => 'Still Renamed',
+        'shortlink_provider' => 'bitly',
+    ])->assertOk()
+        ->assertJsonMissingPath('shortlink_provider');
+
+    expect($org->fresh()->name)->toBe('Still Renamed');
 });
 
 it('forbids a USER from updating organization settings', function () {
