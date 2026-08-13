@@ -36,18 +36,30 @@ class SocialAccountService
             return $existingAccount->user;
         }
 
-        $user = $this->resolveUser($driver, $socialiteUser);
+        // One transaction for the whole first-time-identity path: the
+        // user, their organization (inside resolveUser()) and the
+        // social_accounts row that points at them all commit together or
+        // not at all. Without this, a failure on the SocialAccount::create()
+        // insert below — a DB blip, or a concurrent duplicate racing the
+        // (provider, provider_user_id) unique index — would leave a
+        // committed user + organization that no social account links to:
+        // a half-created signup, unrecoverable for the user (their next
+        // attempt just hits the existing-email path instead of retrying
+        // cleanly).
+        return DB::transaction(function () use ($driver, $socialiteUser) {
+            $user = $this->resolveUser($driver, $socialiteUser);
 
-        SocialAccount::create([
-            'user_id' => $user->id,
-            'provider' => $driver,
-            'provider_user_id' => (string) $socialiteUser->getId(),
-            'access_token' => $socialiteUser->token,
-            'refresh_token' => $socialiteUser->refreshToken,
-            'token_expires_at' => $this->expiresAt($socialiteUser),
-        ]);
+            SocialAccount::create([
+                'user_id' => $user->id,
+                'provider' => $driver,
+                'provider_user_id' => (string) $socialiteUser->getId(),
+                'access_token' => $socialiteUser->token,
+                'refresh_token' => $socialiteUser->refreshToken,
+                'token_expires_at' => $this->expiresAt($socialiteUser),
+            ]);
 
-        return $user;
+            return $user;
+        });
     }
 
     /**
@@ -86,28 +98,29 @@ class SocialAccountService
             return $existingUser;
         }
 
-        return DB::transaction(function () use ($socialiteUser, $email, $emailVerified) {
-            // `email_verified_at` is deliberately absent from
-            // User::$fillable (see RegisterRequest's docblock and the
-            // matching RegistrationTest case) precisely so no caller can
-            // mass-assign their way to a pre-verified account. Setting it
-            // via markEmailAsVerified() below, only when the provider
-            // itself vouched for the address, is what makes this call
-            // trusted server-side code rather than user input.
-            $user = User::create([
-                'name' => $socialiteUser->getName() ?? $socialiteUser->getNickname() ?? $email,
-                'email' => $email,
-                'password' => Str::password(40),
-            ]);
+        // Already running inside findOrCreateUser()'s outer transaction
+        // (which also covers the social_accounts insert), so this doesn't
+        // open one of its own.
+        //
+        // `email_verified_at` is deliberately absent from User::$fillable
+        // (see RegisterRequest's docblock and the matching RegistrationTest
+        // case) precisely so no caller can mass-assign their way to a
+        // pre-verified account. Setting it via markEmailAsVerified() below,
+        // only when the provider itself vouched for the address, is what
+        // makes this call trusted server-side code rather than user input.
+        $user = User::create([
+            'name' => $socialiteUser->getName() ?? $socialiteUser->getNickname() ?? $email,
+            'email' => $email,
+            'password' => Str::password(40),
+        ]);
 
-            if ($emailVerified) {
-                $user->markEmailAsVerified();
-            }
+        if ($emailVerified) {
+            $user->markEmailAsVerified();
+        }
 
-            $this->organizations->createForUser($user, "{$user->name}'s workspace");
+        $this->organizations->createForUser($user, "{$user->name}'s workspace");
 
-            return $user;
-        });
+        return $user;
     }
 
     /**

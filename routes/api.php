@@ -3,17 +3,15 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\PasswordResetController;
-use App\Http\Controllers\Api\SocialAuthController;
 use Illuminate\Support\Facades\Route;
 
+// GET /api/auth/oauth/{driver}/{redirect,callback} are deliberately *not*
+// declared here — see routes/web.php for why: they need a session
+// regardless of the caller's Referer/Origin, which this file's
+// statefulApi()-gated 'api' group cannot guarantee.
 Route::prefix('auth')->group(function () {
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
-
-    Route::prefix('oauth')->group(function () {
-        Route::get('{driver}/redirect', [SocialAuthController::class, 'redirect']);
-        Route::get('{driver}/callback', [SocialAuthController::class, 'callback']);
-    });
 
     Route::post('password/forgot', [PasswordResetController::class, 'forgot']);
     Route::post('password/reset', [PasswordResetController::class, 'reset']);
