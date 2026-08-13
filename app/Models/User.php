@@ -2,8 +2,11 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Notifications\ResetPasswordNotification;
+use App\Notifications\VerifyEmailNotification;
 use Database\Factories\UserFactory;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
@@ -14,7 +17,7 @@ use Illuminate\Notifications\Notifiable;
 
 #[Fillable(['name', 'email', 'password', 'timezone', 'locale'])]
 #[Hidden(['password', 'remember_token', 'api_key'])]
-class User extends Authenticatable
+class User extends Authenticatable implements HasLocalePreference, MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasUlids, Notifiable;
@@ -43,5 +46,40 @@ class User extends Authenticatable
             ->using(OrganizationUser::class)
             ->withPivot('id', 'role')
             ->withTimestamps();
+    }
+
+    /**
+     * Overrides the default (Illuminate\Auth\MustVerifyEmail trait, already
+     * pulled in by the base Authenticatable) to send our own translated,
+     * queued notification instead of the framework's untranslated one.
+     */
+    public function sendEmailVerificationNotification(): void
+    {
+        $this->notify(new VerifyEmailNotification);
+    }
+
+    /**
+     * Overrides the default (Illuminate\Auth\Passwords\CanResetPassword
+     * trait, already pulled in by the base Authenticatable) for the same
+     * reason as sendEmailVerificationNotification() above.
+     */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new ResetPasswordNotification($token));
+    }
+
+    /**
+     * Read by Illuminate\Notifications\NotificationSender to pick the
+     * locale mail notifications render in, so VerifyEmailNotification and
+     * ResetPasswordNotification never need to call App::setLocale()
+     * themselves.
+     */
+    public function preferredLocale(): string
+    {
+        // Coalesces to the app default: the `locale` column has a DB-level
+        // default ('en'), but a freshly-hydrated in-memory instance (e.g.
+        // right after User::create() with no explicit locale, before any
+        // refresh from the database) doesn't carry that default yet.
+        return $this->locale ?? config('app.locale');
     }
 }

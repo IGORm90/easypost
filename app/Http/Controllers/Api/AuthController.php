@@ -36,6 +36,12 @@ class AuthController extends Controller
             return [$user, $organization];
         });
 
+        // Dispatched after the transaction commits, not inside it: a queued
+        // notification (QUEUE_CONNECTION=redis in production) can be picked
+        // up by a worker before an in-transaction commit lands, which would
+        // fail to find the just-created user.
+        $user->sendEmailVerificationNotification();
+
         return response()->json([
             'user' => new UserResource($user),
             'organization' => new OrganizationResource($organization),
