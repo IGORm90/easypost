@@ -1,9 +1,53 @@
-@import 'tailwindcss';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
+:root {
+    --bg: #F1F5F2;
+    --surface: #FFFFFF;
+    --surface-2: #F7FAF8;
+    --border: #DBE5DD;
+    --text: #0B1F17;
+    --muted: #5A7267;
+    --primary: #0F726B;
+    --primary-hover: #0C5B55;
+    --on-primary: #FFFFFF;
+    --primary-soft: #D5EDEA;
+    --accent: #A94E08;
+    --on-accent: #FFFFFF;
+    --accent-soft: #F7E9D5;
+    --success: #147839;
+    --success-soft: #D8F0DF;
+    --warning: #896605;
+    --warning-soft: #FAF0D2;
+    --danger: #B91C1C;
+    --danger-soft: #FADEDE;
+}
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+.dark {
+    /* «Глубокий лес» — не инверсия светлой темы */
+    --bg: #07110E;
+    --surface: #0F1D18;
+    --surface-2: #0A1613;
+    --border: #1E332B;
+    --text: #E4EFE9;
+    --muted: #8AA598;
+    --primary: #2DD4BF;
+    --primary-hover: #5EEAD4;
+    --on-primary: #032620;
+    --primary-soft: #0F332D;
+    --accent: #FB923C;
+    --on-accent: #2A1206;
+    --accent-soft: #38230F;
+    --success: #4ADE80;
+    --success-soft: #123120;
+    --warning: #FCD34D;
+    --warning-soft: #332A0B;
+    --danger: #F87171;
+    --danger-soft: #38191B;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
 }

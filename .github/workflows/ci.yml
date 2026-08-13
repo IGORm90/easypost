@@ -85,9 +85,8 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Run frontend tests (Vitest)
+        run: npx vitest run
+
       - name: Build frontend assets
         run: npm run build
-
-      # NOTE: `npx vitest run` is intentionally omitted here — no frontend test setup
-      # (vitest config, test files, dependency) exists yet. It arrives in Task 3;
-      # add the step back once there is a real suite for it to run.

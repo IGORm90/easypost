@@ -1,0 +1,16 @@
+{
+    "app": {
+        "name": "EasyPost"
+    },
+    "nav": {
+        "toggleTheme": "Toggle theme",
+        "menu": "Menu"
+    },
+    "ui": {
+        "close": "Close",
+        "loading": "Loading…"
+    },
+    "shell": {
+        "comingSoon": "This section will arrive in a later task."
+    }
+}
