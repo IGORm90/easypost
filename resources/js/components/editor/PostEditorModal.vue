@@ -79,6 +79,24 @@ const effectiveGroupId = ref<string | null>(null);
  * every ref it touches must already be initialised above that point.
  */
 const pendingSaveType = ref<SaveType | null>(null);
+/**
+ * True once `loadGroup()` has populated the drafts from server-loaded
+ * content — set there and ONLY there, deliberately never touched by the
+ * 409 re-target (`groupLocked`/`effectiveGroupId` reset to `null`).
+ *
+ * This is a separate flag from `effectiveGroupId` on purpose (Task 25
+ * review, round 3): the signature selector's "already-loaded text may
+ * carry a baked-in signature" warning is about the PROVENANCE of the
+ * currently-composed text, not about which HTTP verb the next save will
+ * use. `modalTitle` correctly keys off `effectiveGroupId` — but reusing
+ * that same flag for the signature UI silently reopened the exact
+ * double-append bug round 1 closed: after a 409 re-target,
+ * `effectiveGroupId` goes back to `null`, but the composed text is
+ * UNCHANGED — still the server-loaded text that may already carry a
+ * signature — so the selector must keep warning about it even though
+ * the modal now correctly calls itself "New post".
+ */
+const loadedFromServer = ref(false);
 const generalErrors = ref<string[]>([]);
 const channelErrors = reactive<Record<string, Record<number, string[]>>>({});
 
@@ -242,6 +260,7 @@ function resetForm(): void {
     publishDate.value = null;
     groupLocked.value = false;
     pendingSaveType.value = null;
+    loadedFromServer.value = false;
 }
 
 /**
@@ -253,13 +272,14 @@ function resetForm(): void {
  * which signature (if any) produced the stored text, so re-selecting one
  * here appends fresh rather than guessing at, or doubling, what is
  * already baked into `content` (see PostGroupApi's docblock, and
- * `isEditingExisting`/the signature `<select>`'s relabelled default in
+ * `loadedFromServer`/the signature `<select>`'s relabelled default in
  * the template, for how the UI now makes that an explicit choice rather
  * than implying "none applied").
  */
 async function loadGroup(id: string): Promise<void> {
     const { data } = await api.get<PostGroupApi>(`/posts/${id}`);
 
+    loadedFromServer.value = true;
     selectedTags.value = [...data.tags];
     publishDate.value = data.publish_date;
 
@@ -462,11 +482,13 @@ async function executeSave(type: SaveType): Promise<void> {
 
 // Keyed off `effectiveGroupId`, not `props.groupId`: after a 409
 // re-target (or a group that loaded already published) the next save
-// creates a NEW group, so the header/hint must stop claiming this is
-// still "editing" the original the moment that becomes true, not just
-// at the initial load. Task 25 review, round 2 cosmetic finding.
+// creates a NEW group, so the header must stop claiming this is still
+// "editing" the original the moment that becomes true, not just at the
+// initial load. Task 25 review, round 2 cosmetic finding. Note this is
+// deliberately a DIFFERENT flag from `loadedFromServer` (used by the
+// signature selector below) — see that ref's docblock for why the two
+// must not be conflated.
 const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit') : t('editor.titleNew')));
-const isEditingExisting = computed(() => Boolean(effectiveGroupId.value));
 </script>
 
 <template>
@@ -531,13 +553,13 @@ const isEditingExisting = computed(() => Boolean(effectiveGroupId.value));
                                 copy. The relabelled option makes picking one
                                 here a deliberate, informed act instead.
                             -->
-                            <option :value="null">{{ isEditingExisting ? t('editor.signatureUnknown') : t('editor.noSignature') }}</option>
+                            <option :value="null">{{ loadedFromServer ? t('editor.signatureUnknown') : t('editor.noSignature') }}</option>
                             <option v-for="signature in signatures" :key="signature.id" :value="signature.id">
                                 {{ signature.content.slice(0, 40) }}
                             </option>
                         </select>
                     </div>
-                    <p v-if="isEditingExisting" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
+                    <p v-if="loadedFromServer" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
 
                     <ThreadEditor
                         :model-value="activeDraft.segments"
@@ -578,14 +600,33 @@ const isEditingExisting = computed(() => Boolean(effectiveGroupId.value));
             <Toast v-if="pendingSaveType" variant="warning">
                 <p>{{ t('editor.confirmNewPost') }}</p>
                 <div class="mt-2 flex gap-2">
-                    <Button variant="primary" type="button" :loading="saving" @click="confirmPendingSave">
+                    <!--
+                        No :loading="saving" here (Task 25 review, round
+                        3, trivia 1): confirmPendingSave() sets
+                        pendingSaveType to null before executeSave() ever
+                        sets saving=true, so this Toast — and this button
+                        with it — always unmounts before `saving` could
+                        become true. The prop was dead code implying a
+                        loading state that can never actually render.
+                    -->
+                    <Button variant="primary" type="button" @click="confirmPendingSave">
                         {{ t('editor.confirmNewPostYes') }}
                     </Button>
                     <Button variant="ghost" type="button" @click="cancelPendingSave">{{ t('ui.cancel') }}</Button>
                 </div>
             </Toast>
 
-            <Button variant="ghost" type="button" class="self-start" @click="emit('close')">{{ t('ui.cancel') }}</Button>
+            <!--
+                Deliberately NOT "Cancel" (Task 25 review, round 3,
+                trivia 2): with the confirmation Toast above, two
+                simultaneously visible buttons both saying "Cancel" would
+                carry different, easy-to-confuse consequences — one
+                dismisses the confirmation (composition intact), this one
+                closes the whole modal and discards everything typed.
+                The label itself must carry that difference, not just
+                position on screen.
+            -->
+            <Button variant="ghost" type="button" class="self-start" @click="emit('close')">{{ t('editor.closeWithoutSaving') }}</Button>
         </div>
     </Modal>
 </template>

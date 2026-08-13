@@ -179,10 +179,14 @@ it('cancelling the confirmation leaves the draft untouched and does not save', a
     await selectChannelAndType(w, 'careful text');
     post.mockRejectedValueOnce(axiosError(409));
 
-    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    let publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
     await publishNow!.trigger('click');
     await flushPromises();
 
+    // Re-query: the button is re-rendered with a new loading/disabled
+    // state between clicks, so a stale wrapper reference from before
+    // the first click does not reliably dispatch a second trigger.
+    publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
     await publishNow!.trigger('click'); // requests confirmation, does not save
     await flushPromises();
 
@@ -295,6 +299,36 @@ it("editing an existing group relabels the signature default instead of implying
     const defaultOption = select.findAll('option')[0];
     expect(defaultOption.text()).not.toBe('No signature');
     expect(defaultOption.text()).toContain('None selected');
+    expect(w.text()).toContain('may already include a signature');
+});
+
+it('the signature warning survives a 409 re-target — it tracks content provenance, not effectiveGroupId — Task 25 review, round 3', async () => {
+    const w = mount(PostEditorModal, {
+        props: { open: true, groupId: 'group-b' },
+        global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+
+    // Sanity: loaded from an existing (not-yet-published) group, so the
+    // warning is already showing before any save attempt.
+    expect(w.text()).toContain('may already include a signature');
+
+    // group-b is a DRAFT (not yet published), so `effectiveGroupId` is
+    // still 'group-b' at this point — the very first save is a PUT, not
+    // a POST (see `executeSave()`).
+    put.mockRejectedValueOnce(axiosError(409));
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    // effectiveGroupId is now null and the header would say "New post"
+    // — but the composed text is UNCHANGED, still server-loaded, so the
+    // signature selector must keep warning about it rather than
+    // reverting to "No signature" (the exact double-append bug round 1
+    // closed, reopened by keying this off the wrong flag).
+    expect(w.text()).toContain('saving now will create it as a new post'); // confirms the re-target happened
+    const select = w.get('#channel-signature');
+    expect(select.findAll('option')[0].text()).not.toBe('No signature');
     expect(w.text()).toContain('may already include a signature');
 });
 

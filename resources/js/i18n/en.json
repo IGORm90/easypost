@@ -219,6 +219,7 @@
         "lockedRetry": "This post has already gone out. Your text is safe — saving now will create it as a new post instead of changing the original.",
         "confirmNewPost": "This will publish a second, separate post — the original that already went out will not be changed. Continue?",
         "confirmNewPostYes": "Yes, create a new post",
+        "closeWithoutSaving": "Close without saving",
         "networkError": "Could not reach the server. Nothing was lost — check your connection and try again.",
         "commonContent": "Shared text",
         "commonContentPlaceholder": "Write once, then vary it per channel on its own tab below.",
