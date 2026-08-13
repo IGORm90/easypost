@@ -12,6 +12,7 @@ use App\Support\OrganizationContext;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
 
 /*
@@ -264,4 +265,78 @@ it('does not re-notify the owner when the channel is already broken', function (
     app(TokenRefreshService::class)->refresh($integration->fresh());
 
     Notification::assertSentToTimes($owner, IntegrationBrokenNotification::class, 1);
+});
+
+// --- The actual scheduled entry point -------------------------------------
+
+/*
+ * Every test above drives TokenRefreshService or the job directly.
+ * `integrations:refresh-tokens` (App\Console\Commands\ScheduleTokenRefresh)
+ * is the real production entry point Schedule::command() invokes hourly —
+ * a wiring regression there (calling the wrong service method, an empty
+ * loop body, a typo in the signature) would pass every test above while
+ * the scheduler silently dispatches nothing, forever. These run the
+ * actual artisan command with no OrganizationContext set, exactly how
+ * the scheduler runs it, and assert on the dispatched jobs via Queue::fake()
+ * rather than on side effects, so a wiring bug can't hide behind a
+ * coincidentally-correct side effect.
+ */
+
+it('dispatches one refresh job per due integration across every tenant when run as the scheduler runs it', function () {
+    Queue::fake();
+    OrganizationContext::clear();
+    expect(OrganizationContext::get())->toBeNull();
+
+    $orgA = Organization::factory()->create();
+    $orgB = Organization::factory()->create();
+
+    $dueA = Integration::factory()->create([
+        'organization_id' => $orgA->id,
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+    $dueB = Integration::factory()->create([
+        'organization_id' => $orgB->id,
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(90),
+    ]);
+
+    expect(OrganizationContext::get())->toBeNull();
+
+    $this->artisan('integrations:refresh-tokens')->assertSuccessful();
+
+    expect(OrganizationContext::get())->toBeNull();
+
+    Queue::assertPushed(RefreshIntegrationTokenJob::class, 2);
+    Queue::assertPushed(fn (RefreshIntegrationTokenJob $job): bool => $job->integration->id === $dueA->id);
+    Queue::assertPushed(fn (RefreshIntegrationTokenJob $job): bool => $job->integration->id === $dueB->id);
+});
+
+it('dispatches nothing for a disabled, soft-deleted, not-yet-due, or non-refreshable integration', function () {
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+
+    Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(30),
+        'disabled' => true,
+    ]);
+    $trashed = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+    $trashed->delete();
+    Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addHours(5),
+    ]);
+    Integration::factory()->for($org)->create([
+        'provider_identifier' => 'telegram',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $this->artisan('integrations:refresh-tokens')->assertSuccessful();
+
+    Queue::assertNotPushed(RefreshIntegrationTokenJob::class);
 });
