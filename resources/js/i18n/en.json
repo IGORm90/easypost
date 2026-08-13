@@ -181,6 +181,37 @@
         "notFound": "This link is invalid or is no longer shared.",
         "empty": "Nothing to preview yet."
     },
+    "calendar": {
+        "title": "Calendar",
+        "today": "Today",
+        "loadError": "Could not load the calendar.",
+        "views": {
+            "month": "Month",
+            "week": "Week",
+            "day": "Day"
+        },
+        "filters": {
+            "customer": "Customer",
+            "customerPlaceholder": "Filter by customer",
+            "tags": "Tags",
+            "noTags": "No tags yet."
+        },
+        "state": {
+            "DRAFT": "Draft",
+            "QUEUE": "Scheduled",
+            "PUBLISHED": "Published",
+            "ERROR": "Publishing failed"
+        },
+        "locked": "Published posts can't be moved or deleted.",
+        "remove": "Remove",
+        "removeConfirm": "Remove this post from the calendar?",
+        "toast": {
+            "moveConflict": "This post was already published, so the move was cancelled. The list has been refreshed.",
+            "moveError": "Could not reschedule the post. Please try again.",
+            "removeError": "Could not remove the post. Please try again."
+        },
+        "editorPlaceholder": "The post editor arrives in a later task."
+    },
     "integrations": {
         "callback": {
             "title": "Connecting channel",

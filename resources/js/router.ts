@@ -8,6 +8,7 @@ import Profile from './pages/Settings/Profile.vue';
 import Team from './pages/Settings/Team.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
+import Calendar from './pages/Calendar/Index.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import SharedPost from './pages/Public/SharedPost.vue';
 import { useAuthStore } from './stores/auth';
@@ -27,7 +28,10 @@ const router = createRouter({
         // it only redirects away routes with `guestOnly`, which this
         // route deliberately does not set.
         { path: '/share/:token', name: 'shared-post', component: SharedPost, meta: { requiresAuth: false } },
-        { path: '/', name: 'home', component: AppLayout, meta: { requiresAuth: true } },
+        // Task 24: the calendar is the app's day-to-day home screen, not
+        // the placeholder AppLayout shell the root path rendered before
+        // it existed.
+        { path: '/', name: 'home', component: Calendar, meta: { requiresAuth: true } },
         { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },
         // `INTEGRATIONS_REDIRECT_URL` (config/services.php) points every
         // OAuth provider's redirect at this exact path — see
