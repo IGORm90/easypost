@@ -97,6 +97,17 @@ class PostGroupService
                 $this->stateMachine->transition($group, $targetState);
             }
 
+            // No lockGroup()/bumpQueueVersionIfQueuing() needed here,
+            // unlike every other write path below: $group->id is a
+            // freshly-minted ulid nothing else can reference yet, so
+            // there is no concurrent writer to serialise against. A
+            // brand-new group's very first schedule generation is
+            // simply version 1.
+            if ($targetState === PostState::QUEUE) {
+                $group->queue_version = 1;
+                $group->save();
+            }
+
             $this->replaceChains($group, $data['posts'], $targetState);
 
             if (array_key_exists('tags', $data)) {
@@ -117,6 +128,11 @@ class PostGroupService
     public function update(PostGroup $group, array $data): PostGroup
     {
         $group = DB::transaction(function () use ($group, $data) {
+            // lockGroup() FIRST — before guardEditable()'s post-row lock,
+            // and before anything reads $group->state/queue_version for a
+            // decision this method is about to persist. See lockGroup()'s
+            // docblock (Task 31 review findings 1 and 4).
+            $group = $this->lockGroup($group);
             $this->guardEditable($group);
             $this->resolveIntegrations($data['posts']);
 
@@ -128,6 +144,7 @@ class PostGroupService
             $group->posts()->delete();
 
             $group->publish_date = $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null);
+            $this->bumpQueueVersionIfQueuing($group, $targetState);
             $group->save();
 
             if ($targetState !== $group->state) {
@@ -249,9 +266,11 @@ class PostGroupService
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
         $group = DB::transaction(function () use ($group, $publishDate) {
+            $group = $this->lockGroup($group);
             $this->guardEditable($group);
 
             $group->publish_date = $publishDate;
+            $this->bumpQueueVersionIfQueuing($group, $group->state);
             $group->save();
 
             return $group;
@@ -287,11 +306,31 @@ class PostGroupService
      *
      * `publish_date` is reset to `now()`: a retry is an immediate
      * republish, not a return to whatever the group's original schedule
-     * happened to be.
+     * happened to be. `error` is cleared alongside it (Task 31 review
+     * finding 3) — otherwise a group that goes on to republish
+     * successfully would still carry its previous failure message,
+     * which `PostGroupResource` exposes verbatim; a published group
+     * showing a stale "the channel rejected the post" is a product bug,
+     * not a display nuance.
+     *
+     * The `state === ERROR` check below runs against `$group` AFTER
+     * `lockGroup()` has re-read and locked its row (Task 31 review
+     * finding 2) — every other guard in this pipeline
+     * (`PublishService::lockGroupIfQueued()`, `abandonGroup()`,
+     * `guardEditable()` above) re-checks state under `lockForUpdate()`
+     * rather than trusting whatever `$group` instance the caller
+     * happened to pass in; this method matches that pattern rather than
+     * being the one exception a double-click could exploit (two rapid
+     * retry clicks racing: without the lock, the second could still be
+     * holding a pre-transition `ERROR` snapshot by the time the first's
+     * job has already finalised the group to `PUBLISHED`, and pass this
+     * check regardless — overwriting a `PUBLISHED` row with `QUEUE`).
      */
     public function retry(PostGroup $group): PostGroup
     {
         $group = DB::transaction(function () use ($group) {
+            $group = $this->lockGroup($group);
+
             if ($group->state !== PostState::ERROR) {
                 throw ValidationException::withMessages([
                     'state' => ["Only a failed post can be retried (current state: {$group->state->value})."],
@@ -301,6 +340,8 @@ class PostGroupService
             $this->stateMachine->transition($group, PostState::QUEUE);
 
             $group->publish_date = Carbon::now();
+            $group->error = null;
+            $this->bumpQueueVersionIfQueuing($group, $group->state);
             $group->save();
 
             $group->posts()
@@ -336,6 +377,7 @@ class PostGroupService
     public function delete(PostGroup $group): void
     {
         DB::transaction(function () use ($group): void {
+            $group = $this->lockGroup($group);
             $this->guardEditable($group);
 
             $group->delete();
@@ -499,17 +541,6 @@ class PostGroupService
             return;
         }
 
-        // Task 31: bump BEFORE dispatching, and dispatch with the freshly
-        // bumped value — see PublishService::lockGroupIfQueued()'s
-        // docblock for why this makes any job dispatched for an earlier
-        // generation of this group's schedule a guaranteed no-op, and
-        // increment() (not a plain +1/save()) because it issues its own
-        // atomic `UPDATE ... SET queue_version = queue_version + 1` and
-        // refreshes the in-memory attribute to match, rather than trusting
-        // whatever value this possibly-stale `$group` instance already
-        // holds in memory.
-        $group->increment('queue_version');
-
         if ($forceRedispatch) {
             app(UniqueLock::class)->release(new PublishPostJob($group->id, $group->queue_version));
         }
@@ -518,17 +549,101 @@ class PostGroupService
     }
 
     /**
+     * Re-reads and locks `$group`'s row via `lockForUpdate()`. MUST be
+     * called FIRST inside the caller's own transaction — before
+     * `guardEditable()`'s post-row lock, and before reading
+     * `$group->state`/`$group->queue_version` for any decision this
+     * method is about to persist. Two independent reasons, both from
+     * Task 31 review:
+     *
+     *  - Authoritative `queue_version` (finding 1, CRITICAL). An earlier
+     *    revision bumped `queue_version` via Eloquent's own `increment()`,
+     *    called AFTER the caller's transaction had already committed —
+     *    the docblock there claimed `increment()` "refreshes the
+     *    in-memory attribute to match" the row's real committed value;
+     *    that was simply wrong. `increment()` issues an atomic
+     *    `UPDATE ... SET queue_version = queue_version + 1` in the
+     *    database, but sets its OWN in-memory attribute to (whatever
+     *    stale value this PHP object already held) + 1 — it never
+     *    re-reads the row. Two concurrent reschedules of the same group
+     *    (A and B both load `queue_version = 5`; B commits date T2,
+     *    increments — DB 6, its own memory 6 — dispatches v6; A commits
+     *    date T1 afterwards, increments from ITS stale in-memory 5 — DB
+     *    now 7, but A's memory is only 6 — dispatches v6) leaves the row
+     *    at version 7 while BOTH dispatched jobs carry v6: neither
+     *    matches, neither ever publishes, and because a version mismatch
+     *    is a silent no-op (never a failure), nothing reaches
+     *    `failed_jobs` either — the group sits at `QUEUE` forever. This
+     *    was a regression: before Task 31, both jobs were live and each
+     *    re-read `publish_date` under the lock, so whichever one matched
+     *    the current schedule published; the version-based replacement
+     *    must be at least as robust. Locking the row here, then bumping
+     *    the LOCKED instance's own already-current in-memory value by a
+     *    plain `+ 1` (see `bumpQueueVersionIfQueuing()`) and saving it
+     *    together with `publish_date` in the SAME transaction, restores
+     *    that: the lock forces a concurrent caller to wait until this
+     *    transaction commits, then re-read the row fresh, so the
+     *    LAST committer's write — date and version together — is always
+     *    what every subsequent reader (including the next reschedule,
+     *    and `PublishService::lockGroupIfQueued()`) sees, and no
+     *    dispatched version is ever computed from a value another
+     *    transaction has since moved past. Covered by
+     *    `RescheduleTest`'s two-concurrent-`updateDate()` fork test.
+     *  - Lock ORDER (finding 4). `PublishService::abandonGroup()` locks
+     *    the group row, then post rows, inside one transaction. Every
+     *    caller in this class now does the same — this method first,
+     *    `guardEditable()`'s post-row lock second — because the reverse
+     *    order (an earlier revision's post-lock-then-unlocked-group-read)
+     *    is a deadlock cycle waiting to happen the moment the two run
+     *    concurrently against the same group: Postgres detects it and
+     *    aborts one side, a retryable job on one hand, a 500 on a
+     *    calendar drag on the other.
+     */
+    private function lockGroup(PostGroup $group): PostGroup
+    {
+        /** @var PostGroup $locked */
+        $locked = PostGroup::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
+
+        return $locked;
+    }
+
+    /**
+     * Bumps `$group->queue_version` by exactly 1, in memory, on the
+     * object the caller already holds locked via `lockGroup()` earlier in
+     * the SAME transaction. A plain PHP `+ 1` — never `increment()`, see
+     * `lockGroup()`'s docblock for why that was the bug — is exactly
+     * correct here specifically BECAUSE `$group` was read under
+     * `lockForUpdate()`: no other transaction can have changed this row
+     * since (the lock forces it to wait), so this object's current
+     * in-memory value IS the row's authoritative committed value. The
+     * caller's own `save()` immediately after (alongside `publish_date`)
+     * persists both together, atomically, in the order they belong —
+     * never as a separate write issued after commit, which is what let
+     * the date and the version drift out of sync under a race.
+     *
+     * A no-op unless `$resultingState` is `QUEUE`: nothing about a
+     * `DRAFT` write needs a fresh dispatch generation, since nothing is
+     * about to be dispatched for it.
+     */
+    private function bumpQueueVersionIfQueuing(PostGroup $group, PostState $resultingState): void
+    {
+        if ($resultingState === PostState::QUEUE) {
+            $group->queue_version = $group->queue_version + 1;
+        }
+    }
+
+    /**
      * A group may be replaced, rescheduled, or deleted only while every
      * one of its segments has never been released — see this class's
-     * docblock. Callers MUST invoke this from inside their own
-     * `DB::transaction()` (every caller does — `create()`/`update()`
-     * already did, `updateDate()`/`delete()` now wrap it too) for the
-     * lock below to mean anything: `lockForUpdate()` outside an explicit
-     * transaction is released the instant its own SELECT completes,
-     * giving no protection at all.
+     * docblock. Callers MUST call `lockGroup()` first and pass its
+     * result here, inside the SAME transaction — this method's own
+     * post-row lock only means anything as the SECOND lock acquired
+     * (see `lockGroup()`'s docblock on lock order), and `$group->state`
+     * below is trusted directly (no separate `fresh()` read) precisely
+     * because `lockGroup()` already guarantees it is current.
      *
-     * Task 31 hardening — deleting (or editing) a group mid-publish: the
-     * previous version of this check was a single unlocked read
+     * Task 31 hardening — deleting (or editing) a group mid-publish: an
+     * earlier revision of this check was a single unlocked read
      * (`$group->posts()->whereNotNull('release_id')->exists()`), which
      * left a real window open. `PublishService::publishChannel()` commits
      * per CHANNEL, not for the whole group (see that class's docblock),
@@ -566,7 +681,7 @@ class PostGroupService
             ->whereNotNull('release_id')
             ->exists();
 
-        if ($group->fresh()->state === PostState::PUBLISHED || $hasPublishedSegment) {
+        if ($group->state === PostState::PUBLISHED || $hasPublishedSegment) {
             throw new ConflictHttpException('This post has already been published and can no longer be edited or deleted.');
         }
     }

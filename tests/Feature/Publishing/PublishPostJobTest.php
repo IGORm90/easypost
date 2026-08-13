@@ -479,6 +479,12 @@ it('redispatches successfully across two consecutive reschedules of the same gro
     Queue::fake();
 
     $org = Organization::factory()->create();
+    // PostGroupService::updateDate() is HTTP-facing service code (unlike
+    // the rest of this file) and legitimately requires OrganizationContext
+    // for its now-locked, org-scoped read of the group row — set it by
+    // hand since this test drives the service directly rather than
+    // through HTTP.
+    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addHours(2));
     publishableChannel($org, $group, ['channel A']);
 

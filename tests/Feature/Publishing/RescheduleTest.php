@@ -90,6 +90,11 @@ it('a stale job cannot publish after a reschedule even when its own due-date che
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
+    // updateDate() now locks its own row via an org-scoped query — see
+    // PostGroupService::lockGroup()'s docblock — so a direct (non-HTTP)
+    // call needs OrganizationContext set by hand, same as the retry()
+    // tests below.
+    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addMinute());
     publishableChannel($org, $group, ['channel A']);
 
@@ -109,6 +114,7 @@ it('the redispatched job, carrying the current queue_version, does publish once 
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
+    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addMinute());
     publishableChannel($org, $group, ['channel A']);
 
@@ -144,6 +150,9 @@ it('a job for a group deleted before it fires finds nothing and does nothing', f
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
+    // delete() now locks its own row via an org-scoped query too — see
+    // PostGroupService::lockGroup()'s docblock.
+    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addMinute());
     publishableChannel($org, $group, ['channel A']);
     $groupId = $group->id;
@@ -240,6 +249,113 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
             ->and($freshPost)->not->toBeNull()
             ->and($freshPost->release_id)->toBe('in-flight-release')
             ->and($freshPost->state)->toBe(PostState::PUBLISHED);
+    } finally {
+        DB::connection('race')->table('posts')->where('post_group_id', $group->id)->delete();
+        DB::connection('race')->table('post_groups')->where('id', $group->id)->delete();
+        DB::connection('race')->table('integrations')->where('id', $integration->id)->delete();
+        DB::connection('race')->table('organization_user')->where('organization_id', $organization->id)->delete();
+        DB::connection('race')->table('organizations')->where('id', $organization->id)->delete();
+        DB::connection('race')->table('users')->where('id', $owner->id)->delete();
+    }
+});
+
+it('two genuinely concurrent updateDate() calls (a calendar double-drag) still leave the group publishing exactly once', function () {
+    // Review finding 1 (CRITICAL): the bug this proves fixed. An earlier
+    // revision bumped queue_version via Eloquent's increment(), called
+    // AFTER the caller's own transaction had already committed — which
+    // sets increment()'s OWN in-memory attribute to (whatever stale value
+    // this PHP object already held) + 1, never the row's real committed
+    // value. Under this exact interleaving (A and B both load
+    // queue_version=N; B commits first, bumps to N+1, dispatches N+1; A
+    // — still holding its stale in-memory N — commits afterwards, bumps
+    // ITS stale N to N+1 too, even though the row is already at N+1,
+    // landing the row at N+2 while BOTH dispatched jobs carry N+1) BOTH
+    // jobs would find a version mismatch and no-op — silently, since a
+    // mismatch is never a failure — leaving the group stuck at QUEUE
+    // forever with nothing in failed_jobs. This was a genuine regression:
+    // pre-Task-31, both jobs were live and each re-read publish_date
+    // under its own lock, so whichever matched the current schedule
+    // published regardless of interleaving.
+    //
+    // A sequential Pest call can never reproduce this — each call's
+    // transaction fully commits before the next starts — so this uses
+    // the project's real pcntl_fork() harness (tests/Pest.php), exactly
+    // like the delete-vs-publish race above. QUEUE_CONNECTION is 'sync'
+    // in tests, so each racer's own updateDate() call dispatches its
+    // PublishPostJob INLINE, synchronously, the instant its own
+    // transaction commits — which is exactly what lets a single racer
+    // closure exercise "commit the reschedule, then attempt to publish"
+    // end to end, without any separate orchestration.
+    config(['database.connections.race' => config('database.connections.pgsql')]);
+    DB::purge('race');
+
+    $owner = raceCreate(User::class, ['name' => 'Race Owner', 'email' => 'reschedule-version-race-'.Str::random(10).'@example.com', 'password' => 'irrelevant-hash']);
+    $organization = raceCreate(Organization::class, ['name' => 'Race Co', 'slug' => 'race-version-co-'.Str::lower(Str::random(10)), 'owner_id' => $owner->id]);
+    raceCreate(OrganizationUser::class, ['organization_id' => $organization->id, 'user_id' => $owner->id, 'role' => OrganizationRole::ADMIN]);
+    $integration = raceCreate(Integration::class, [
+        'organization_id' => $organization->id,
+        'provider_identifier' => 'fake',
+        'internal_id' => (string) Str::ulid(),
+        'name' => 'race channel',
+    ]);
+    $group = raceCreate(PostGroup::class, [
+        'organization_id' => $organization->id,
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->addHour(),
+        'queue_version' => 1,
+    ]);
+    $post = raceCreate(Post::class, [
+        'post_group_id' => $group->id,
+        'organization_id' => $organization->id,
+        'integration_id' => $integration->id,
+        'order' => 0,
+        'content' => 'double-dragged',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+
+    try {
+        $racer = function () use ($group, $organization) {
+            OrganizationContext::set(Organization::query()->findOrFail($organization->id));
+
+            // Both racers reschedule to a date already in the past —
+            // guaranteed due the instant either one's inline dispatch
+            // runs, so this exercises the full commit-then-publish path
+            // for both, not just the version bookkeeping.
+            app(PostGroupService::class)->updateDate(
+                PostGroup::query()->findOrFail($group->id),
+                now()->subSecond(),
+            );
+        };
+
+        // A racer whose own inline publish succeeds first leaves the
+        // group PUBLISHED — the OTHER racer's updateDate() then hits
+        // guardEditable()'s "already published" guard and legitimately
+        // fails (409). Which racer wins that race is not deterministic,
+        // so this asserts the outcome that must hold regardless: the
+        // group is never left stuck at QUEUE.
+        raceConcurrently([$racer, $racer]);
+
+        OrganizationContext::set($organization);
+        $freshGroup = PostGroup::query()->whereKey($group->id)->first();
+        $freshPost = Post::query()->whereKey($post->id)->first();
+
+        expect($freshGroup)->not->toBeNull()
+            // The load-bearing assertion: under the pre-fix bug both
+            // racers' dispatched jobs could carry a mismatched, stale
+            // version and BOTH silently no-op, leaving the group stuck
+            // at QUEUE forever with nothing in failed_jobs. Whichever
+            // racer legitimately wins the race (one may 409 if the
+            // other's publish lands first — see above), the group must
+            // never end up anywhere but PUBLISHED.
+            ->and($freshGroup->state)->toBe(PostState::PUBLISHED)
+            ->and($freshPost)->not->toBeNull()
+            ->and($freshPost->state)->toBe(PostState::PUBLISHED)
+            ->and($freshPost->release_id)->not->toBeNull()
+            // At least one racer's write landed under the row lock
+            // (starting at 1, so >= 2); both landing (3) is the more
+            // likely interleaving but not guaranteed — see above.
+            ->and($freshGroup->queue_version)->toBeGreaterThanOrEqual(2);
     } finally {
         DB::connection('race')->table('posts')->where('post_group_id', $group->id)->delete();
         DB::connection('race')->table('post_groups')->where('id', $group->id)->delete();
@@ -402,7 +518,12 @@ it('retrying a partially published group re-sends only the failed channel, leavi
         ->and($failedAfter->state)->toBe(PostState::PUBLISHED)
         ->and($failedAfter->release_id)->not->toBeNull()
         ->and($failedAfter->error)->toBeNull()
-        ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
+        ->and($group->fresh()->state)->toBe(PostState::PUBLISHED)
+        // Review finding 3: the GROUP's own error, not just each post's,
+        // must be cleared by retry() — otherwise a group that goes on to
+        // republish successfully still carries its previous failure
+        // message, which PostGroupResource exposes verbatim to the UI.
+        ->and($group->fresh()->error)->toBeNull();
 
     // The provider only ever saw ONE chain across both the original
     // attempt (never happened in this test — both channels start
@@ -448,7 +569,8 @@ it('retry leaves an untouched sibling thread segment anchored to the already-pub
     expect($reply->state)->toBe(PostState::PUBLISHED)
         ->and($reply->release_id)->not->toBeNull()
         ->and($posts[0]->fresh()->release_id)->toBe('root-release-id')
-        ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
+        ->and($group->fresh()->state)->toBe(PostState::PUBLISHED)
+        ->and($group->fresh()->error)->toBeNull();
 
     $sentChain = $provider->publishedChains()[0];
     expect($sentChain)->toHaveCount(1)
