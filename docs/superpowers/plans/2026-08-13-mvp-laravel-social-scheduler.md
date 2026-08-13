@@ -767,11 +767,17 @@ interface SocialProviderInterface
     public function capabilities(): ProviderCapabilities;
     public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto;
     public function authenticate(array $params, string $redirectUri): AuthResultDto;
-    /** @param PostPayloadDto[] $chain  тред: первый элемент — корень */
-    public function post(Integration $integration, array $chain): PostResultDto;
+    /**
+     * @param  PostPayloadDto[] $chain  тред: первый элемент — корень
+     * @return array<int, PostResultDto>  по одному результату на элемент цепочки, ключ = индекс в $chain
+     */
+    public function post(Integration $integration, array $chain): array;
 }
 
 interface SupportsRefresh { public function refresh(Integration $i): AuthResultDto; }
+
+/** Двухфазная загрузка: сначала uploadMedia(), затем post() ссылается на MediaDto::$remoteId. */
+interface SupportsMedia { public function uploadMedia(Integration $i, MediaDto $media): MediaDto; }
 
 final readonly class ProviderCapabilities {
     public function __construct(
@@ -782,6 +788,9 @@ final readonly class ProviderCapabilities {
         public bool $supportsScheduling,
         public array $allowedMimeTypes,     // ['image/jpeg','image/png','video/mp4']
         public int $maxFileSizeBytes,
+        public bool $allowsMixedMedia,      // можно ли смешивать фото и видео в одном посте
+        public ?int $maxThreadLength,       // null = без ограничения
+        public bool $requiresAltText,
     ) {}
 }
 
@@ -801,9 +810,24 @@ final readonly class PostPayloadDto {
 final readonly class PostResultDto {
     public function __construct(public string $releaseId, public ?string $releaseUrl = null) {}
 }
+
+final readonly class MediaDto {
+    public function __construct(
+        public string $path,                // локальный путь до загрузки
+        public string $mimeType,
+        public ?string $altText = null,
+        public ?string $remoteId = null,    // хэндл, выданный провайдером в uploadMedia()
+    ) {}
+    public function withRemoteId(string $remoteId): self { /* immutable clone */ }
+}
 ```
 
-- Исключения: `ProviderTransientException` (ретраить), `ProviderPermanentException` (не ретраить, пост → ERROR), `ProviderAuthException` (пометить канал `refresh_needed`), `ProviderRateLimitException` (`retryAfterSeconds`).
+- Исключения (все наследуют базовый `ProviderException`, чтобы у пайплайна был fallback-catch):
+  `ProviderTransientException` (ретраить), `ProviderPermanentException` (не ретраить, пост → ERROR),
+  `ProviderAuthException` (пометить канал `refresh_needed`), `ProviderRateLimitException` (`retryAfterSeconds`),
+  `ProviderPartialFailureException` — часть цепочки опубликовалась: несёт `array<int, PostResultDto>` уже
+  опубликованных сегментов. Пайплайн обязан сохранить их `release_id` и **никогда** не переотправлять сегмент,
+  у которого `release_id` уже есть, иначе ретрай продублирует пост в сети.
 - `ProviderRegistry::get(string $identifier): SocialProviderInterface`, `::all(): array`, `::has(string): bool`. Неизвестный идентификатор → `UnknownProviderException`.
 
 - [ ] **Step 1: Тест реестра**
@@ -1336,13 +1360,19 @@ final class PublishPostJob implements ShouldQueue, ShouldBeUnique
 
 - `PublishService::publishGroup(string $id)`:
   1. Берёт группу `lockForUpdate()` внутри транзакции; если состояние не `QUEUE` — **выходит без действий** (защита от двойной публикации).
-  2. Для каждого канала публикует всю цепочку одним вызовом `provider->post($integration, $chain)`.
-  3. Успех → `posts.state = PUBLISHED`, `release_id`, `release_url`, `published_at`.
-  4. Уже опубликованные посты внутри группы при ретрае **пропускаются** (частичный успех не публикуется повторно).
-  5. `ProviderTransientException` / `ProviderRateLimitException` → `release()` c backoff (для rate-limit — `retryAfterSeconds`).
-  6. `ProviderPermanentException` → пост в `ERROR` с текстом, остальные каналы продолжают публиковаться.
-  7. `ProviderAuthException` → канал `refresh_needed=true`, пост в `ERROR`.
-  8. Группа получает `PUBLISHED`, если все её посты `PUBLISHED`, иначе `ERROR`.
+  2. Для каждого канала публикует всю цепочку одним вызовом `provider->post($integration, $chain)`, который
+     возвращает `array<int, PostResultDto>` — по результату на сегмент цепочки.
+  3. Успех → для **каждого** сегмента свои `posts.state = PUBLISHED`, `release_id`, `release_url`, `published_at`
+     (в схеме на каждый элемент цепочки своя строка `posts`).
+  4. Уже опубликованные посты внутри группы при ретрае **пропускаются** — как на уровне канала, так и на уровне
+     сегмента цепочки: сегмент с непустым `release_id` не отправляется повторно никогда.
+  5. `ProviderPartialFailureException` → сохранить `release_id` опубликованных сегментов из исключения,
+     остальные сегменты оставить неопубликованными; ретрай продолжит с первого сегмента без `release_id`.
+     Без этого ретрай продублирует корень треда в соцсети.
+  6. `ProviderTransientException` / `ProviderRateLimitException` → `release()` c backoff (для rate-limit — `retryAfterSeconds`).
+  7. `ProviderPermanentException` → пост в `ERROR` с текстом, остальные каналы продолжают публиковаться.
+  8. `ProviderAuthException` → канал `refresh_needed=true`, пост в `ERROR`.
+  9. Группа получает `PUBLISHED`, если все её посты `PUBLISHED`, иначе `ERROR`.
 
 - [ ] **Step 1: Падающие тесты**
 
