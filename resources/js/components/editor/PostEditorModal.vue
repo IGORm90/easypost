@@ -10,6 +10,7 @@ import ChannelPicker from './ChannelPicker.vue';
 import ChannelTab from './ChannelTab.vue';
 import ThreadEditor from './ThreadEditor.vue';
 import ScheduleControls from './ScheduleControls.vue';
+import PreviewPane from '../previews/PreviewPane.vue';
 import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
 import { api } from '../../api/client';
@@ -26,9 +27,14 @@ import type { ChannelDraft, PostGroupApi, SaveType, SetDto, SignatureDto } from 
  * /api/posts/{group}`) — the exact seam `Calendar/Index.vue`'s
  * `onEdit()` was left for.
  *
- * Nothing here builds a per-network preview (Task 26), a media
- * picker (Tasks 27-29 — `media_ids` is always sent as `[]`), or the
- * publish job (Task 30).
+ * Task 26 fills the preview seam: `PreviewPane` (below) renders the
+ * active channel's draft — signature included, since that is what
+ * actually publishes, see `activePreviewSegments` — through
+ * `resolvePreview()`'s registry, never by branching on
+ * `provider_identifier` itself here.
+ *
+ * Nothing here builds a media picker (Tasks 27-29 — `media_ids` is
+ * always sent as `[]`), or the publish job (Task 30).
  */
 const props = defineProps<{ open: boolean; groupId: string | null }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
@@ -147,6 +153,25 @@ function signatureLength(channelId: string): number {
     const signature = signatureFor(channelId);
     return signature ? [...SIGNATURE_SEPARATOR, ...signature.content].length : 0;
 }
+
+/**
+ * The active channel's thread as it will actually be PUBLISHED, for
+ * `PreviewPane` (Task 26): mirrors `buildPayload()`'s own signature-append
+ * step (last segment only) rather than showing the raw, signature-less
+ * draft — a preview that hid the signature would misrepresent what the
+ * user is about to send.
+ */
+const activePreviewSegments = computed(() => {
+    if (!activeChannelId.value || !activeDraft.value) {
+        return [];
+    }
+
+    const signature = signatureFor(activeChannelId.value);
+
+    return activeDraft.value.segments.map((segment, index, all) => ({
+        content: signature && index === all.length - 1 ? `${segment.content}${SIGNATURE_SEPARATOR}${signature.content}` : segment.content,
+    }));
+});
 
 /**
  * Drives the "!" tab badge: a channel is in error if the server already
@@ -568,6 +593,13 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                         :label="integrationName(activeChannelId)"
                         :errors="channelErrors[activeChannelId] ?? {}"
                         @update:model-value="onSegmentsUpdate(activeChannelId as string, $event)"
+                    />
+
+                    <PreviewPane
+                        :provider-identifier="activeIntegration?.provider_identifier ?? ''"
+                        :channel-name="integrationName(activeChannelId)"
+                        :channel-picture="activeIntegration?.picture ?? null"
+                        :segments="activePreviewSegments"
                     />
                 </div>
             </div>

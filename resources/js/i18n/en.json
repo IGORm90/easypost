@@ -266,6 +266,33 @@
             "hasError": "This channel has a validation problem"
         }
     },
+    "preview": {
+        "title": "Preview",
+        "approximation": "An approximation — the real network may render this differently.",
+        "empty": "Nothing to preview yet — start typing above.",
+        "generic": {
+            "notice": "No network-specific preview yet — showing plain text."
+        },
+        "telegram": {
+            "kind": "Telegram channel"
+        },
+        "mastodon": {
+            "kind": "Toot",
+            "replyingToPrevious": "Replying to the previous post"
+        },
+        "bluesky": {
+            "kind": "Post",
+            "reply": "Reply"
+        },
+        "discord": {
+            "kind": "Discord message",
+            "unlinked": "This channel does not support threading — each message below is sent separately, not linked."
+        },
+        "slack": {
+            "thread": "Thread",
+            "replies": "{n} replies in thread"
+        }
+    },
     "integrations": {
         "callback": {
             "title": "Connecting channel",
