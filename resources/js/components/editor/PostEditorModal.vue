@@ -13,6 +13,7 @@ import ScheduleControls from './ScheduleControls.vue';
 import PreviewPane from '../previews/PreviewPane.vue';
 import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
+import { useMediaStore } from '../../stores/media';
 import { api } from '../../api/client';
 import type { CalendarTag } from '../../stores/posts';
 import type { ChannelDraft, PostGroupApi, SaveType, SetDto, SignatureDto } from './types';
@@ -33,8 +34,12 @@ import type { ChannelDraft, PostGroupApi, SaveType, SetDto, SignatureDto } from 
  * `resolvePreview()`'s registry, never by branching on
  * `provider_identifier` itself here.
  *
- * Nothing here builds a media picker (Tasks 27-29 — `media_ids` is
- * always sent as `[]`), or the publish job (Task 30).
+ * Task 29 fills the media seam: `ThreadEditor.vue` opens
+ * `MediaPicker.vue` per segment, populating that segment's own
+ * `media_ids` — this component only hydrates `useMediaStore()` from an
+ * existing group's already-attached media (see `loadGroup()`) so those
+ * thumbnails/selection resolve without a picker fetch. Nothing here
+ * builds the publish job (Task 30).
  */
 const props = defineProps<{ open: boolean; groupId: string | null }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
@@ -42,6 +47,7 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 const { t } = useI18n();
 const integrations = useIntegrationsStore();
 const auth = useAuthStore();
+const media = useMediaStore();
 
 // Same source CalendarGrid.vue's `timeZone` option and Channels'
 // TimeSlotEditor.vue already use — see zonedDateTime.ts's docblock for
@@ -319,6 +325,14 @@ async function loadGroup(id: string): Promise<void> {
     }
 
     selectedChannelIds.value = data.posts.map((post) => post.integration_id);
+
+    // Seeds the media store from what's already attached, so
+    // ThreadEditor.vue's thumbnails and MediaPicker's "already
+    // selected" highlighting resolve immediately — without this, media
+    // this session's picker has never itself fetched a page containing
+    // would show as a bare, unresolved id. See MediaItem[] `media` on
+    // PostGroupApi's docblock.
+    media.hydrate(data.posts.flatMap((post) => post.value.flatMap((segment) => segment.media ?? [])));
 
     for (const post of data.posts) {
         channelDrafts[post.integration_id] = {

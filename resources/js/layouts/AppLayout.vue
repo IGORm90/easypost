@@ -28,6 +28,13 @@ const auth = useAuthStore();
                 {{ t('nav.channels') }}
             </router-link>
             <router-link
+                :to="{ name: 'media' }"
+                class="rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text"
+                active-class="bg-primary-soft text-primary"
+            >
+                {{ t('nav.media') }}
+            </router-link>
+            <router-link
                 :to="{ name: 'settings-profile' }"
                 class="rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text"
                 active-class="bg-primary-soft text-primary"

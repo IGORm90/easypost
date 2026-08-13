@@ -1,11 +1,12 @@
 import type { ProviderCapabilities } from '../../stores/integrations';
+import type { MediaItem } from '../../stores/media';
 
 export type { ProviderCapabilities };
 
 /** One post/reply in a channel's thread — the exact shape `POST /api/posts`'s `posts[].value[]` accepts. */
 export interface PostSegment {
     content: string;
-    /** Always sent as `[]` from this task's UI — the media picker (Tasks 27-29) is what ever populates it. */
+    /** Populated by `MediaPicker.vue` (Task 29) — order is content, see that component's docblock. */
     media_ids: string[];
 }
 
@@ -60,6 +61,18 @@ export interface PostGroupApi {
             id: string;
             content: string;
             media_ids: string[];
+            /**
+             * The richer per-attachment shape `PostResource` sends
+             * alongside `media_ids` (Task 28) — present only when
+             * `posts.media` was eager-loaded server-side, which it
+             * always is on this endpoint. `PostEditorModal.vue` feeds
+             * this into `useMediaStore().hydrate()` on load so
+             * `ThreadEditor.vue`'s attached-media thumbnails and
+             * `MediaPicker.vue`'s "already selected" state resolve
+             * correctly for media the picker itself may never have
+             * paged through.
+             */
+            media?: MediaItem[];
             order: number;
             parent_post_id: string | null;
             state: string;

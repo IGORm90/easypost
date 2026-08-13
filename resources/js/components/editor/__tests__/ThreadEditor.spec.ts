@@ -1,6 +1,29 @@
 import { mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import ThreadEditor from '../ThreadEditor.vue';
+import MediaPicker from '../../media/MediaPicker.vue';
+import { useMediaStore } from '../../../stores/media';
+import { i18n } from '../../../i18n';
 import type { ProviderCapabilities } from '../../../stores/integrations';
+
+function removeMediaLabel(): string {
+    return i18n.global.t('editor.thread.removeMedia');
+}
+
+const get = vi.fn();
+
+vi.mock('../../../api/client', () => ({
+    api: { get: (...args: unknown[]) => get(...args) },
+}));
+
+// Task 29: ThreadEditor now opens a MediaPicker (per segment), which
+// reads useMediaStore() — needs an active Pinia instance to mount at
+// all, same as every other store-backed component's spec.
+beforeEach(() => {
+    setActivePinia(createPinia());
+    get.mockReset();
+    get.mockResolvedValue({ data: { data: [], meta: { current_page: 1, last_page: 1 } } });
+});
 
 function capabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
     return {
@@ -134,4 +157,72 @@ it('typing in a segment updates the model at that index without touching the oth
 
     const next = w.emitted('update:modelValue')![0][0] as Array<{ content: string }>;
     expect(next).toEqual([{ content: 'root', media_ids: [] }, { content: 'edited reply', media_ids: [] }]);
+});
+
+it('clicking a segment\'s "attach media" button opens the picker scoped to that segment', async () => {
+    const w = mount(ThreadEditor, {
+        props: { modelValue: segments('root', 'reply'), capabilities: capabilities(), label: 'Bluesky' },
+        attachTo: document.body,
+    });
+
+    // Modal is teleported to <body>, but not rendered while closed.
+    expect(document.body.querySelector('[data-testid="media-picker-confirm"]')).toBeFalsy();
+
+    await w.get('[data-testid="media-attach-1"]').trigger('click');
+    await Promise.resolve();
+
+    expect(document.body.querySelector('[data-testid="media-picker-confirm"]')).toBeTruthy();
+
+    w.unmount();
+});
+
+it('confirming the picker writes media_ids onto the segment it was opened for, not another one', async () => {
+    const w = mount(ThreadEditor, {
+        props: { modelValue: segments('root', 'reply'), capabilities: capabilities(), label: 'Bluesky' },
+    });
+
+    await w.get('[data-testid="media-attach-1"]').trigger('click');
+    await Promise.resolve();
+
+    const picker = w.findComponent(MediaPicker);
+    picker.vm.$emit('update:modelValue', ['med-x', 'med-y']);
+    await w.vm.$nextTick();
+
+    const next = w.emitted('update:modelValue')!.at(-1)![0] as Array<{ content: string; media_ids: string[] }>;
+    expect(next[0].media_ids).toEqual([]);
+    expect(next[1].media_ids).toEqual(['med-x', 'med-y']);
+});
+
+it('removing an attached media chip filters that id out of the segment and emits', async () => {
+    const store = useMediaStore();
+    store.$patch({
+        items: [
+            {
+                id: 'med-a',
+                url: 'https://cdn.example.com/a.jpg',
+                thumbnail_url: 'https://cdn.example.com/a-thumb.jpg',
+                mime: 'image/jpeg',
+                size_bytes: 100,
+                width: 800,
+                height: 600,
+                original_filename: 'a.jpg',
+                created_at: '',
+            },
+        ],
+    });
+
+    const withMedia = segments('root');
+    withMedia[0].media_ids = ['med-a', 'med-b'];
+
+    const w = mount(ThreadEditor, {
+        props: { modelValue: withMedia, capabilities: capabilities(), label: 'Bluesky' },
+    });
+
+    expect(w.find('img[alt="a.jpg"]').exists()).toBe(true);
+
+    const removeButtons = w.findAll('button[aria-label]').filter((btn) => btn.attributes('aria-label') === removeMediaLabel());
+    await removeButtons[0].trigger('click');
+
+    const next = w.emitted('update:modelValue')![0][0] as Array<{ media_ids: string[] }>;
+    expect(next[0].media_ids).toEqual(['med-b']);
 });

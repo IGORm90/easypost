@@ -6,6 +6,7 @@
         "toggleTheme": "Toggle theme",
         "menu": "Menu",
         "channels": "Channels",
+        "media": "Media",
         "settingsProfile": "Profile",
         "settingsTeam": "Team",
         "logout": "Log out"
@@ -251,7 +252,9 @@
             "rootLabelFor": "Post text ({name})",
             "replyLabel": "Reply {n}",
             "add": "Add to thread",
-            "remove": "Remove"
+            "remove": "Remove",
+            "attachMedia": "Attach media",
+            "removeMedia": "Remove media"
         },
         "counter": {
             "over": "(over by {n})"
@@ -304,6 +307,35 @@
                 "invalidState": "This connection attempt has expired or is invalid. Please try again.",
                 "generic": "Could not connect the channel. Please try again."
             }
+        }
+    },
+    "media": {
+        "title": "Media library",
+        "empty": "No media yet — upload a file or paste a link above.",
+        "search": "Search by filename",
+        "loadMore": "Load more",
+        "loadError": "Could not load the media library. Please try again.",
+        "video": "Video",
+        "uploading": "Uploading…",
+        "delete": "Delete",
+        "deleteConfirm": "Delete this media? This cannot be undone.",
+        "deleteInUse": "This media is still attached to a post that hasn't been published yet. Remove it from that post first.",
+        "deleteFailed": "Could not delete this media. Please try again.",
+        "uploader": {
+            "dropHint": "Drag files here, or",
+            "browse": "Browse files",
+            "constraints": "Images (JPEG, PNG, GIF, WebP) and MP4 video, up to 100 MB each.",
+            "urlPlaceholder": "Paste an image or video URL",
+            "importUrl": "Import",
+            "unsupportedType": "\"{name}\" is not an image or MP4 video and was skipped.",
+            "tooLarge": "\"{name}\" is larger than 100 MB and was skipped.",
+            "uploadFailed": "\"{name}\" failed to upload. Please try again.",
+            "urlImportFailed": "Could not import that URL. Please check it and try again."
+        },
+        "picker": {
+            "title": "Choose media",
+            "selectedCount": "{count} selected",
+            "confirm": "Add to post"
         }
     }
 }

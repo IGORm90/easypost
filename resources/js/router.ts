@@ -8,6 +8,7 @@ import Profile from './pages/Settings/Profile.vue';
 import Team from './pages/Settings/Team.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
+import Media from './pages/Media/Index.vue';
 import Calendar from './pages/Calendar/Index.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import SharedPost from './pages/Public/SharedPost.vue';
@@ -33,6 +34,9 @@ const router = createRouter({
         // it existed.
         { path: '/', name: 'home', component: Calendar, meta: { requiresAuth: true } },
         { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },
+        // Task 29: the media library page — also reachable as the
+        // picker's "manage everything" companion via the sidebar link.
+        { path: '/media', name: 'media', component: Media, meta: { requiresAuth: true } },
         // `INTEGRATIONS_REDIRECT_URL` (config/services.php) points every
         // OAuth provider's redirect at this exact path — see
         // pages/Integrations/Callback.vue's docblock. requiresAuth: true

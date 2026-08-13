@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '../ui/Button.vue';
 import ContentTextarea from './ContentTextarea.vue';
 import ValidationHints from './ValidationHints.vue';
+import MediaPicker from '../media/MediaPicker.vue';
+import { useMediaStore } from '../../stores/media';
 import type { PostSegment, ProviderCapabilities } from './types';
 
 /**
@@ -13,6 +15,15 @@ import type { PostSegment, ProviderCapabilities } from './types';
  * comes from that one channel's own provider, so `supportsThreads` /
  * `maxThreadLength` / `maxCharacters` gate this exact instance's "+"
  * button and counters — never a value shared across channels.
+ *
+ * Task 29: each segment gets its own "attach media" trigger, opening a
+ * single shared `MediaPicker` instance scoped to whichever segment's
+ * index is in `pickerSegmentIndex` — never one `MediaPicker` per
+ * segment, since only one can sensibly be open at a time and each is a
+ * full modal with its own fetch/upload state. `capabilities` (this same
+ * channel's own) is passed straight through, so the picker's
+ * best-effort selection limit matches this thread's actual provider,
+ * never a shared constant.
  */
 const props = withDefaults(
     defineProps<{
@@ -34,6 +45,39 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [PostSegment[]] }>();
 
 const { t } = useI18n();
+const mediaStore = useMediaStore();
+
+const pickerSegmentIndex = ref<number | null>(null);
+
+function resolveMedia(id: string) {
+    return mediaStore.items.find((item) => item.id === id);
+}
+
+function attachMedia(index: number): void {
+    pickerSegmentIndex.value = index;
+}
+
+function removeMedia(index: number, mediaId: string): void {
+    const next = props.modelValue.map((segment, i) =>
+        i === index ? { ...segment, media_ids: segment.media_ids.filter((id) => id !== mediaId) } : segment,
+    );
+    emit('update:modelValue', next);
+}
+
+function onPickerConfirm(mediaIds: string[]): void {
+    if (pickerSegmentIndex.value === null) {
+        return;
+    }
+
+    const index = pickerSegmentIndex.value;
+    const next = props.modelValue.map((segment, i) => (i === index ? { ...segment, media_ids: mediaIds } : segment));
+    emit('update:modelValue', next);
+    pickerSegmentIndex.value = null;
+}
+
+const activeSegmentMediaIds = computed(() =>
+    pickerSegmentIndex.value !== null ? (props.modelValue[pickerSegmentIndex.value]?.media_ids ?? []) : [],
+);
 
 const canAddSegment = computed(
     () =>
@@ -65,7 +109,7 @@ function removeSegment(index: number): void {
 <template>
     <div class="flex flex-col gap-4">
         <div v-for="(segment, index) in modelValue" :key="index" class="flex items-start gap-2">
-            <div class="flex-1">
+            <div class="flex flex-1 flex-col gap-1.5">
                 <ContentTextarea
                     :id="`thread-segment-${index}`"
                     :model-value="segment.content"
@@ -76,6 +120,37 @@ function removeSegment(index: number): void {
                     :testid="`counter-${index}`"
                     @update:model-value="updateSegment(index, $event)"
                 />
+
+                <div class="flex flex-wrap items-center gap-1.5">
+                    <div
+                        v-for="mediaId in segment.media_ids"
+                        :key="mediaId"
+                        class="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border bg-surface-2"
+                    >
+                        <img
+                            v-if="resolveMedia(mediaId)?.thumbnail_url"
+                            :src="resolveMedia(mediaId)!.thumbnail_url!"
+                            :alt="resolveMedia(mediaId)!.original_filename"
+                            class="h-full w-full object-cover"
+                        />
+                        <button
+                            type="button"
+                            class="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-surface/90 text-[10px] text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            :aria-label="t('editor.thread.removeMedia')"
+                            @click="removeMedia(index, mediaId)"
+                        >
+                            &times;
+                        </button>
+                    </div>
+                    <Button
+                        :data-testid="`media-attach-${index}`"
+                        variant="ghost"
+                        type="button"
+                        @click="attachMedia(index)"
+                    >
+                        {{ t('editor.thread.attachMedia') }}
+                    </Button>
+                </div>
             </div>
             <Button
                 v-if="modelValue.length > 1"
@@ -107,5 +182,13 @@ function removeSegment(index: number): void {
         </div>
 
         <ValidationHints :capabilities="capabilities" :thread-length="modelValue.length" :errors="errors[-1]" />
+
+        <MediaPicker
+            :open="pickerSegmentIndex !== null"
+            :model-value="activeSegmentMediaIds"
+            :capabilities="capabilities"
+            @update:model-value="onPickerConfirm"
+            @close="pickerSegmentIndex = null"
+        />
     </div>
 </template>
