@@ -56,17 +56,15 @@ class PostGroupResource extends JsonResource
 
     /**
      * The channel-level `settings` sent on `posts[].settings` in the
-     * request — everything stored on the row except the per-segment
-     * `media_ids` key PostGroupService folds in alongside it (see that
-     * class's docblock).
+     * request, stored verbatim on the row's own `settings` column.
+     * Per-segment `media_ids` lives in the real `media_post` pivot as of
+     * Task 28 (see PostGroupService's docblock), not inside this jsonb
+     * column, so there is nothing to strip out here anymore.
      *
      * @return array<string, mixed>
      */
     private function channelSettings(Post $root): array
     {
-        $settings = $root->settings ?? [];
-        unset($settings['media_ids']);
-
-        return $settings;
+        return $root->settings ?? [];
     }
 }

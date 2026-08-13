@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -130,5 +131,22 @@ class Post extends Model
     public function children(): HasMany
     {
         return $this->hasMany(Post::class, 'parent_post_id')->orderBy('order');
+    }
+
+    /**
+     * This segment's attached media, in the order they should be
+     * rendered/sent — see the `media_post` pivot's `order` column
+     * (Task 28 migration). `orderByPivot` reads back exactly the order
+     * PostGroupService wrote, never insertion/primary-key order, which
+     * is not the same thing and not something Postgres guarantees
+     * anyway without an explicit ORDER BY.
+     *
+     * @return BelongsToMany<Media, $this>
+     */
+    public function media(): BelongsToMany
+    {
+        return $this->belongsToMany(Media::class, 'media_post')
+            ->withPivot('order')
+            ->orderByPivot('order');
     }
 }

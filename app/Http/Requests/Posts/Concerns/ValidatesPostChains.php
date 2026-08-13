@@ -3,10 +3,13 @@
 namespace App\Http\Requests\Posts\Concerns;
 
 use App\Models\Integration;
+use App\Models\Media;
 use App\Services\Posts\PostValidationService;
+use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Support\OrganizationContext;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -45,17 +48,25 @@ use Illuminate\Validation\Validator;
  * any `integration_id` it cannot resolve within the current tenant,
  * leaving that case entirely to the service.
  *
- * `media_ids`: shape-checked only (must be well-formed ULIDs), NOT
- * existence- or ownership-checked. There is no `media` table yet (Task
- * 28 owns it), so nothing here can confirm a given id refers to a real
- * attachment, let alone one belonging to this organization. Every
- * `media_ids` value that reaches PostGroupService, and everything read
- * back out of `settings->media_ids` by PostResource, must therefore be
- * treated as UNVERIFIED CLIENT INPUT — Task 28 must re-validate
- * existence and organization ownership before trusting any of it (e.g.
- * before joining on it, or before handing it to a provider upload
- * call). Scoping it to the current organization here is not possible
- * without the `Media` model/table to scope against.
+ * `media_ids` (Task 28): shape (`ulid`) AND existence/ownership are both
+ * checked right here, same pattern StoreSetRequest uses for
+ * `integration_ids` — `Rule::exists('media', 'id')->where('organization_id',
+ * ...)` rules out any id that doesn't exist at all, or exists but
+ * belongs to another organization, as a normal 422 before this class's
+ * `after()` hook (and, downstream, PostGroupService) ever sees it. This
+ * closes the gap the task-20/23 review left open: an unscoped
+ * `exists:media,id` (the pattern used for `integration_id` above,
+ * deliberately deferred to a 403 in the service layer) would let a
+ * cross-tenant media id resolve into a real, private file being
+ * attached to this organization's post with no error at all.
+ *
+ * `validateChannelLimits()` below resolves the same scoped `Media` rows
+ * a second time (once the structural rules above have already proven
+ * every id is real and owned) to build actual `MediaDto`s for
+ * PostValidationService — the only way its `maxImages`/`maxVideos`/
+ * `allowedMimeTypes`/`maxFileSizeBytes`/`requiresAltText` checks become
+ * reachable in practice rather than permanently validating an empty
+ * `media: []` array.
  */
 trait ValidatesPostChains
 {
@@ -80,9 +91,13 @@ trait ValidatesPostChains
             'posts.*.value' => ['required', 'array', 'min:1'],
             'posts.*.value.*.content' => ['required', 'string'],
             'posts.*.value.*.media_ids' => ['sometimes', 'array'],
-            // 'ulid': shape only — see this trait's docblock ("media_ids")
-            // for why existence/ownership cannot be checked here.
-            'posts.*.value.*.media_ids.*' => ['string', 'ulid'],
+            // ulid shape + existence/ownership, both enforced here — see
+            // this trait's docblock ("media_ids").
+            'posts.*.value.*.media_ids.*' => [
+                'string',
+                'ulid',
+                Rule::exists('media', 'id')->where('organization_id', OrganizationContext::id()),
+            ],
         ];
     }
 
@@ -148,6 +163,7 @@ trait ValidatesPostChains
     {
         /** @var PostValidationService $service */
         $service = app(PostValidationService::class);
+        $mediaById = $this->resolveReferencedMedia();
 
         foreach ((array) $this->input('posts', []) as $i => $item) {
             $integrationId = $item['integration_id'] ?? null;
@@ -166,7 +182,10 @@ trait ValidatesPostChains
             }
 
             $chain = array_map(
-                fn (array $segment): PostPayloadDto => new PostPayloadDto(content: (string) ($segment['content'] ?? '')),
+                fn (array $segment): PostPayloadDto => new PostPayloadDto(
+                    content: (string) ($segment['content'] ?? ''),
+                    media: $this->resolveSegmentMedia($segment, $mediaById),
+                ),
                 (array) ($item['value'] ?? []),
             );
 
@@ -174,6 +193,65 @@ trait ValidatesPostChains
                 $validator->errors()->add($this->fieldFor((int) $i, $error), $error['message']);
             }
         }
+    }
+
+    /**
+     * Every `media_ids` value referenced anywhere in the payload,
+     * resolved to its `Media` row in one query — scoped to the current
+     * organization by `Media`'s own `BelongsToOrganization` global
+     * scope, same as every other org-scoped lookup in this codebase. By
+     * the time this runs, the `exists`-with-organization-scope rule in
+     * `chainRules()` has already proven every id here both exists and
+     * belongs to this organization (see `applyChainValidation()`'s
+     * early return on structural errors), so this is a plain lookup,
+     * not a second ownership check.
+     *
+     * @return Collection<string, Media>
+     */
+    private function resolveReferencedMedia(): Collection
+    {
+        $ids = [];
+
+        foreach ((array) $this->input('posts', []) as $item) {
+            foreach ((array) ($item['value'] ?? []) as $segment) {
+                foreach ((array) ($segment['media_ids'] ?? []) as $id) {
+                    if (is_string($id)) {
+                        $ids[] = $id;
+                    }
+                }
+            }
+        }
+
+        if ($ids === []) {
+            return collect();
+        }
+
+        return Media::query()->whereIn('id', array_unique($ids))->get()->keyBy('id');
+    }
+
+    /**
+     * @param  array{media_ids?: list<string>}  $segment
+     * @param  Collection<string, Media>  $mediaById
+     * @return list<MediaDto>
+     */
+    private function resolveSegmentMedia(array $segment, Collection $mediaById): array
+    {
+        $media = [];
+
+        foreach ((array) ($segment['media_ids'] ?? []) as $id) {
+            $row = $mediaById->get($id);
+
+            if ($row instanceof Media) {
+                // Media::toDto() is the only place that constructs a
+                // MediaDto from a stored row — $sizeBytes/$mimeType/$path
+                // come straight off the persisted, upload-time-captured
+                // columns, never re-derived from disk. See that method's
+                // docblock.
+                $media[] = $row->toDto();
+            }
+        }
+
+        return $media;
     }
 
     /**

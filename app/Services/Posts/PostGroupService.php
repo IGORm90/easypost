@@ -22,32 +22,18 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  * things validation doesn't cover: authorization, state, and the
  * tree/transaction mechanics.
  *
- * media_ids: Task 28 (media attachment) hasn't landed, so there is no
- * `media` table to resolve `value[].media_ids` against. Rather than
- * silently drop it (which would break Task 24/25's round-trip contract:
- * GET must echo back what PUT accepts), each segment's `media_ids` is
- * folded into that row's own `settings` jsonb under the `media_ids` key,
- * alongside the channel-level settings the request sent on
- * `posts[].settings`. PostResource/PostGroupResource read it back out
- * from there. This is a deliberate, temporary placeholder: once Task 28
- * adds real media records, resolving `media_ids` into actual attachments
- * (and validating them via PostValidationService's MediaDto checks,
- * currently unreachable from this class since every chain here is built
- * with empty `media` — see StorePostRequest) becomes that task's job, not
- * a rewrite of this storage decision.
+ * media_ids (Task 28): each segment's `media_ids` is persisted for real,
+ * as ordered rows in the `media_post` pivot (`Post::media()`) —
+ * `replaceChains()`/`attachMedia()` below write `{media_id, post_id,
+ * order}` for every id, in the exact order the client sent, once the
+ * `Post` row itself exists. This is no longer a `settings` jsonb
+ * placeholder (Task 20's original stand-in, since retired): by the time
+ * this class runs, `ValidatesPostChains`' `Rule::exists('media',
+ * 'id')->where('organization_id', ...)` has already proven every id both
+ * exists and belongs to the current organization, so nothing here is
+ * unverified client input needing a second ownership check — see that
+ * trait's docblock.
  *
- * UNVERIFIED CLIENT INPUT: ValidatesPostChains only checks that each
- * `media_ids` entry is a well-formed ULID string — it is never checked
- * for existence or organization ownership here (no `Media` table exists
- * to check against). Every value stored in `settings->media_ids` by
- * `buildSegmentSettings()` below is therefore exactly what the client
- * sent, unverified. Task 28 MUST re-validate existence and organization
- * ownership before trusting any id read back out of this column — e.g.
- * before joining on it or resolving it to a real file — since a value
- * from another organization's media could otherwise be attached here
- * with no error.
- *
-
  * Editability rule (the brief's central question): a group may be
  * replaced (PUT) or deleted only while NONE of its Post rows carry a
  * `release_id` — i.e. nothing in it has actually gone out to a network
@@ -102,7 +88,7 @@ class PostGroupService
                 $group->tags()->sync($data['tags'] ?? []);
             }
 
-            return $group->fresh(['posts', 'tags']);
+            return $group->fresh(['posts.media', 'tags']);
         });
     }
 
@@ -135,7 +121,7 @@ class PostGroupService
                 $group->tags()->sync($data['tags'] ?? []);
             }
 
-            return $group->fresh(['posts', 'tags']);
+            return $group->fresh(['posts.media', 'tags']);
         });
     }
 
@@ -154,7 +140,7 @@ class PostGroupService
                 'publish_date' => $source->publish_date,
             ]);
 
-            $source->loadMissing('posts', 'tags');
+            $source->loadMissing('posts', 'posts.media', 'tags');
 
             // posts() is ordered by `order` ascending; within any one
             // chain a parent's order is always strictly less than its
@@ -177,12 +163,19 @@ class PostGroupService
                     'state' => PostState::DRAFT,
                 ]);
 
+                // Media attachments are copied along with the segment,
+                // same order preserved (`$post->media` is already
+                // ordered by the pivot's `order` column — see
+                // Post::media()) — a duplicate is a full copy of the
+                // content, not a copy missing its images.
+                $this->attachMedia($copy, $post->media->pluck('id')->all());
+
                 $idMap[$post->id] = $copy->id;
             }
 
             $group->tags()->sync($source->tags->pluck('id'));
 
-            return $group->fresh(['posts', 'tags']);
+            return $group->fresh(['posts.media', 'tags']);
         });
     }
 
@@ -321,9 +314,11 @@ class PostGroupService
                     'parent_post_id' => $parentId,
                     'order' => $index,
                     'content' => $segment['content'],
-                    'settings' => $this->buildSegmentSettings($item['settings'] ?? [], $segment['media_ids'] ?? []),
+                    'settings' => $item['settings'] ?? [],
                     'state' => $rowState,
                 ]);
+
+                $this->attachMedia($post, $segment['media_ids'] ?? []);
 
                 $parentId = $post->id;
             }
@@ -331,12 +326,28 @@ class PostGroupService
     }
 
     /**
-     * @param  array<string, mixed>|null  $channelSettings
+     * Writes `$mediaIds` into the `media_post` pivot for `$post`, one row
+     * per id, `order` set to the id's own position in the array —
+     * exactly the order the client sent (or, from duplicate(), the
+     * order the source segment already had). This is the single place
+     * that decides what "order" means for a segment's media: not
+     * insertion order, not the pivot rows' own primary key order,
+     * always this explicit column — see the migration's docblock and
+     * Post::media()'s `orderByPivot('order')`.
+     *
      * @param  list<string>  $mediaIds
-     * @return array<string, mixed>
      */
-    private function buildSegmentSettings(?array $channelSettings, array $mediaIds): array
+    private function attachMedia(Post $post, array $mediaIds): void
     {
-        return [...($channelSettings ?? []), 'media_ids' => $mediaIds];
+        if ($mediaIds === []) {
+            return;
+        }
+
+        $pivotRows = [];
+        foreach ($mediaIds as $order => $mediaId) {
+            $pivotRows[$mediaId] = ['order' => $order];
+        }
+
+        $post->media()->attach($pivotRows);
     }
 }

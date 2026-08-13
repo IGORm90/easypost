@@ -2,11 +2,11 @@
 
 use App\Enums\PostState;
 use App\Models\Integration;
+use App\Models\Media;
 use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Models\Tag;
-use Illuminate\Support\Str;
 
 /*
  * Task 20: POST /api/posts — one post_group per request, one Post row
@@ -201,26 +201,25 @@ it('attaches the given tags to the new group', function () {
     expect($group->tags->pluck('id')->all())->toBe([$tag->id]);
 });
 
-it('accepts well-formed ULIDs in media_ids and stores them verbatim (shape-only, unverified)', function () {
+it('accepts a well-formed, owned media id and persists it to the media_post pivot', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
-    $mediaId = (string) Str::ulid();
+    $media = Media::factory()->for($org)->create();
 
     $response = $this->postJson('/api/posts', [
         'type' => 'draft',
         'posts' => [
-            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => [$mediaId]]]],
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => [$media->id]]]],
         ],
     ]);
 
     $response->assertCreated();
-    // Task 28 must re-validate existence/ownership before trusting this
-    // — see ValidatesPostChains' and PostGroupService's docblocks
-    // ("UNVERIFIED CLIENT INPUT"). This only proves the shape check
-    // accepted a well-formed id and it round-trips.
-    $response->assertJsonPath('posts.0.value.0.media_ids.0', $mediaId);
-    expect(Post::sole()->settings['media_ids'])->toBe([$mediaId]);
+    // Task 28: media_ids is now re-validated for existence and
+    // organization ownership (see PostMediaTest for the 422 cases) and
+    // persisted to the real media_post pivot, not settings jsonb.
+    $response->assertJsonPath('posts.0.value.0.media_ids.0', $media->id);
+    expect(Post::sole()->media()->pluck('media.id')->all())->toBe([$media->id]);
 });
 
 it('rejects a malformed media id', function () {

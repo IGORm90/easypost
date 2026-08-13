@@ -64,7 +64,7 @@ class PostController extends Controller
     {
         $group = $this->findAuthorized($group, 'view');
 
-        return response()->json(new PostGroupResource($group->load(['posts', 'tags'])));
+        return response()->json(new PostGroupResource($group->load(['posts.media', 'tags'])));
     }
 
     public function update(UpdatePostRequest $request, string $group): JsonResponse
@@ -96,7 +96,7 @@ class PostController extends Controller
         $group = $this->findAuthorized($group, 'manage');
         $group = $this->groups->updateDate($group, $request->date('publish_date'));
 
-        return response()->json(new PostGroupResource($group->load(['posts', 'tags'])));
+        return response()->json(new PostGroupResource($group->load(['posts.media', 'tags'])));
     }
 
     /**
