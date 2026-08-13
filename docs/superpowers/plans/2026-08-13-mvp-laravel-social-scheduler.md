@@ -832,6 +832,7 @@ final readonly class MediaDto {
         public string $mimeType,
         public ?string $altText = null,
         public ?string $remoteId = null,    // хэндл, выданный провайдером в uploadMedia()
+        public ?int $sizeBytes = null,      // размер, зафиксированный при загрузке; НЕ читать с диска при валидации
     ) {}
     public function withRemoteId(string $remoteId): self { /* immutable clone */ }
 }
