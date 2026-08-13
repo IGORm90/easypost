@@ -43,10 +43,3 @@ parameters:
             message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
             path: tests/Feature/Media/UploadMediaTest.php
 
-        # Same known, accepted blind spot as directly above — Task 30's
-        # PublishPostJobTest partial-mocks PublishPostJob the same way
-        # RefreshIntegrationTokenJobTest partial-mocks RefreshIntegrationTokenJob,
-        # to assert release()/with() without a real queue connection.
-        -
-            message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
-            path: tests/Feature/Publishing/PublishPostJobTest.php

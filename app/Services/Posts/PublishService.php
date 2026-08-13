@@ -145,6 +145,17 @@ use Illuminate\Support\Facades\DB;
  */
 class PublishService
 {
+    /**
+     * How far `publish_date` may sit in the future before
+     * `lockGroupIfQueued()` treats a job as "not due yet" and exits
+     * without acting, rather than "close enough, publish now". See that
+     * method's docblock — this is the fix for a rescheduled post
+     * publishing at its OLD time (review finding 1): a small allowance
+     * for normal queue/dispatch latency around the exact instant, not a
+     * window a caller could exploit to jump the queue.
+     */
+    private const int PUBLISH_DATE_GRACE_SECONDS = 5;
+
     public function __construct(
         private readonly ProviderRegistry $registry,
         private readonly PostStateMachine $stateMachine,
@@ -170,6 +181,7 @@ class PublishService
 
         foreach ($chains as $integrationId => $posts) {
             [$channelNeedsRetry, $channelRetryAfterSeconds] = $this->publishChannel(
+                $group->id,
                 (string) $integrationId,
                 $posts,
             );
@@ -195,12 +207,70 @@ class PublishService
     }
 
     /**
-     * Locks and returns the group iff it is currently `QUEUE`; returns
-     * null (and does nothing else) otherwise. `withoutGlobalScope('organization')`
-     * because this runs with no `OrganizationContext` — see class
-     * docblock. Deliberately its own short transaction, not the one
-     * wrapping the whole run — see the class docblock's "why the
-     * group-level lock is short" section.
+     * The other half of "a job that fires against a stale schedule must
+     * never publish" (review finding 1): everything still `QUEUE` in
+     * `$postGroupId` moves to `ERROR` with `$reason`, and the group is
+     * finalized. Called from `PublishPostJob::failed()` once retries are
+     * exhausted (see that class) — without this, a group that never
+     * manages to publish sits at `QUEUE` forever with no error recorded
+     * anywhere, which the calendar/API render identically to "still
+     * scheduled, nothing wrong yet" (review finding 3).
+     *
+     * A no-op if the group is no longer `QUEUE` by the time this runs —
+     * e.g. a run that was mid-flight when the job's LAST attempt failed
+     * already published or errored some/all channels and finalized the
+     * group itself; nothing here should second-guess that outcome.
+     */
+    public function abandonGroup(string $postGroupId, string $reason): void
+    {
+        DB::transaction(function () use ($postGroupId, $reason): void {
+            /** @var PostGroup|null $group */
+            $group = PostGroup::withoutGlobalScope('organization')
+                ->whereKey($postGroupId)
+                ->lockForUpdate()
+                ->first();
+
+            if ($group === null || $group->state !== PostState::QUEUE) {
+                return;
+            }
+
+            $stillPending = Post::withoutGlobalScope('organization')
+                ->where('post_group_id', $group->id)
+                ->whereNull('release_id')
+                ->where('state', PostState::QUEUE->value)
+                ->get();
+
+            $this->markAllError($stillPending, $reason);
+
+            $this->finalizeGroupState($group);
+        });
+    }
+
+    /**
+     * Locks and returns the group iff it is currently `QUEUE` AND due —
+     * `publish_date` is not materially in the future (see
+     * `PUBLISH_DATE_GRACE_SECONDS`); returns null (and does nothing else)
+     * for anything else. `withoutGlobalScope('organization')` because
+     * this runs with no `OrganizationContext` — see class docblock.
+     * Deliberately its own short transaction, not the one wrapping the
+     * whole run — see the class docblock's "why the group-level lock is
+     * short" section.
+     *
+     * The due-date check is what makes a STALE job — one dispatched for
+     * an old `publish_date` that `PostGroupService::updateDate()`/
+     * `update()` has since moved into the future — harmless regardless
+     * of whether a fresh job was ever successfully dispatched for the
+     * new date (review finding 1: `ShouldBeUnique`'s lock can very
+     * plausibly have already expired between the original dispatch and
+     * the reschedule, so a redispatch is not guaranteed to happen, but a
+     * stale job picking the group up early must never be able to publish
+     * it regardless). A job that returns here because its group isn't
+     * due yet does nothing further — no retry, no error — since either a
+     * fresh job is on the way for the correct time, or (the one residual
+     * gap this does not close) none was dispatched at all and nothing
+     * will publish this group until something else touches it. That gap
+     * is a missed-publish failure mode, not a duplicate-publish one, and
+     * is called out in this task's report.
      */
     private function lockGroupIfQueued(string $postGroupId): ?PostGroup
     {
@@ -212,6 +282,13 @@ class PublishService
                 ->first();
 
             if ($group === null || $group->state !== PostState::QUEUE) {
+                return null;
+            }
+
+            if (
+                $group->publish_date !== null
+                && $group->publish_date->isAfter(now()->addSeconds(self::PUBLISH_DATE_GRACE_SECONDS))
+            ) {
                 return null;
             }
 
@@ -248,10 +325,10 @@ class PublishService
      * provider failure, since a failing channel must never stop the
      * group's other channels from being attempted (brief point 7).
      *
-     * @param  Collection<int, Post>  $posts  This channel's full chain, in order (published and unpublished).
+     * @param  Collection<int, Post>  $posts  This channel's full chain, in order (published and unpublished) — a snapshot taken BEFORE the transaction below, used only to derive which ids are candidates; never trusted for anything that decides what gets sent to the provider (see the anchor note below).
      * @return array{0: bool, 1: ?int}
      */
-    private function publishChannel(string $integrationId, Collection $posts): array
+    private function publishChannel(string $postGroupId, string $integrationId, Collection $posts): array
     {
         $pending = $posts
             ->filter(fn (Post $post): bool => $post->release_id === null && $post->state === PostState::QUEUE)
@@ -265,7 +342,7 @@ class PublishService
             return [false, null];
         }
 
-        return DB::transaction(function () use ($integrationId, $posts, $pending): array {
+        return DB::transaction(function () use ($postGroupId, $integrationId, $pending): array {
             // Re-lock exactly the rows about to be published, inside the
             // SAME transaction as the provider call and its persistence
             // — see the class docblock's idempotency section, point 4.
@@ -298,22 +375,53 @@ class PublishService
 
             $provider = $this->registry->get($integration->provider_identifier);
 
-            $anchor = $posts
-                ->filter(fn (Post $post): bool => $post->release_id !== null)
-                ->sortByDesc('order')
-                ->first()
-                ?->release_id;
+            // Re-read INSIDE this transaction, after the row lock above
+            // has resolved — never from the pre-transaction $posts
+            // snapshot (review finding 2). A concurrent run for this
+            // exact channel can only ever be another instance blocked on
+            // the SAME lockForUpdate() above; by the time this SELECT
+            // runs, any such instance has either committed (so this
+            // query sees its freshly-published prefix) or rolled back
+            // (nothing changed). Trusting the pre-lock snapshot instead
+            // would leave $anchor null after a concurrent partial
+            // success, and the next segment would go out as a fresh,
+            // DETACHED root — exactly the duplicate-thread outcome
+            // PostPayloadDto's docblock calls the worst one.
+            $anchor = Post::withoutGlobalScope('organization')
+                ->where('post_group_id', $postGroupId)
+                ->where('integration_id', $integrationId)
+                ->whereNotNull('release_id')
+                ->orderByDesc('order')
+                ->value('release_id');
 
             $chain = $this->buildChain($pending, $anchor);
 
             try {
                 $results = $provider->post($integration, $chain);
 
+                // array_key_exists(), not isset()/direct indexing
+                // (review Minor 6): a provider returning a short array —
+                // a contract violation `SocialProviderInterface::post()`
+                // forbids but this class must not simply trust — must
+                // NEVER throw here. Throwing after the provider call
+                // already returned would unwind this transaction and
+                // discard every release_id already resolved from
+                // $results for a chain segment that IS already live on
+                // the network, turning a provider bug into a duplicate
+                // publish on the very next run. Missing indices are
+                // instead treated exactly like a partial failure: left
+                // untouched (still QUEUE), retried later with the
+                // correct anchor once resolved.
+                $allResolved = true;
                 foreach ($pending as $index => $post) {
-                    $this->markPublished($post, $results[$index]);
+                    if (array_key_exists($index, $results)) {
+                        $this->markPublished($post, $results[$index]);
+                    } else {
+                        $allResolved = false;
+                    }
                 }
 
-                return [false, null];
+                return [! $allResolved, null];
             } catch (ProviderPartialFailureException $e) {
                 foreach ($pending as $index => $post) {
                     if (isset($e->published[$index])) {

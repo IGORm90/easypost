@@ -201,12 +201,30 @@ class PostGroupService
         });
     }
 
+    /**
+     * The calendar's drag-and-drop endpoint (`PATCH .../date`). Fixed
+     * post-review (finding 1): moving `publish_date` here used to
+     * dispatch nothing, leaving whatever `PublishPostJob` was already
+     * queued for the OLD date to fire at the old time regardless — for a
+     * `QUEUE` group, that meant a rescheduled post being published early,
+     * at the time it was originally scheduled for rather than the new
+     * one. `dispatchPublishIfQueued()` below is a no-op for a `draft`
+     * group (same guard `create()`/`update()` use), so this stays safe
+     * to call unconditionally.
+     *
+     * This does not, by itself, guarantee the new date's job actually
+     * gets enqueued — see `PublishService::lockGroupIfQueued()`'s
+     * docblock for why that guard, not this redispatch, is the half of
+     * the fix that makes a stale job harmless regardless.
+     */
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
         $this->guardEditable($group);
 
         $group->publish_date = $publishDate;
         $group->save();
+
+        $this->dispatchPublishIfQueued($group);
 
         return $group;
     }

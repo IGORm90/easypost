@@ -10,11 +10,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Throwable;
 
 /**
  * Publishes one `PostGroup` to every channel it was scheduled to.
  * Dispatched by `PostGroupService` with `->delay($group->publish_date)`
- * whenever a group enters `QUEUE` (create or update) — see that class.
+ * whenever a group enters `QUEUE` (create, update, or a date change) —
+ * see that class.
  *
  * Deliberately thin: carries only the group's id (a plain string, not
  * the model — `SerializesModels` would rehydrate it via
@@ -27,7 +29,15 @@ use Illuminate\Queue\SerializesModels;
  * class's docblock for the full idempotency accounting. This job's only
  * job is translating `PublishService`'s one signal that crosses the
  * service/queue boundary (`PublishRetryNeededException`) into a
- * `release()` call, since only a queued job instance can do that.
+ * `release()` call, since only a queued job instance can do that, plus
+ * recording the "retries exhausted" outcome via `failed()` below.
+ *
+ * `final`: this class is partial-mocked by nothing (see
+ * `PublishPostJobTest`, which drives `release()`/`attempts()` via the
+ * framework's own `InteractsWithQueue::withFakeQueueInteractions()` +
+ * `assertReleased()` instead of `Mockery::mock(...)->makePartial()`) —
+ * an earlier revision dropped `final` to accommodate a Mockery partial
+ * mock; that was unnecessary and is reverted.
  *
  * ShouldBeUnique, keyed on the group id ($uniqueId()): the primary
  * defence against two instances of this job running the SAME group
@@ -37,12 +47,7 @@ use Illuminate\Queue\SerializesModels;
  * `Integration`. $tries/$backoff/$uniqueFor below are the literal values
  * this task's brief specifies (reproduced verbatim, not derived, unlike
  * `RefreshIntegrationTokenJob`'s schedule-derived numbers) — 4 attempts,
- * gaps of 1m/5m/15m between them (worst case 1260s), and a 3600s (1h)
- * unique-lock TTL that comfortably covers that worst case plus real
- * queue/HTTP latency for every attempt, so the lock cannot expire mid-
- * retry and let `ScheduleTokenRefresh`-style re-dispatch (nothing does
- * that for this job today, but the margin costs nothing) race a still-
- * retrying instance.
+ * gaps of 1m/5m/15m between them, and a 3600s (1h) unique-lock TTL.
  *
  * Retry semantics under this project's queue driver (QUEUE_CONNECTION=redis):
  * `release()` DOES consume one of $tries — `LuaScripts::pop()` increments
@@ -59,32 +64,41 @@ use Illuminate\Queue\SerializesModels;
  *    unique lock released, the job deleted, nothing in `failed_jobs`, no
  *    `JobFailed` event. That is harmless for a token refresh with an
  *    hourly self-healing re-enumeration behind it; it would be silent
- *    data loss here — a real customer post left unpublished with no
- *    record anywhere that anything went wrong. This job therefore always
- *    calls `release()` on `PublishRetryNeededException`, on every
- *    attempt including the last. Laravel's own `Worker` — not this
- *    class — is what stops the retry loop: the moment a redelivered
- *    attempt is popped with `attempts() > $tries`, the worker marks the
- *    job FAILED without calling `handle()` again, which DOES write to
- *    `failed_jobs` and DOES fire `JobFailed`. That is the loud failure
- *    this job relies on for the "retries exhausted" case — see the
- *    class docblock's note that reconciling a group stuck at `QUEUE`
- *    after that point is Task 32's job (the missed-post scanner), not
- *    this one's.
- *  - No manual cap on a `ProviderRateLimitException`-driven delay.
- *    `RefreshIntegrationTokenJob` caps every rate-limit release at that
- *    attempt's own backoff-schedule entry because ITS uniqueFor() is
- *    derived from that same schedule and could otherwise be outlived.
- *    This job's `$uniqueFor` is a fixed 3600s regardless of what any
- *    provider asks for, so `PublishRetryNeededException::$retryAfterSeconds`
- *    (itself already the MINIMUM across every rate-limited channel this
- *    run — see `PublishService::publishGroup()`) is honoured as-is. A
- *    provider asking for longer than the remaining budget this job's
- *    $tries/$uniqueFor allow simply exhausts retries sooner — the same
- *    accepted trade-off `RefreshIntegrationTokenJob` documents, applied
- *    to fixed rather than derived numbers.
+ *    data loss here. This job therefore always calls `release()` on
+ *    `PublishRetryNeededException`, on every attempt including the last.
+ *    Laravel's own `Worker` — not this class — is what stops the retry
+ *    loop: the moment a redelivered attempt is popped with
+ *    `attempts() > $tries`, the worker marks the job FAILED without
+ *    calling `handle()` again, which DOES write to `failed_jobs`, DOES
+ *    fire `JobFailed`, and DOES call `failed()` below with a
+ *    `MaxAttemptsExceededException` — that is the loud, RECORDED failure
+ *    this job relies on for the "retries exhausted" case. Post-review
+ *    correction: an earlier revision stopped at "loud" (failed_jobs +
+ *    JobFailed) and treated that as sufficient, reasoning that
+ *    reconciling the group's own state afterwards was Task 32's job.
+ *    Review finding 3 was that this is warning 4's silent failure
+ *    relocated, not removed: `failed_jobs` is loud to an operator
+ *    watching Horizon, but the PRODUCT stays silent — the group and its
+ *    posts sit at `QUEUE` forever, `posts.error` stays null, and the
+ *    API/calendar render that identically to "still scheduled, nothing
+ *    wrong yet". `failed()` now closes that gap directly, inside this
+ *    task's own contract (brief point 9: the group must end `PUBLISHED`
+ *    or `ERROR`) — see that method below.
+ *  - The `ProviderRateLimitException`-driven delay (via
+ *    `PublishRetryNeededException::$retryAfterSeconds`) IS capped, same
+ *    as `RefreshIntegrationTokenJob`. Post-review correction: an earlier
+ *    revision argued this needed no cap specifically BECAUSE `$uniqueFor`
+ *    is a fixed 3600s rather than schedule-derived — that reasoning was
+ *    inverted. Fixed is exactly the property an unbounded provider delay
+ *    can outlive: Telegram's own `retry_after` routinely exceeds an hour
+ *    under a broadcast-wide rate limit, and once the unique lock expires
+ *    a redispatch (e.g. a reschedule via `PostGroupService::updateDate()`)
+ *    can enqueue a second job racing a first one still mid-retry — the
+ *    exact precondition review finding 2 exploited. `nextBackoffDelay()`
+ *    below is now the ceiling for BOTH the no-specific-delay case AND a
+ *    rate limit's requested delay — see `handle()`.
  */
-class PublishPostJob implements ShouldBeUnique, ShouldQueue
+final class PublishPostJob implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
@@ -107,29 +121,78 @@ class PublishPostJob implements ShouldBeUnique, ShouldQueue
         try {
             $service->publishGroup($this->postGroupId);
         } catch (PublishRetryNeededException $e) {
-            $this->release($e->retryAfterSeconds ?? $this->nextBackoffDelay());
+            // A rate limit's retryAfterSeconds is honoured but capped at
+            // this attempt's own backoff-schedule position — never
+            // trusted uncapped. See the class docblock's "Divergence"
+            // section for why an uncapped provider-requested delay can
+            // outlive $uniqueFor's fixed 3600s and reopen the exact
+            // concurrent-run race review finding 2 fixed. A plain
+            // transient/partial-failure retry (no specific delay
+            // requested) uses the schedule position directly, unchanged.
+            $ceiling = $this->nextBackoffDelay();
+            $delay = $e->retryAfterSeconds === null ? $ceiling : min($e->retryAfterSeconds, $ceiling);
+
+            $this->release($delay);
         }
 
         // Any other exception (an unclassified provider bug, a database
         // error, ...) deliberately propagates uncaught: Laravel's own
         // exception handling for a queued job applies this job's
         // $tries/$backoff automatically on an uncaught Throwable, then
-        // writes to failed_jobs and fires JobFailed once exhausted —
-        // exactly the "fail loudly" this job needs and RefreshIntegrationTokenJob's
-        // docblock calls out by name. Nothing here should ever catch a
-        // provider exception type other than PublishRetryNeededException
-        // — those are all already handled inside PublishService, which
-        // never lets ProviderPermanentException/ProviderAuthException
-        // reach this far (both are terminal outcomes it resolves itself,
-        // per its own docblock).
+        // writes to failed_jobs and fires JobFailed (and calls failed()
+        // below) once exhausted — exactly the "fail loudly" this job
+        // needs and RefreshIntegrationTokenJob's docblock calls out by
+        // name. Nothing here should ever catch a provider exception type
+        // other than PublishRetryNeededException — those are all already
+        // handled inside PublishService, which never lets
+        // ProviderPermanentException/ProviderAuthException reach this
+        // far (both are terminal outcomes it resolves itself, per its
+        // own docblock).
+    }
+
+    /**
+     * Called by Laravel once this job is given up on for good — either
+     * every attempt threw uncaught, or (the path this job is actually
+     * expected to hit) `attempts() > $tries` was reached after a chain
+     * of `release()` calls on `PublishRetryNeededException`, in which
+     * case `$e` is a `MaxAttemptsExceededException` carrying no
+     * sensitive detail (never a raw provider exception — a provider
+     * failure that reaches this point already went through
+     * `PublishService`, which resolves every provider exception type
+     * itself and never lets one propagate this far).
+     *
+     * Delegates to `PublishService::abandonGroup()`: every post still
+     * `QUEUE` in this group moves to `ERROR` with a message, and the
+     * group is finalized. Review finding 3 — without this, a group that
+     * exhausts retries is loud to `failed_jobs`/Horizon but silent to
+     * the product: stuck at `QUEUE` forever, indistinguishable in the
+     * API/calendar from "still scheduled, nothing wrong yet". This is
+     * the fix, and it is squarely inside this task's own contract (the
+     * brief's point 9 requires the group to end `PUBLISHED` or `ERROR`,
+     * with no third option).
+     *
+     * Laravel calls `failed()` directly (`CallQueuedHandler::failed()`),
+     * not through the container, so this cannot type-hint `PublishService`
+     * as a parameter the way `handle()` does — resolved via `app()`
+     * instead.
+     */
+    public function failed(?Throwable $e): void
+    {
+        $reason = $e !== null
+            ? "Publishing failed after the maximum number of attempts: {$e->getMessage()}"
+            : 'Publishing failed after the maximum number of attempts.';
+
+        app(PublishService::class)->abandonGroup($this->postGroupId, $reason);
     }
 
     /**
      * The delay for a retry that carries no provider-specified
      * `retryAfterSeconds` (a plain transient failure, or a partial
-     * failure — see PublishRetryNeededException's docblock): this
-     * attempt's own position in $backoff, or the schedule's last entry
-     * if $backoff were ever shortened independently of $tries.
+     * failure — see PublishRetryNeededException's docblock), AND the
+     * ceiling a rate limit's requested delay is capped at — see
+     * handle(). This attempt's own position in $backoff, or the
+     * schedule's last entry if $backoff were ever shortened
+     * independently of $tries.
      */
     private function nextBackoffDelay(): int
     {
