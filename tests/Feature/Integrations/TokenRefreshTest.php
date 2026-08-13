@@ -196,6 +196,68 @@ it('releases the job instead of breaking the channel on a rate limit, honouring 
     Notification::assertNothingSent();
 });
 
+it('caps a rate-limit release delay at the retry schedule\'s own longest entry, never outliving the unique lock', function () {
+    Notification::fake();
+
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    // A pathological provider asking to wait far longer than this job's
+    // own retry schedule. Uncapped, releasing for the full duration
+    // could by itself outlive uniqueFor() — see the class docblock's
+    // "uniqueFor() MUST cover..." section. handle() must clamp it to
+    // backoff()'s own longest entry instead of trusting the provider.
+    fakeProvider()->failNextRefreshWith(new ProviderRateLimitException('slow down', 999_999));
+
+    /** @var RefreshIntegrationTokenJob&MockInterface $job */
+    $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
+    $expectedDelay = max($job->backoff());
+    $job->shouldReceive('release')->once()->with($expectedDelay);
+
+    $job->handle(app(TokenRefreshService::class));
+
+    $fresh = $integration->fresh();
+    expect($fresh->token)->toBe('old-token')
+        ->and($fresh->disabled)->toBeFalse();
+
+    Notification::assertNothingSent();
+});
+
+// --- ShouldBeUnique lock duration vs. the retry schedule ------------------
+
+it('keeps the unique lock duration at least as long as the worst-case retry lifetime', function () {
+    // Proves the invariant the review flagged as broken: uniqueFor()
+    // must never be shorter than the time the retry schedule can
+    // legitimately keep this job in flight, or ScheduleTokenRefresh's
+    // next hourly pass can dispatch a second concurrent job for the
+    // same integration while the first is still retrying — the exact
+    // race ShouldBeUnique exists to prevent. Deliberately reads only
+    // the job's own public backoff()/$tries/uniqueFor() rather than
+    // hardcoding the private retry-schedule numbers, so this keeps
+    // failing if uniqueFor() is ever reverted to an independent,
+    // hand-written constant instead of one derived from the same
+    // schedule as backoff()/$tries.
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+    ]);
+
+    $job = new RefreshIntegrationTokenJob($integration);
+
+    $backoff = $job->backoff();
+    $worstCaseRetryDelaySum = array_sum($backoff);
+
+    expect($job->tries)->toBe(count($backoff) + 1)
+        ->and($job->uniqueFor())->toBeGreaterThanOrEqual($worstCaseRetryDelaySum)
+        // The cap applied to a rate-limit release() (see the test above)
+        // must itself never exceed what uniqueFor() covers.
+        ->and(max($backoff))->toBeLessThanOrEqual($job->uniqueFor());
+});
+
 // --- Idempotency / overlap guard -----------------------------------------
 
 it('does not refresh an integration that was disabled since the job was dispatched', function () {

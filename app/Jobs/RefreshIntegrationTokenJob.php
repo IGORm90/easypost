@@ -83,24 +83,69 @@ use Illuminate\Queue\SerializesModels;
  * $tries when defined -- see Worker::markJobAsFailedIfWillExceedMaxAttempts()),
  * or delete() immediately followed by a fresh, delayed dispatch() to
  * reset the attempt counter rather than releasing the same reservation.
+ *
+ * uniqueFor() MUST cover the whole worst-case retry lifetime -- second
+ * correction after review. UniqueLock::acquire() creates the lock as
+ * $cache->lock($key, $uniqueFor): a FIXED TTL set once at dispatch, never
+ * refreshed across release()/retry cycles (CallQueuedHandler::failed()
+ * only releases it when the job finishes for good). If the retry
+ * schedule above can keep this job in flight longer than uniqueFor(),
+ * the lock expires mid-retry, ScheduleTokenRefresh's next hourly pass
+ * dispatches a SECOND concurrent job for the same integration, and the
+ * two race to store a token -- exactly the failure ShouldBeUnique exists
+ * to prevent (see this docblock's "Overlap/uniqueness decision" above).
+ * An earlier revision widened $tries/backoff() to fix the retry-vs-$tries
+ * problem above WITHOUT re-checking this bound, silently re-opening the
+ * race: 8 tries x up to 7 backoff gaps sums to ~2.86h against a
+ * hand-written uniqueFor() of 1h. Fixed by making uniqueFor() a pure
+ * function of RETRY_BACKOFF_SECONDS/$tries (below) instead of an
+ * independent constant, so the two cannot drift apart again -- widening
+ * one automatically widens the other. maxInFlightSeconds() is also where
+ * the ProviderRateLimitException path is bounded (handle() caps
+ * release()'s delay at the same schedule's max entry) so that path's
+ * worst case is covered by the identical arithmetic, not a second,
+ * independently-reasoned number.
  */
 class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * Shared budget across BOTH ProviderTransientException (automatic
-     * retry via backoff(), below) and ProviderRateLimitException
-     * (explicit release() in handle()) -- see the class docblock's
-     * "Retry semantics" section for why both consume the same counter
-     * on this project's redis queue, and why exhausting it here is an
-     * accepted, self-healing outcome rather than a bug.
+     * The one retry schedule this whole class is built around: how long
+     * to wait between attempts 1->2, 2->3, ... after an uncaught
+     * ProviderTransientException (see backoff()), the ceiling a
+     * ProviderRateLimitException's release() delay is capped at (see
+     * handle()), and — via maxInFlightSeconds() — the basis for both
+     * $tries and uniqueFor(). Never read $tries or uniqueFor() as
+     * independent facts; both are derived from this array so they cannot
+     * drift apart the way they did before this fix.
+     *
+     * @var list<int>
      */
-    public int $tries = 8;
+    private const array RETRY_BACKOFF_SECONDS = [30, 60, 300, 900, 1800, 3600, 3600];
+
+    /**
+     * Per-attempt slack added on top of the raw backoff sum: actual
+     * queue pickup latency and the provider HTTP call itself both take
+     * real wall-clock time beyond the release delay alone, and
+     * uniqueFor() must cover that too or a slow-but-legitimate attempt
+     * could still outlive the lock.
+     */
+    private const int EXECUTION_MARGIN_SECONDS = 60;
+
+    /**
+     * One more than the number of backoff gaps: the first attempt plus
+     * one retry per RETRY_BACKOFF_SECONDS entry. Set in the constructor
+     * (a class constant can't call count()) rather than hand-written, so
+     * this can never silently drift out of sync with the array it counts.
+     */
+    public int $tries;
 
     public function __construct(
         public readonly Integration $integration,
-    ) {}
+    ) {
+        $this->tries = count(self::RETRY_BACKOFF_SECONDS) + 1;
+    }
 
     public function uniqueId(): string
     {
@@ -108,28 +153,53 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * Matches (and slightly exceeds) the hourly schedule cadence: a lock
-     * that outlived the job itself but expired before the next hourly
-     * dispatch would let that next run silently double-refresh the same
-     * channel again — the exact race this job exists to prevent.
+     * Derived from RETRY_BACKOFF_SECONDS (see maxInFlightSeconds()), NOT
+     * a hand-written constant — see the class docblock's "uniqueFor()
+     * MUST cover..." section for the race this guards against. A lock
+     * shorter than the worst-case time this job can plausibly still be
+     * retrying would let ScheduleTokenRefresh's next hourly pass dispatch
+     * a second concurrent job for the same integration.
      */
     public function uniqueFor(): int
     {
-        return 3600;
+        return self::maxInFlightSeconds();
     }
 
     /**
      * Governs the automatic retry delay after an uncaught
-     * ProviderTransientException only -- a ProviderRateLimitException's
-     * delay comes from the provider's own Retry-After via release()
-     * in handle(), not from this array. Sized to $tries = 8; Laravel
-     * reuses the last entry for any attempt beyond the array's length.
+     * ProviderTransientException. A ProviderRateLimitException's delay
+     * comes from the provider's own Retry-After via release() in
+     * handle() instead, capped at self::RETRY_BACKOFF_SECONDS's own
+     * maximum — see handle() — so that path is bounded by this exact
+     * same schedule rather than an independent number.
      *
      * @return list<int>
      */
     public function backoff(): array
     {
-        return [30, 60, 300, 900, 1800, 3600, 3600, 3600];
+        return self::RETRY_BACKOFF_SECONDS;
+    }
+
+    /**
+     * Worst-case wall-clock time this job can still legitimately be in
+     * flight, attempt 1 through the last retry: every backoff gap at its
+     * longest, plus one execution margin per attempt (including the
+     * final one, which has no further gap after it but still needs time
+     * to run — one more attempt than there are backoff gaps). This is
+     * the single source uniqueFor() (and, indirectly, $tries) reads
+     * from — see the class docblock. Static and parameterless
+     * deliberately: it must depend only on RETRY_BACKOFF_SECONDS, never
+     * on a per-instance value, so uniqueFor() (called by Laravel before
+     * this job's constructor logic is relevant to it) and the
+     * consistency test below both see the exact same number $tries was
+     * derived from.
+     */
+    private static function maxInFlightSeconds(): int
+    {
+        $attempts = count(self::RETRY_BACKOFF_SECONDS) + 1;
+
+        return array_sum(self::RETRY_BACKOFF_SECONDS)
+            + ($attempts * self::EXECUTION_MARGIN_SECONDS);
     }
 
     public function handle(TokenRefreshService $service): void
@@ -153,14 +223,22 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
         try {
             $service->refresh($integration);
         } catch (ProviderRateLimitException $e) {
-            // Waits exactly as long as the provider asked, then lets the
-            // queue re-attempt -- but this DOES consume one of $tries on
-            // this project's redis queue (attempts increment on every
-            // pop, release included). See the class docblock's "Retry
-            // semantics" section for why that's an accepted, self-healing
-            // outcome for THIS job specifically, and why Task 30 must not
-            // copy this line under the opposite assumption.
-            $this->release($e->retryAfterSeconds);
+            // Waits as long as the provider asked, capped at this
+            // schedule's own longest backoff entry — a provider-supplied
+            // Retry-After longer than that would otherwise let THIS
+            // path alone outlive uniqueFor(), independently of the
+            // arithmetic maxInFlightSeconds() already accounts for. A
+            // provider asking for longer than that cap is treated the
+            // same as any other exhausted-tries case: this job gives up
+            // and ScheduleTokenRefresh's next hourly pass tries again
+            // fresh (see the class docblock's "Deliberate decision for
+            // THIS job" section) -- but this DOES still consume one of
+            // $tries on this project's redis queue (attempts increment
+            // on every pop, release included). See the class docblock's
+            // "Retry semantics" section for why that's accepted here,
+            // and why Task 30 must not copy this line under the opposite
+            // assumption.
+            $this->release(min($e->retryAfterSeconds, max(self::RETRY_BACKOFF_SECONDS)));
 
             return;
         }
