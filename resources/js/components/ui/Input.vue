@@ -1,6 +1,12 @@
 <script setup lang="ts">
 type InputType = 'text' | 'email' | 'password' | 'search' | 'number' | 'url';
 
+// Attrs like `autocomplete`/`required`/`maxlength` a form page passes must
+// land on the actual <input>, not on this component's wrapping <div> (the
+// template root) — Vue's default fallthrough would otherwise put them
+// there, where a native "required" or "autocomplete" is a silent no-op.
+defineOptions({ inheritAttrs: false });
+
 withDefaults(
     defineProps<{
         modelValue?: string | number | null;
@@ -30,6 +36,7 @@ defineEmits<{ 'update:modelValue': [string] }>();
         <label v-if="label" :for="id" class="text-sm font-medium text-text">{{ label }}</label>
         <input
             :id="id"
+            v-bind="$attrs"
             :type="type"
             :value="modelValue"
             :placeholder="placeholder"

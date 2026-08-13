@@ -2,10 +2,12 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\EmailVerificationController;
+use App\Http\Controllers\Api\ImpersonationController;
 use App\Http\Controllers\Api\InviteController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\ProfileController;
 use Illuminate\Support\Facades\Route;
 
 // GET /api/auth/oauth/{driver}/{redirect,callback} are deliberately *not*
@@ -62,4 +64,35 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('members/{user}/role', [MemberController::class, 'updateRole'])->middleware('role:ADMIN');
         Route::post('invites', [InviteController::class, 'store'])->middleware('role:ADMIN');
     });
+});
+
+/*
+ * Profile and impersonation (Task 10). `auth:sanctum` gates all of it;
+ * neither is organization-scoped, so `organization`/`role:` never apply
+ * here.
+ *
+ * `deny_while_impersonating` on the api-key rotation route is the one
+ * currently-built member of the restricted set an impersonated session
+ * must never reach (alongside password-change and account-deletion, which
+ * land in later tasks and pick up the same alias then) — see
+ * DenyWhileImpersonating's docblock.
+ *
+ * `superadmin` gates *starting* impersonation only; stopping it
+ * deliberately has no role middleware at all — see
+ * ImpersonationController::stop()'s docblock for why the impersonated
+ * session itself must be able to reach it.
+ */
+Route::middleware('auth:sanctum')->group(function () {
+    Route::put('profile', [ProfileController::class, 'update']);
+    Route::post('profile/api-key/rotate', [ProfileController::class, 'rotateApiKey'])
+        ->middleware('deny_while_impersonating');
+
+    // `stop` (a literal path segment) is registered before `{user}` (a
+    // wildcard) deliberately: Laravel matches routes in registration
+    // order, so if the wildcard came first, POST /admin/impersonate/stop
+    // would itself match `{user}` with $user = 'stop' and 404 on the
+    // route-model binding lookup, never reaching stop() at all.
+    Route::post('admin/impersonate/stop', [ImpersonationController::class, 'stop']);
+    Route::post('admin/impersonate/{user}', [ImpersonationController::class, 'start'])
+        ->middleware('superadmin');
 });

@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Middleware\DenyWhileImpersonating;
 use App\Http\Middleware\EnsureOrganizationRole;
+use App\Http\Middleware\EnsureSuperadmin;
 use App\Http\Middleware\ResolveOrganization;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -18,6 +20,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'organization' => ResolveOrganization::class,
             'role' => EnsureOrganizationRole::class,
+            'superadmin' => EnsureSuperadmin::class,
+            'deny_while_impersonating' => DenyWhileImpersonating::class,
         ]);
 
         // Lets Sanctum authenticate first-party SPA requests (from

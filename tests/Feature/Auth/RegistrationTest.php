@@ -17,20 +17,21 @@ it('registers a user and creates their first organization', function () {
         ->assertJsonPath('organization.name', "Ann's workspace");
 });
 
-it('gives a freshly registered user a non-null locale and timezone without a database refetch', function () {
+it('gives a freshly registered user a non-null locale, timezone and email_notifications without a database refetch', function () {
     // Asserts against the response JSON specifically because that's built
     // from AuthController::register()'s in-memory $user — the very object
     // that would have carried nulls before User::$attributes gained its
-    // timezone/locale defaults, since RegisterRequest never sets either
-    // field and nothing in the register() flow calls refresh(). A
-    // User::firstWhere()->timezone check here would only prove the DB
-    // column default works, which was never in question.
+    // timezone/locale/email_notifications defaults, since RegisterRequest
+    // never sets any of the three and nothing in the register() flow calls
+    // refresh(). A User::firstWhere()->timezone check here would only
+    // prove the DB column default works, which was never in question.
     $res = $this->postJson('/api/auth/register', [
         'name' => 'Ann', 'email' => 'ann@example.com', 'password' => 'secret1234',
     ])->assertCreated();
 
     $res->assertJsonPath('user.timezone', 'UTC')
-        ->assertJsonPath('user.locale', 'en');
+        ->assertJsonPath('user.locale', 'en')
+        ->assertJsonPath('user.email_notifications', true);
 });
 
 it('lets a freshly registered user log in with the password they registered with', function () {

@@ -4,13 +4,116 @@
     },
     "nav": {
         "toggleTheme": "Toggle theme",
-        "menu": "Menu"
+        "menu": "Menu",
+        "settingsProfile": "Profile",
+        "settingsTeam": "Team",
+        "logout": "Log out"
     },
     "ui": {
         "close": "Close",
-        "loading": "Loading…"
+        "loading": "Loading…",
+        "save": "Save",
+        "cancel": "Cancel",
+        "copy": "Copy",
+        "copied": "Copied"
     },
     "shell": {
         "comingSoon": "This section will arrive in a later task."
+    },
+    "auth": {
+        "login": {
+            "title": "Sign in",
+            "email": "Email",
+            "password": "Password",
+            "submit": "Sign in",
+            "noAccount": "No account yet?",
+            "registerLink": "Create one",
+            "forgotLink": "Forgot your password?",
+            "error": "Incorrect email or password."
+        },
+        "register": {
+            "title": "Create an account",
+            "name": "Name",
+            "email": "Email",
+            "password": "Password",
+            "submit": "Create account",
+            "haveAccount": "Already have an account?",
+            "loginLink": "Sign in",
+            "success": "Account created. Check your inbox to verify your email."
+        },
+        "forgot": {
+            "title": "Reset your password",
+            "email": "Email",
+            "submit": "Send reset link",
+            "success": "If that email is registered, a reset link has been sent.",
+            "backToLogin": "Back to sign in"
+        },
+        "reset": {
+            "title": "Choose a new password",
+            "password": "New password",
+            "submit": "Save password",
+            "success": "Password changed. You can sign in now.",
+            "invalidLink": "This password reset link is invalid or has expired.",
+            "loginLink": "Go to sign in"
+        }
+    },
+    "organization": {
+        "switcher": {
+            "label": "Organization",
+            "empty": "No organizations"
+        }
+    },
+    "settings": {
+        "profile": {
+            "title": "Profile",
+            "name": "Name",
+            "timezone": "Timezone",
+            "locale": "Interface language",
+            "emailNotifications": "Email notifications",
+            "save": "Save changes",
+            "saved": "Profile updated.",
+            "apiKey": {
+                "title": "API key",
+                "description": "Used to authenticate API access. Shown only once, right after it's generated — store it somewhere safe.",
+                "rotate": "Generate new key",
+                "rotateConfirm": "The old key will stop working. Continue?",
+                "generated": "New key generated. Copy it now — it will not be shown again.",
+                "none": "No key generated yet."
+            }
+        },
+        "team": {
+            "title": "Team",
+            "member": "Member",
+            "role": "Role",
+            "joined": "Member since",
+            "actions": "Actions",
+            "remove": "Remove",
+            "removeConfirm": "Remove this member from the organization?",
+            "invite": {
+                "title": "Invite a member",
+                "email": "Email (optional)",
+                "role": "Role",
+                "submit": "Create invite",
+                "success": "Invite link created:",
+                "copy": "Copy link"
+            },
+            "roles": {
+                "SUPERADMIN": "Superadmin",
+                "ADMIN": "Admin",
+                "USER": "Member"
+            }
+        }
+    },
+    "invites": {
+        "accept": {
+            "title": "Organization invite",
+            "description": "You've been invited to join an organization.",
+            "submit": "Accept invite",
+            "success": "You've joined the organization.",
+            "error": "Could not accept this invite. The link may be invalid or already used."
+        }
+    },
+    "validation": {
+        "generic": "Please check the form for errors."
     }
 }

@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password', 'timezone', 'locale'])]
+#[Fillable(['name', 'email', 'password', 'timezone', 'locale', 'email_notifications'])]
 #[Hidden(['password', 'remember_token', 'api_key'])]
 class User extends Authenticatable implements HasLocalePreference, MustVerifyEmail
 {
@@ -24,9 +24,10 @@ class User extends Authenticatable implements HasLocalePreference, MustVerifyEma
 
     /**
      * Mirrors the `users` migration's DB-level column defaults
-     * (`timezone` default 'UTC', `locale` default 'en') so a freshly
-     * instantiated or freshly created in-memory model already carries
-     * those values, without needing a round trip back to the database.
+     * (`timezone` default 'UTC', `locale` default 'en',
+     * `email_notifications` default true) so a freshly instantiated or
+     * freshly created in-memory model already carries those values,
+     * without needing a round trip back to the database.
      *
      * This matters beyond convenience: `timezone` is what later scheduling
      * code (Task 21's slot finder) uses to decide when a post publishes. A
@@ -35,12 +36,16 @@ class User extends Authenticatable implements HasLocalePreference, MustVerifyEma
      * against that, because nothing forces a caller to refresh() the model
      * after User::create() before reading it (AuthController::register()
      * doesn't, and there is no reason a future caller would know to).
+     * `email_notifications` is included for the same reason: since Task 10,
+     * UserResource exposes it, and AuthController::register() returns the
+     * in-memory model straight back to the caller, unrefreshed.
      *
      * @var array<string, mixed>
      */
     protected $attributes = [
         'timezone' => 'UTC',
         'locale' => 'en',
+        'email_notifications' => true,
     ];
 
     /**

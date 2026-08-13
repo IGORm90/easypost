@@ -30,6 +30,7 @@ class UserResource extends JsonResource
             'email' => $this->email,
             'timezone' => $this->timezone,
             'locale' => $this->locale,
+            'email_notifications' => $this->email_notifications,
             'email_verified_at' => $this->email_verified_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
