@@ -6,6 +6,7 @@ use App\Models\Post;
 use App\Models\PostGroup;
 use App\Models\Signature;
 use App\Models\Tag;
+use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -129,6 +130,21 @@ it('never lets release_id be set and then changed to a different value', functio
         ->toThrow(QueryException::class, 'release_id is immutable once set');
 });
 
+it('raises the immutability violation with its documented, stable SQLSTATE', function () {
+    $post = Post::factory()->create(['release_id' => 'release-1']);
+
+    try {
+        DB::table('posts')->where('id', $post->id)->update(['release_id' => 'release-2']);
+        $this->fail('Expected a QueryException.');
+    } catch (QueryException $e) {
+        // Task 30 is expected to detect this failure via the SQLSTATE
+        // (Post::RELEASE_ID_IMMUTABLE_SQLSTATE), not by string-matching
+        // the human-readable message — this proves the two actually
+        // agree, not just that a query exception of SOME kind was thrown.
+        expect($e->getCode())->toBe(Post::RELEASE_ID_IMMUTABLE_SQLSTATE);
+    }
+});
+
 it('allows release_id to be set once from null, and other columns to keep changing after that', function () {
     $post = Post::factory()->create(['release_id' => null]);
 
@@ -192,6 +208,18 @@ it('rejects a duplicate tag name within the same organization', function () {
         ->toThrow(QueryException::class);
 });
 
+it('rejects a tag name that differs from an existing one only by case within the same organization', function () {
+    // The exact pair the migration's comment names ("Launch" vs
+    // "launch"): Postgres' default collation is case-sensitive, so a
+    // plain unique(organization_id, name) constraint would NOT catch
+    // this — only the functional index on lower(name) does.
+    $org = Organization::factory()->create();
+    Tag::factory()->for($org)->create(['name' => 'Launch']);
+
+    expect(fn () => Tag::factory()->for($org)->create(['name' => 'launch']))
+        ->toThrow(QueryException::class, 'tags_org_name_ci_unique');
+});
+
 it('allows the same tag name across two different organizations', function () {
     Tag::factory()->create(['name' => 'launch']);
     Tag::factory()->create(['name' => 'launch']);
@@ -221,4 +249,62 @@ it('cascades deleting a parent post to its children', function () {
     Post::withoutGlobalScope('organization')->find($parent->id)->delete();
 
     expect(Post::withoutGlobalScope('organization')->where('id', $child->id)->exists())->toBeFalse();
+});
+
+it('refuses to hard-delete an Integration that still has posts, including PUBLISHED ones', function () {
+    $post = Post::factory()->create(['state' => 'PUBLISHED', 'release_id' => 'release-1']);
+    $integrationId = $post->integration_id;
+
+    // A real forceDelete(), not the ordinary soft-delete disconnect flow
+    // — this is exactly the "future prune job / manual cleanup" path the
+    // restrictOnDelete() change guards against.
+    //
+    // Wrapped in DB::transaction(): RefreshDatabase already has this
+    // whole test running inside one outer transaction, and Postgres
+    // aborts a transaction entirely on a failed statement — without a
+    // SAVEPOINT (which nesting a DB::transaction() call inside an
+    // already-open one gives for free, per Laravel's transaction manager),
+    // the assertions below would themselves fail with "current
+    // transaction is aborted" rather than actually observing anything.
+    expect(fn () => DB::transaction(
+        fn () => Integration::withoutGlobalScope('organization')->find($integrationId)->forceDelete()
+    ))->toThrow(QueryException::class);
+
+    // The post — and its release_id — must genuinely still be there
+    // afterwards, not merely "the delete call raised something".
+    $survived = Post::withoutGlobalScope('organization')->find($post->id);
+    expect($survived)->not->toBeNull()
+        ->and($survived->release_id)->toBe('release-1');
+});
+
+it('allows deleting an Integration that has no posts', function () {
+    $integration = Integration::factory()->create();
+
+    Integration::withoutGlobalScope('organization')->find($integration->id)->forceDelete();
+
+    expect(Integration::withoutGlobalScope('organization')->where('id', $integration->id)->exists())->toBeFalse();
+});
+
+it('nulls out created_by instead of deleting the post group when its creator is removed', function () {
+    $user = User::factory()->create();
+    $group = PostGroup::factory()->create(['created_by' => $user->id]);
+
+    $user->delete();
+
+    $survived = PostGroup::withoutGlobalScope('organization')->find($group->id);
+    expect($survived)->not->toBeNull()
+        ->and($survived->created_by)->toBeNull();
+});
+
+it('does not cascade a deleted user onward to the group\'s posts and comments', function () {
+    $user = User::factory()->create();
+    $group = PostGroup::factory()->create(['created_by' => $user->id]);
+    $post = Post::factory()->create([
+        'post_group_id' => $group->id,
+        'organization_id' => $group->organization_id,
+    ]);
+
+    $user->delete();
+
+    expect(Post::withoutGlobalScope('organization')->where('id', $post->id)->exists())->toBeTrue();
 });

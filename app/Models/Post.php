@@ -52,6 +52,19 @@ class Post extends Model
     /** @use HasFactory<PostFactory> */
     use BelongsToOrganization, HasFactory, HasUlids;
 
+    /**
+     * The custom Postgres SQLSTATE the `posts_release_id_immutable`
+     * trigger (see the `posts` migration) raises with, instead of the
+     * generic 'P0001' every unqualified PL/pgSQL `raise exception`
+     * shares. This is the single source of truth for that code — the
+     * migration's SQL and any future caller that needs to detect "this
+     * failed specifically because of the immutability guard" (Task 30,
+     * most likely, via `Illuminate\Database\QueryException::getCode()`)
+     * both read it from here rather than maintaining two independent
+     * copies of the same literal.
+     */
+    public const string RELEASE_ID_IMMUTABLE_SQLSTATE = 'PS001';
+
     /** @var list<string> */
     protected $fillable = [
         'post_group_id',

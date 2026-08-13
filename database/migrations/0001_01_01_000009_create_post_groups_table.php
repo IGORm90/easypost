@@ -21,7 +21,15 @@ return new class extends Migration
             // service), not to a NOT NULL constraint this migration
             // cannot safely assume holds for every state.
             $table->timestampTz('publish_date')->nullable();
-            $table->foreignUlid('created_by')->constrained('users')->cascadeOnDelete();
+            // Nullable + nullOnDelete(), NOT cascadeOnDelete(): offboarding
+            // a user must not erase their entire publish history —
+            // cascadeOnDelete() here would delete every group they ever
+            // created and cascade onward to its posts and comments,
+            // PUBLISHED ones included. Losing the author's identity while
+            // keeping the published record is strictly better than losing
+            // both, and the author is worth preserving where possible but
+            // not at the cost of blocking user deletion outright.
+            $table->foreignUlid('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->text('error')->nullable();
             // Unguessable, nullable-unique — makes a post group publicly
             // readable via Task 22's future share endpoint once set.

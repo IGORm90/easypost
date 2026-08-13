@@ -45,7 +45,24 @@ return new class extends Migration
             // ->constrained() here) is what stops it from ever drifting
             // from its group's real organization_id.
             $table->char('organization_id', 26);
-            $table->foreignUlid('integration_id')->constrained()->cascadeOnDelete();
+            // restrictOnDelete(), NOT cascadeOnDelete() — a hard delete of
+            // an Integration must not silently erase every Post tied to
+            // it, PUBLISHED segments and their release_id included: those
+            // are exactly the records this migration's immutability
+            // trigger exists to make tamper-proof, and a table-level
+            // cascade would destroy them through a path the trigger
+            // cannot see (it only guards UPDATE, not DELETE via a parent
+            // FK). Integration itself uses SoftDeletes, so the ordinary
+            // "disconnect a channel" flow never reaches this — this guard
+            // is for a future prune job, a manual cleanup, or a stray
+            // forceDelete(), which must fail loudly (a FK violation) and
+            // force a human decision, not proceed quietly. If the same
+            // remote account is later reconnected as a brand-new
+            // Integration row after old posts were actually erased, Task
+            // 30's dedup check (release_id) would have nothing left to
+            // compare against — restricting the delete is what keeps that
+            // scenario from being reachable at all.
+            $table->foreignUlid('integration_id')->constrained()->restrictOnDelete();
             // Nullable self-reference: null means "root of its thread on
             // this channel". Not wrapped in ->constrained() — the real
             // FK is the composite one added below, which additionally
@@ -144,11 +161,25 @@ return new class extends Migration
         // `migrate:fresh` run fail with "function already exists" —
         // caught by re-running this migration a second time while
         // building this task, not a theoretical risk.
+        // The trigger raises with an explicit, custom SQLSTATE
+        // ('PS001' — see Post::RELEASE_ID_IMMUTABLE_SQLSTATE, the single
+        // documented source of truth for this value) rather than letting
+        // PL/pgSQL default to the generic 'P0001' every unqualified
+        // `raise exception` shares. Task 30 needs a reliable way to
+        // detect "this failed because of the immutability guard"
+        // specifically (Illuminate\Database\QueryException::getCode()
+        // surfaces the PDO/SQLSTATE code) without either catching
+        // QueryException broadly (which would also swallow unrelated
+        // failures) or string-matching the human-readable message
+        // (which breaks the moment someone rewords it). Keeping the code
+        // as a PHP constant next to this migration, instead of only in
+        // this SQL, is what keeps the two from drifting apart.
         DB::unprepared(<<<'SQL'
             create or replace function posts_prevent_release_id_change() returns trigger as $$
             begin
                 if old.release_id is not null and new.release_id is distinct from old.release_id then
-                    raise exception 'release_id is immutable once set (post %)', old.id;
+                    raise exception 'release_id is immutable once set (post %)', old.id
+                        using errcode = 'PS001';
                 end if;
                 return new;
             end;

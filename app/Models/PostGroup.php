@@ -28,7 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $organization_id
  * @property PostState $state
  * @property CarbonInterface|null $publish_date
- * @property string $created_by
+ * @property string|null $created_by
  * @property string|null $error
  * @property string|null $share_token
  */
