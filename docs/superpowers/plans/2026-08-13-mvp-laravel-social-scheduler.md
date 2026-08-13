@@ -804,7 +804,21 @@ final readonly class AuthResultDto {
 
 final readonly class PostPayloadDto {
     /** @param MediaDto[] $media */
-    public function __construct(public string $content, public array $media = [], public array $settings = []) {}
+    public function __construct(
+        public string $content,
+        public array $media = [],
+        public array $settings = [],
+        /**
+         * Якорь треда: id уже опубликованного поста на стороне провайдера.
+         * Если задан — сегмент должен уйти ОТВЕТОМ на него, а не новым корнем треда.
+         * Пайплайн ставит его только на первый элемент возобновляемой цепочки (после
+         * ProviderPartialFailureException); внутри одного вызова post() провайдер связывает
+         * сегменты сам по своим же результатам. Провайдер, чья сеть не умеет отвечать на
+         * произвольный внешний id, обязан бросить ProviderPermanentException — молчаливая
+         * публикация «отвязанного» поста хуже отказа.
+         */
+        public ?string $replyToReleaseId = null,
+    ) {}
 }
 
 final readonly class PostResultDto {
@@ -1367,8 +1381,9 @@ final class PublishPostJob implements ShouldQueue, ShouldBeUnique
   4. Уже опубликованные посты внутри группы при ретрае **пропускаются** — как на уровне канала, так и на уровне
      сегмента цепочки: сегмент с непустым `release_id` не отправляется повторно никогда.
   5. `ProviderPartialFailureException` → сохранить `release_id` опубликованных сегментов из исключения,
-     остальные сегменты оставить неопубликованными; ретрай продолжит с первого сегмента без `release_id`.
-     Без этого ретрай продублирует корень треда в соцсети.
+     остальные сегменты оставить неопубликованными. Ретрай продолжает с первого сегмента без `release_id`
+     и **обязан** проставить ему `PostPayloadDto::$replyToReleaseId` = `release_id` последнего успешного
+     сегмента. Без якоря провайдер опубликует продолжение новым корнем и продублирует тред в соцсети.
   6. `ProviderTransientException` / `ProviderRateLimitException` → `release()` c backoff (для rate-limit — `retryAfterSeconds`).
   7. `ProviderPermanentException` → пост в `ERROR` с текстом, остальные каналы продолжают публиковаться.
   8. `ProviderAuthException` → канал `refresh_needed=true`, пост в `ERROR`.
