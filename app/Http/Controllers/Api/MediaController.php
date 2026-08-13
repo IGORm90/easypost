@@ -10,6 +10,7 @@ use App\Models\Media;
 use App\Models\Organization;
 use App\Services\Media\Exceptions\MediaImportException;
 use App\Services\Media\Exceptions\MediaInUseException;
+use App\Services\Media\Exceptions\MediaStorageException;
 use App\Services\Media\Exceptions\UnsupportedMediaTypeException;
 use App\Services\Media\MediaUploadService;
 use App\Support\OrganizationContext;
@@ -45,6 +46,12 @@ class MediaController extends Controller
             $media = $this->media->store($file, $this->currentOrganization(), $this->currentUserId());
         } catch (UnsupportedMediaTypeException $e) {
             return response()->json(['message' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (MediaStorageException $e) {
+            // Review finding 1: a storage failure is loud, not a
+            // silent 201 — see MediaStorageException's docblock. 500,
+            // not 422: this is this application's/its infrastructure's
+            // fault, not a problem with the caller's input.
+            return response()->json(['message' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
 
         // ->response(), not response()->json(new MediaResource(...)):
@@ -65,6 +72,8 @@ class MediaController extends Controller
             );
         } catch (MediaImportException|UnsupportedMediaTypeException $e) {
             return response()->json(['message' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (MediaStorageException $e) {
+            return response()->json(['message' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
 
         return (new MediaResource($media))->response()->setStatusCode(Response::HTTP_CREATED);

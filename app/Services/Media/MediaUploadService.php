@@ -7,7 +7,10 @@ use App\Models\Media;
 use App\Models\Organization;
 use App\Services\Media\Exceptions\MediaImportException;
 use App\Services\Media\Exceptions\MediaInUseException;
+use App\Services\Media\Exceptions\MediaStorageException;
+use App\Services\Media\Exceptions\SinkSizeLimitExceededException;
 use App\Services\Media\Exceptions\UnsupportedMediaTypeException;
+use App\Services\Media\Support\CappedSinkStreamWrapper;
 use App\Support\Exceptions\UnsafeRemoteHostException;
 use App\Support\SafeRemoteHost;
 use GuzzleHttp\Psr7\Uri;
@@ -17,6 +20,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use League\Flysystem\FilesystemException;
 
 /**
  * Everything that turns "a file, from somewhere" into a stored `Media`
@@ -275,33 +279,53 @@ final class MediaUploadService
                 throw MediaImportException::forDownloadFailed();
             }
 
-            $sink = fopen($tmpPath, 'w+b');
-
-            if ($sink === false) {
-                @unlink($tmpPath);
-
-                throw MediaImportException::forDownloadFailed();
-            }
+            // Review finding 5: not a raw file resource + a
+            // CURLOPT_PROGRESSFUNCTION abort (deprecated for removal in
+            // Guzzle 8, and never exercised by this codebase's
+            // Http::fake()-based tests, so a future Guzzle upgrade would
+            // have silently disabled the only defense here without any
+            // test failing). CappedSinkStreamWrapper::open() returns a
+            // genuine PHP stream resource (a registered `mediacap://`
+            // user stream wrapper) whose stream_write() throws the
+            // instant cumulative bytes exceed $maxBytes — a real
+            // resource, not a StreamInterface object, deliberately: it
+            // is what real cURL's CURLOPT_WRITEFUNCTION writes through
+            // (via Guzzle's Psr7\Utils::streamFor()) AND what Laravel's
+            // OWN Http::fake() sink stub (PendingRequest::
+            // sinkStubHandler(), which calls fwrite($sink, $body)
+            // directly and requires a resource) can write through —
+            // verified against a real local HTTP server and real cURL,
+            // not Http::fake(), in
+            // tests/Unit/Services/Media/SizeCappedSinkStreamTest.php.
+            $sink = CappedSinkStreamWrapper::open($tmpPath, $maxBytes);
 
             try {
                 // Broad catch deliberately: a network boundary call can
                 // fail in many distinct ways (DNS, connect refused, our
-                // own progress-callback abort, transfer timeout) and
-                // every one of them is handled identically below by
-                // inspecting how many bytes actually made it to disk —
-                // there is no case here where a narrower catch would
-                // change the outcome, only one where it would risk an
-                // uncaught exception turning into an unhandled 500
-                // instead of the 422 this endpoint promises.
+                // own sink aborting mid-transfer, transfer timeout) and
+                // every one of them needs a definitive, not guessed-at,
+                // diagnosis below — SinkSizeLimitExceededException is
+                // checked first and explicitly, so "why did this fail"
+                // is never inferred from how many bytes happened to land
+                // on disk (the old design's approach, which Minor 7
+                // review finding showed could mis-report an unrelated
+                // download failure as "exceeds the size limit"). Note:
+                // under Http::fake() specifically, Laravel runs the sink
+                // write as a detached promise callback whose exceptions
+                // are never surfaced to this catch block at all — real
+                // cURL does not have this limitation (see this method's
+                // class-level note and the real-server test above), so
+                // this catch is exercised by production traffic and by
+                // the real-server unit test; a faked test that exceeds
+                // the cap instead ends up with zero bytes ever written
+                // (the single, whole-body sinkStubHandler write throws
+                // before delegating to the real resource) and is caught
+                // by the post-download checks below instead.
                 $response = Http::timeout((int) ceil($remaining))
                     ->connectTimeout(min(10, max(1, (int) ceil($remaining))))
                     ->withOptions([
                         'sink' => $sink,
                         'allow_redirects' => false,
-                        'curl' => [
-                            CURLOPT_NOPROGRESS => false,
-                            CURLOPT_PROGRESSFUNCTION => static fn ($resource, $downloadSize, $downloaded): int => $downloaded > $maxBytes ? 1 : 0,
-                        ],
                     ])
                     ->get($currentUrl);
             } catch (\Throwable $e) {
@@ -309,10 +333,9 @@ final class MediaUploadService
                     fclose($sink);
                 }
 
-                $downloadedBytes = @filesize($tmpPath) ?: 0;
                 @unlink($tmpPath);
 
-                if ($downloadedBytes > $maxBytes) {
+                if ($e instanceof SinkSizeLimitExceededException) {
                     throw MediaImportException::forSizeExceeded();
                 }
 
@@ -349,7 +372,20 @@ final class MediaUploadService
 
             $actualBytes = filesize($tmpPath);
 
-            if ($actualBytes === false || $actualBytes > $maxBytes) {
+            // Minor 7 review finding: these were previously the same
+            // branch ("false || too large" both reported as "exceeds
+            // the 100 MB import limit"), so a genuine read/filesystem
+            // failure on OUR OWN temp file was misreported to the
+            // caller as a size problem. Split: a false filesize() means
+            // this service could not even measure what it downloaded
+            // (a download failure), not that the file was too big.
+            if ($actualBytes === false) {
+                @unlink($tmpPath);
+
+                throw MediaImportException::forDownloadFailed();
+            }
+
+            if ($actualBytes > $maxBytes) {
                 @unlink($tmpPath);
 
                 throw MediaImportException::forSizeExceeded();
@@ -396,6 +432,21 @@ final class MediaUploadService
         ]);
     }
 
+    /**
+     * Review finding 1 (CRITICAL): a failed write must never look like
+     * a success. Two independent guarantees, deliberately layered
+     * rather than trusting either alone: config/filesystems.php's
+     * `media` disk is `'throw' => true`, so Flysystem raises
+     * `UnableToWriteFile`/`UnableToSetVisibility` instead of logging and
+     * returning false — caught here and rethrown as MediaStorageException
+     * so no raw Flysystem/S3 error message reaches the client. The
+     * explicit `$written === false` check below is defense in depth for
+     * the (currently unreachable, given `throw => true`) case where a
+     * future config change or a different disk driver reintroduces the
+     * swallow-and-return-false behavior — this method must stay correct
+     * either way, not merely "correct because of a separate config
+     * flag today."
+     */
     private function writeToDisk(string $key, string $localPath, string $mime): void
     {
         $stream = fopen($localPath, 'rb');
@@ -405,10 +456,16 @@ final class MediaUploadService
         }
 
         try {
-            Storage::disk('media')->writeStream($key, $stream, [
+            $written = Storage::disk('media')->writeStream($key, $stream, [
                 'visibility' => 'public',
                 'mimetype' => $mime,
             ]);
+
+            if ($written === false) {
+                throw MediaStorageException::forFailedWrite();
+            }
+        } catch (FilesystemException $e) {
+            throw MediaStorageException::forFailedWrite();
         } finally {
             if (is_resource($stream)) {
                 fclose($stream);
@@ -419,10 +476,15 @@ final class MediaUploadService
     /**
      * Best-effort: images only, and only when GD can actually decode
      * the file. A failure here (missing GD, corrupt/unsupported image
-     * data GD can't parse despite finfo recognising its header) never
+     * data GD can't parse despite finfo recognising its header, OR —
+     * review finding 1 — the thumbnail write itself failing) never
      * fails the upload — it just means no thumbnail is stored, and
      * MediaResource's `thumbnail_url` falls back to null (Task 29's UI
-     * is expected to fall back to the full image).
+     * is expected to fall back to the full image). Before this fix,
+     * writeToDisk() failing here still returned $key as if the write had
+     * succeeded, persisting a `thumbnail_path` that pointed at nothing —
+     * every OTHER failure branch in this method already correctly
+     * returned null; only this one, the actual storage write, did not.
      */
     private function maybeStoreThumbnail(string $localPath, string $mime, string $organizationId, string $ulid, string $extension): ?string
     {
@@ -441,6 +503,8 @@ final class MediaUploadService
             $this->writeToDisk($key, $thumbTmpPath, $mime);
 
             return $key;
+        } catch (MediaStorageException) {
+            return null;
         } finally {
             @unlink($thumbTmpPath);
         }

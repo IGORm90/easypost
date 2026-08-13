@@ -39,6 +39,17 @@ class UploadMediaRequest extends FormRequest
             'file' => [
                 'required',
                 'file',
+                // Review finding 3 (Important): with no explicit size
+                // rule here, an oversized direct upload was rejected
+                // only by nginx's 1 MB default `client_max_body_size`
+                // (fixed separately in docker/nginx/default.conf) — an
+                // opaque HTML 413 the frontend cannot render, not a
+                // validation error this request layer produces. `max`
+                // is in kilobytes (Laravel convention); kept aligned
+                // with config('media.import_max_bytes') — the same
+                // 100 MB ceiling the from-url path already enforces —
+                // rather than a second, independent literal.
+                'max:'.intdiv((int) config('media.import_max_bytes', 100 * 1024 * 1024), 1024),
                 function (string $attribute, mixed $value, Closure $fail): void {
                     if (! $value instanceof UploadedFile) {
                         $fail('The file is invalid.');

@@ -9,19 +9,43 @@ services:
   php:
     build: ./php
     volumes: ["../:/var/www/html"]
-    depends_on: [postgres, redis]
+    # `minio-init` (below) is a "condition: service_completed_successfully"
+    # dependency, not merely a start-order one -- review finding 2
+    # (CRITICAL): every fresh environment (CI, a new machine) started
+    # MinIO with no bucket ever created, so the `media` disk's every
+    # write failed from the very first upload. php/horizon/scheduler now
+    # cannot start until the `media` bucket demonstrably exists.
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     env_file: ../.env
   horizon:
     build: ./php
     command: php artisan horizon
     volumes: ["../:/var/www/html"]
-    depends_on: [redis, postgres]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     env_file: ../.env
   scheduler:
     build: ./php
     command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
     volumes: ["../:/var/www/html"]
-    depends_on: [redis, postgres]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     env_file: ../.env
   node:
     image: node:22-alpine
@@ -58,6 +82,37 @@ services:
       MINIO_ROOT_PASSWORD: minio123
     ports: ["9000:9000", "9001:9001"]
     volumes: ["minio:/data"]
+  # Review finding 2 (CRITICAL): nothing previously created the `media`
+  # bucket -- MinIO starting with an empty volume (any fresh environment)
+  # meant the feature was 100% broken from the first request, and
+  # (before finding 1's fix) broke invisibly: writes were swallowed and
+  # reported as success. `minio/mc` is used rather than a healthcheck +
+  # curl on the `minio` image itself, since the official minio/minio
+  # image does not bundle a shell-reachable HTTP client to probe with --
+  # `mc`'s own retry loop against `mc alias set` is what actually proves
+  # the server is accepting connections, not merely that its container
+  # started. `--ignore-existing` makes this idempotent across restarts
+  # with an already-populated volume.
+  minio-init:
+    image: minio/mc
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minio minio123; do sleep 1; done &&
+      mc mb --ignore-existing local/media &&
+      mc anonymous set download local/media
+      "
+    # `mc anonymous set download` (verified against the real, torn-down-
+    # and-rebuilt stack, not assumed): bucket creation alone is not
+    # sufficient for config/filesystems.php's `media` disk `'visibility'
+    # => 'public'` to mean anything on MinIO -- MinIO does not honor the
+    # per-object ACL header Flysystem's S3 adapter sends on PutObject by
+    # default, so without an explicit anonymous-download bucket policy,
+    # every MediaResource.url/thumbnail_url this application returns
+    # 403s for an unauthenticated browser request, even though the
+    # object exists and the URL itself resolves. Confirmed by construction:
+    # `curl -I` against a just-uploaded object returned 403 before this
+    # line was added, 200 after.
   mailpit:
     image: axllent/mailpit
     ports: ["8025:8025", "1025:1025"]

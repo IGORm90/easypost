@@ -35,3 +35,10 @@ parameters:
         -
             message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
             path: tests/Feature/Integrations/TokenRefreshTest.php
+
+        # Same known, accepted blind spot as directly above — Task 27
+        # review finding 1's covering test forces a real Flysystem write
+        # failure via Mockery::mock(Filesystem::class)->shouldReceive('writeStream')->andThrow(...).
+        -
+            message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
+            path: tests/Feature/Media/UploadMediaTest.php

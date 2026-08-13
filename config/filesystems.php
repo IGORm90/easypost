@@ -89,7 +89,20 @@ return [
             'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
             'visibility' => 'public',
-            'throw' => false,
+            // Review finding 1 (CRITICAL): with 'throw' => false (this
+            // disk's original setting), Illuminate\Filesystem\
+            // FilesystemAdapter::writeStream() swallows an
+            // UnableToWriteFile failure, logs it, and returns false --
+            // MediaUploadService::writeToDisk() was discarding that
+            // false, so a failed write (missing bucket, transient S3
+            // error, anything) still produced a 201 response and a
+            // persisted Media row pointing at an object that was never
+            // written. 'throw' => true makes writeStream() (and every
+            // other operation on this disk) throw instead, so a storage
+            // failure is loud by construction -- MediaUploadService no
+            // longer has to remember to check a boolean return value
+            // for this to be safe.
+            'throw' => true,
             'report' => false,
         ],
 

@@ -4,9 +4,11 @@ use App\Models\Media;
 use App\Models\Organization;
 use App\Services\Media\MediaUploadService;
 use App\Support\SafeRemoteHost;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\UnableToWriteFile;
 
 /*
  * Task 27: POST /api/media (direct multipart upload) and
@@ -152,6 +154,47 @@ it('sanitizes a directory-traversal / control-character filename before storing 
         ->and($stored)->not->toContain('/')
         ->and($stored)->not->toContain("\r")
         ->and($stored)->not->toContain("\n");
+});
+
+it('does not report success or persist a row when the storage write fails (review finding 1)', function () {
+    // Storage::fake('media') always succeeds -- it cannot distinguish
+    // "the service checked the write" from "the write happened to
+    // work". This forces a real Flysystem failure (as a missing
+    // bucket, or a transient S3/MinIO error, would produce) via a
+    // mocked disk instead.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $failingDisk = Mockery::mock(Filesystem::class);
+    $failingDisk->shouldReceive('writeStream')
+        ->andThrow(UnableToWriteFile::atLocation('org/x/whatever.jpg', 'simulated failure'));
+    Storage::shouldReceive('disk')->with('media')->andReturn($failingDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 10, 10)])
+        ->assertStatus(500);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('stores the original file but leaves thumbnail_path null when only the thumbnail write fails (review finding 1)', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $flakyDisk = Mockery::mock(Filesystem::class);
+    // First writeStream() call is the original file (succeeds); the
+    // second is the thumbnail (fails) -- Mockery::andReturn() with
+    // multiple arguments returns them in call order.
+    $flakyDisk->shouldReceive('writeStream')->andReturn(true, false);
+    $flakyDisk->shouldReceive('url')->andReturn('http://media.test/fake-url');
+    Storage::shouldReceive('disk')->with('media')->andReturn($flakyDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 1200, 900)])
+        ->assertCreated()
+        ->assertJsonPath('data.thumbnail_url', null);
+
+    $media = Media::sole();
+    expect($media->path)->not->toBeNull()
+        ->and($media->thumbnail_path)->toBeNull();
 });
 
 // --- POST /api/media/from-url ---------------------------------------------
