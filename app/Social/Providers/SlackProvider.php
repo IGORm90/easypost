@@ -191,6 +191,19 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
     }
 
     /**
+     * `channel_id` — the one updatable setting above — is chosen from the
+     * `channels` list below rather than typed. Published through
+     * `GET /api/providers` so the settings UI can render that picker
+     * without ever matching on this provider's name.
+     *
+     * @return array<string, string>
+     */
+    public function settingOptions(): array
+    {
+        return ['channel_id' => 'channels'];
+    }
+
+    /**
      * The only recognised $option is 'channels', backed by
      * `conversations.list`. See this class's docblock for why channel
      * selection is a runtime option here rather than fixed at connect

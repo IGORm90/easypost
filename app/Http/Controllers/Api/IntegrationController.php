@@ -12,6 +12,8 @@ use App\Models\User;
 use App\Services\Integrations\Exceptions\InvalidOAuthStateException;
 use App\Services\Integrations\IntegrationService;
 use App\Services\Integrations\OAuthStateService;
+use App\Social\Contracts\DeclaresAuthFields;
+use App\Social\Contracts\DeclaresUpdatableSettings;
 use App\Social\Contracts\ManualTokenAuth;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsOptions;
@@ -62,11 +64,49 @@ class IntegrationController extends Controller
                 'name' => $provider->name(),
                 'capabilities' => $provider->capabilities(),
                 'auth_type' => $provider instanceof ManualTokenAuth ? 'manual' : 'oauth',
+                'auth_fields' => $provider instanceof DeclaresAuthFields ? $provider->authFields() : [],
+                'settings_fields' => $this->settingsFields($provider),
             ],
             array_values($this->providers->all()),
         );
 
         return response()->json($payload);
+    }
+
+    /**
+     * The settings a user picks from a server-provided list, as
+     * `{key, option}` pairs — the capability signal the settings drawer
+     * renders its pickers from (final review, Critical 4).
+     *
+     * Both halves have to be declared for a picker to exist: the key must
+     * be updatable at all (`DeclaresUpdatableSettings`, which is what the
+     * PUT validates against) AND it must name an option list to pick from
+     * (`SupportsOptions::settingOptions()`). A key declared updatable with
+     * no list is simply not a picker — it is typed, and is not listed
+     * here.
+     *
+     * This is the whole reason the frontend needs no provider names: it
+     * asks what a channel can do, never who the channel is with.
+     *
+     * @return list<array{key: string, option: string}>
+     */
+    private function settingsFields(SocialProviderInterface $provider): array
+    {
+        if (! $provider instanceof SupportsOptions || ! $provider instanceof DeclaresUpdatableSettings) {
+            return [];
+        }
+
+        $updatable = $provider->updatableSettings();
+
+        $fields = [];
+
+        foreach ($provider->settingOptions() as $key => $option) {
+            if (array_key_exists($key, $updatable)) {
+                $fields[] = ['key' => $key, 'option' => $option];
+            }
+        }
+
+        return $fields;
     }
 
     /**

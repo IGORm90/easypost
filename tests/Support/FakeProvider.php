@@ -445,6 +445,18 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     }
 
     /**
+     * No setting on this fake is chosen from a list — the 'rooms' option
+     * below exists to exercise the generic options endpoint, not to back
+     * a settings picker (this provider declares nothing updatable at all).
+     *
+     * @return array<string, string>
+     */
+    public function settingOptions(): array
+    {
+        return [];
+    }
+
+    /**
      * SupportsOptions implementation, exercised by Task 13's generic
      * `GET /api/integrations/{id}/options/{option}` endpoint tests: a
      * canned 'rooms' list, and UnknownProviderOptionException for

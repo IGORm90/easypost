@@ -171,7 +171,12 @@
             "save": "Save",
             "saved": "Settings saved.",
             "weekday": "Weekday",
-            "time": "Time"
+            "time": "Time",
+            "chooseOption": "Choose…",
+            "optionsError": "This channel's list of destinations could not be loaded. Try again later — everything else here can still be saved.",
+            "fields": {
+                "channel_id": "Destination channel"
+            }
         },
         "weekdays": {
             "0": "Mon",

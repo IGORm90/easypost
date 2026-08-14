@@ -34,4 +34,23 @@ interface SupportsOptions
      * @return array<int, array{value: string, label: string}>
      */
     public function options(Integration $integration, string $option): array;
+
+    /**
+     * Maps a settings key this provider declares as updatable (see
+     * `DeclaresUpdatableSettings`) to the `$option` name whose list the
+     * user picks its value from — e.g. `['channel_id' => 'channels']`.
+     *
+     * Final review, Critical 4: `GET /api/providers` publishes this map
+     * so the settings UI can render a picker for exactly those settings
+     * that have one, driven by a declared capability rather than by
+     * matching on a provider identifier — which the frontend is forbidden
+     * from doing outside its preview/registry layer, and which is why
+     * Slack's `channel_id` had no UI at all and every Slack post failed.
+     *
+     * An option a user never picks a setting from (a list shown for some
+     * other purpose entirely) simply is not listed here.
+     *
+     * @return array<string, string>
+     */
+    public function settingOptions(): array;
 }

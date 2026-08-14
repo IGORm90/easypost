@@ -3,6 +3,7 @@
 namespace App\Social\Providers;
 
 use App\Models\Integration;
+use App\Social\Contracts\DeclaresAuthFields;
 use App\Social\Contracts\ManualTokenAuth;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsMedia;
@@ -71,7 +72,7 @@ use InvalidArgumentException;
  * segments after the first are built from the createRecord responses
  * already in hand, without any getRecord round-trip.
  */
-class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, SupportsMedia, SupportsRefresh
+class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProviderInterface, SupportsMedia, SupportsRefresh
 {
     use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
@@ -87,6 +88,21 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
     public function name(): string
     {
         return 'Bluesky';
+    }
+
+    /**
+     * A handle plus an app password (never the account password) — this
+     * provider has no OAuth flow at all (ManualTokenAuth), so these go
+     * straight to the callback. See DeclaresAuthFields.
+     *
+     * @return list<array{key: string, type: 'text'|'password'}>
+     */
+    public function authFields(): array
+    {
+        return [
+            ['key' => 'handle', 'type' => 'text'],
+            ['key' => 'app_password', 'type' => 'password'],
+        ];
     }
 
     public function capabilities(): ProviderCapabilities

@@ -22,7 +22,27 @@ import { globSync } from 'glob'
  * into a parent component later.
  */
 const PROVIDERS = ['telegram', 'mastodon', 'bluesky', 'discord', 'slack'];
-const PROVIDER_PATTERN = new RegExp(`['"\`](?:${PROVIDERS.join('|')})['"\`]`, 'i');
+/**
+ * Final review, Important 10: this used to require the identifier to be
+ * QUOTED, which made the guard blind to exactly the shape the violation
+ * took — a bare object key. ConnectProviderModal.vue carried
+ * `OAUTH_PARAM_FIELDS = { mastodon: [...] }` and
+ * `MANUAL_FIELD_DEFS = { telegram: [...], bluesky: [...] }`: a hardcoded
+ * per-provider behaviour map, living outside components/previews/, and
+ * this guard called it green. So the quoted form is no longer the only
+ * one checked: an identifier in KEY position (`mastodon: [...]`, whether
+ * quoted or not) is the same hardcoded per-provider map by another
+ * syntax, and is now caught too.
+ *
+ * Deliberately not a bare `\btelegram\b`: prose naming a provider as an
+ * example of a generic mechanism ("whatever `extra` the backend returned
+ * — Mastodon's `{ instance }` — is round-tripped untouched") is
+ * documentation of provider-agnostic code, not a branch on a provider,
+ * and banning it would only get the explanation deleted rather than the
+ * coupling removed.
+ */
+const NAMES = PROVIDERS.join('|');
+const PROVIDER_PATTERN = new RegExp(`['"\`](?:${NAMES})['"\`]|(?:^|[{,[(\\s])(?:${NAMES})\\s*:`, 'im');
 
 // components/previews/ is where these identifiers are meant to live
 // (the registry map, and each Preview*.vue's own doc comments/labels).

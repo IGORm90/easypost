@@ -3,6 +3,7 @@
 namespace App\Social\Providers;
 
 use App\Models\Integration;
+use App\Social\Contracts\DeclaresAuthFields;
 use App\Social\Contracts\ManualTokenAuth;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Dto\AuthResultDto;
@@ -45,7 +46,7 @@ use InvalidArgumentException;
  * branch is needed here, unlike networks that can't reply to an
  * arbitrary external post id).
  */
-class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
+class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProviderInterface
 {
     use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
@@ -59,6 +60,21 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
     public function name(): string
     {
         return 'Telegram';
+    }
+
+    /**
+     * A bot token plus the chat to post into — this provider has no OAuth
+     * flow at all (ManualTokenAuth), so these go straight to the callback.
+     * See DeclaresAuthFields.
+     *
+     * @return list<array{key: string, type: 'text'|'password'}>
+     */
+    public function authFields(): array
+    {
+        return [
+            ['key' => 'bot_token', 'type' => 'password'],
+            ['key' => 'chat_id', 'type' => 'text'],
+        ];
     }
 
     public function capabilities(): ProviderCapabilities

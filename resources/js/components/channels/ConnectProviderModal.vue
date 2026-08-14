@@ -5,25 +5,23 @@ import { isAxiosError } from 'axios';
 import Modal from '../ui/Modal.vue';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
-import { useIntegrationsStore, type Integration, type Provider } from '../../stores/integrations';
+import { useIntegrationsStore, type Integration, type Provider, type ProviderAuthField } from '../../stores/integrations';
 
 /**
  * Connects a channel, generically across every provider's `auth_type`
  * (never branching on provider identifier to decide *which flow* to
  * run — only `auth_type` decides that, per this task's brief).
  *
- * The one place this component *is* provider-aware is the small local
- * field maps below (`OAUTH_PARAM_FIELDS`/`MANUAL_FIELD_DEFS`): the API
- * reports auth_type but not what a manual provider's credential form
- * should contain (Telegram wants bot_token+chat_id, Bluesky wants
- * handle+app_password) or which OAuth providers need input collected
- * *before* the redirect can even be requested (Mastodon's instance
- * host — POST .../auth-url itself needs it). There is no way to derive
- * that shape from `GET /api/providers` today, so it lives here as a
- * small, additive lookup table — a provider newly implementing
- * ManualTokenAuth without an entry here still gets a working (if
- * generic, single-field) form via FALLBACK_MANUAL_FIELDS, and a new
- * OAuth provider needing no pre-redirect params needs no entry at all.
+ * Final review, Important 10: this component used to carry its own
+ * hardcoded per-provider field maps for exactly that — which credentials
+ * a manual provider's form needs, and which OAuth providers need a value
+ * collected before the redirect can even be requested. That is a
+ * behaviour map keyed by provider name living outside the preview
+ * registry, and the isolation guard missed it only because the keys were
+ * unquoted. `GET /api/providers` now reports each provider's own
+ * `auth_fields` declaration (DeclaresAuthFields), so the form is rendered
+ * from what the server says, and a provider gaining or changing a field
+ * needs no change here at all.
  */
 const props = defineProps<{
     open: boolean;
@@ -44,48 +42,48 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: []; connected: [Integration] }>();
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const store = useIntegrationsStore();
 
-interface FieldDef {
-    key: string;
-    labelKey: string;
-    type: 'text' | 'password';
-}
-
-const OAUTH_PARAM_FIELDS: Record<string, FieldDef[]> = {
-    mastodon: [{ key: 'instance', labelKey: 'channels.connectModal.fields.instance', type: 'text' }],
-};
-
-const MANUAL_FIELD_DEFS: Record<string, FieldDef[]> = {
-    telegram: [
-        { key: 'bot_token', labelKey: 'channels.connectModal.fields.botToken', type: 'password' },
-        { key: 'chat_id', labelKey: 'channels.connectModal.fields.chatId', type: 'text' },
-    ],
-    bluesky: [
-        { key: 'handle', labelKey: 'channels.connectModal.fields.handle', type: 'text' },
-        { key: 'app_password', labelKey: 'channels.connectModal.fields.appPassword', type: 'password' },
-    ],
-};
-
-const FALLBACK_MANUAL_FIELDS: FieldDef[] = [{ key: 'token', labelKey: 'channels.connectModal.fields.token', type: 'password' }];
+/**
+ * A manual provider that declares no fields still needs *something* asked
+ * for — a credential form with no inputs cannot connect anything — so a
+ * single generic token field stands in until that provider declares its
+ * own shape. An OAuth provider declaring nothing simply needs nothing
+ * before the redirect, which is the normal case.
+ */
+const FALLBACK_MANUAL_FIELDS: ProviderAuthField[] = [{ key: 'token', type: 'password' }];
 
 const selected = ref<Provider | null>(null);
 const values = ref<Record<string, string>>({});
 const submitting = ref(false);
 const error = ref<string | null>(null);
 
-const fields = computed<FieldDef[]>(() => {
+const fields = computed<ProviderAuthField[]>(() => {
     if (!selected.value) {
         return [];
     }
 
-    if (selected.value.auth_type === 'manual') {
-        return MANUAL_FIELD_DEFS[selected.value.identifier] ?? FALLBACK_MANUAL_FIELDS;
+    if (selected.value.auth_fields.length > 0) {
+        return selected.value.auth_fields;
     }
 
-    return OAUTH_PARAM_FIELDS[selected.value.identifier] ?? [];
+    return selected.value.auth_type === 'manual' ? FALLBACK_MANUAL_FIELDS : [];
 });
+
+/**
+ * i18n label for a declared field key. The key is snake_case as the
+ * provider declares it (`bot_token`); the message key is its camelCase
+ * form, so copy already written for these fields keeps working and a
+ * newly declared field falls back to its raw key rather than rendering
+ * vue-i18n's missing-key placeholder as if it were a label.
+ */
+function fieldLabel(key: string): string {
+    const camel = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    const messageKey = `channels.connectModal.fields.${camel}`;
+
+    return te(messageKey) ? t(messageKey) : key;
+}
 
 function reset(): void {
     selected.value = null;
@@ -204,7 +202,7 @@ async function submit(): Promise<void> {
                 :id="`connect-${field.key}`"
                 v-model="values[field.key]"
                 :type="field.type"
-                :label="t(field.labelKey)"
+                :label="fieldLabel(field.key)"
                 required
             />
 

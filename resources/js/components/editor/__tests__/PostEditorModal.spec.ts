@@ -39,6 +39,8 @@ function blueskyProvider(): Provider {
         identifier: 'bluesky',
         name: 'Bluesky',
         auth_type: 'oauth',
+        auth_fields: [],
+        settings_fields: [],
         capabilities: {
             maxCharacters: 300,
             maxImages: 4,

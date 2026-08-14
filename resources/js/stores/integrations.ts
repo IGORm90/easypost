@@ -16,11 +16,30 @@ export interface ProviderCapabilities {
     requiresAltText: boolean;
 }
 
+/** A value the connect form must collect before the flow can start — a manual provider's credential, or an OAuth provider's pre-redirect parameter. Declared by the provider (DeclaresAuthFields), never by this app. */
+export interface ProviderAuthField {
+    key: string;
+    type: 'text' | 'password';
+}
+
+/** A setting whose value the user picks from a server-provided list rather than typing: `key` is the settings key, `option` names the list to fetch from `/integrations/{id}/options/{option}`. */
+export interface ProviderSettingField {
+    key: string;
+    option: string;
+}
+
 export interface Provider {
     identifier: string;
     name: string;
     capabilities: ProviderCapabilities;
     auth_type: ProviderAuthType;
+    auth_fields: ProviderAuthField[];
+    settings_fields: ProviderSettingField[];
+}
+
+export interface ProviderOption {
+    value: string;
+    label: string;
 }
 
 export interface Integration {
@@ -49,7 +68,12 @@ export interface UpdateIntegrationPayload {
     name?: string;
     group_name?: string | null;
     customer_name?: string | null;
-    settings?: Record<string, unknown> | null;
+    /**
+     * Per-provider settings, validated server-side against the keys the
+     * owning provider declares updatable. `null` is NOT an accepted value
+     * — omit the key entirely to change nothing.
+     */
+    settings?: Record<string, unknown>;
     time_slots?: number[];
 }
 
@@ -73,6 +97,19 @@ export const useIntegrationsStore = defineStore('integrations', {
         async fetch(): Promise<void> {
             const { data } = await api.get<Integration[]>('/integrations');
             this.list = data;
+        },
+
+        /**
+         * Reads a provider-defined list of selectable values for an
+         * already-connected channel — the `option` name comes from the
+         * provider's own `settings_fields` declaration, so nothing here
+         * knows what any particular list contains or which providers have
+         * one.
+         */
+        async fetchOptions(id: string, option: string): Promise<ProviderOption[]> {
+            const { data } = await api.get<{ options: ProviderOption[] }>(`/integrations/${id}/options/${option}`);
+
+            return data.options;
         },
 
         async fetchProviders(): Promise<void> {

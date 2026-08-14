@@ -3,6 +3,7 @@
 namespace App\Social\Providers;
 
 use App\Models\Integration;
+use App\Social\Contracts\DeclaresAuthFields;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsMedia;
 use App\Social\Dto\AuthResultDto;
@@ -54,7 +55,7 @@ use InvalidArgumentException;
  * behalf, since doing so would hide upload failures from composition
  * time (uploadMedia()'s own docblock).
  */
-class MastodonProvider implements SocialProviderInterface, SupportsMedia
+class MastodonProvider implements DeclaresAuthFields, SocialProviderInterface, SupportsMedia
 {
     use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
@@ -72,6 +73,20 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
     public function name(): string
     {
         return 'Mastodon';
+    }
+
+    /**
+     * The instance host is needed before the redirect can even be built:
+     * `generateAuthUrl()` has no url to send the user to without it, and
+     * the app registration it performs is per-instance. Declared here so
+     * the connect form can ask for it without the frontend knowing which
+     * provider needs what — see DeclaresAuthFields.
+     *
+     * @return list<array{key: string, type: 'text'|'password'}>
+     */
+    public function authFields(): array
+    {
+        return [['key' => 'instance', 'type' => 'text']];
     }
 
     public function capabilities(): ProviderCapabilities
