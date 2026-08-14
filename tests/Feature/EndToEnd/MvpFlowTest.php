@@ -7,6 +7,7 @@ use App\Models\PostGroup;
 use App\Models\User;
 use App\Services\Billing\PlanLimitService;
 use App\Services\Posts\PublishService;
+use Carbon\CarbonInterface;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -97,8 +98,21 @@ it('covers the full mvp flow end to end', function () {
         ],
     ])->assertCreated()->json('id');
 
-    // 5. The publish job was queued for this exact group.
-    Queue::assertPushed(PublishPostJob::class, fn (PublishPostJob $job): bool => $job->postGroupId === $groupId);
+    // 5. The publish job was queued for this exact group, delayed until
+    // the requested publish_date. Asserting the group id alone would
+    // still pass if PostGroupService stopped calling ->delay($group->
+    // publish_date) at dispatch time (PostGroupService.php) — Queue::
+    // assertPushed's closure receives the job instance, and Queueable's
+    // ->delay() sets $job->delay directly on it, so it can (and must) be
+    // checked here.
+    $group = PostGroup::find($groupId);
+
+    Queue::assertPushed(
+        PublishPostJob::class,
+        fn (PublishPostJob $job): bool => $job->postGroupId === $groupId
+            && $job->delay instanceof CarbonInterface
+            && $job->delay->equalTo($group->publish_date)
+    );
 
     // 6. The post is visible on the calendar.
     $calendar = $this->getJson('/api/calendar?'.http_build_query([
