@@ -45,4 +45,18 @@ final readonly class MediaDto
     {
         return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId);
     }
+
+    /**
+     * Returns a new MediaDto pointing at $path instead of this one's.
+     * Used by the publishing pipeline (final-review batch 2, Critical 3):
+     * `Media::toDto()` carries the STORAGE KEY, which no provider can
+     * read — `PublishService` swaps in the path of a real local copy
+     * (see `MediaTempFiles`) before any provider is handed the DTO, and
+     * $sizeBytes deliberately still comes from the `media` row rather
+     * than from that copy, per this class's "captured once" rule.
+     */
+    public function withPath(string $path): self
+    {
+        return new self($path, $this->mimeType, $this->sizeBytes, $this->altText, $this->remoteId);
+    }
 }

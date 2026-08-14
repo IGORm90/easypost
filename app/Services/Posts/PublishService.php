@@ -7,11 +7,16 @@ use App\Models\Integration;
 use App\Models\Media;
 use App\Models\Post;
 use App\Models\PostGroup;
+use App\Services\Media\Exceptions\MediaTemporaryFileException;
+use App\Services\Media\MediaTempFiles;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
+use App\Social\Contracts\SocialProviderInterface;
+use App\Social\Contracts\SupportsMedia;
 use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Exceptions\ProviderAuthException;
+use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
@@ -218,6 +223,7 @@ class PublishService
     public function __construct(
         private readonly ProviderRegistry $registry,
         private readonly PostStateMachine $stateMachine,
+        private readonly MediaTempFiles $mediaFiles,
     ) {}
 
     /**
@@ -519,7 +525,85 @@ class PublishService
             return [false, null];
         }
 
-        return DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion): array {
+        // Media is prepared BEFORE the transaction below opens, and the
+        // temp files are discarded after it closes — final-review batch
+        // 2, Critical 3. Two reasons it cannot go inside:
+        //
+        //  - `SupportsMedia::uploadMedia()` is one HTTP call per
+        //    attachment, each bounded at 45s (`BoundsHttpTimeouts`), so a
+        //    four-image segment could hold this channel's row locks for
+        //    three minutes — well past `supervisor-publish`'s 90s worker
+        //    timeout, which is precisely the shape batch 1 spent its
+        //    Critical 3 on.
+        //  - Copying a file out of object storage is I/O with no bearing
+        //    on any row this transaction protects.
+        //
+        // What is deliberately NOT relaxed by doing the work early:
+        // nothing here publishes anything. A pre-upload for a run that
+        // then loses the lock, or whose generation has been superseded,
+        // leaves an unreferenced attachment on the network (Mastodon
+        // expires unused media, Bluesky garbage-collects unreferenced
+        // blobs, and Slack's uploadMedia() stops before the share step
+        // that would make a file visible) — never a visible post. The
+        // decision to publish is still made entirely inside the
+        // transaction, under the same locks and the same re-checks as
+        // before.
+        //
+        // $preparationFailure defers a media failure INTO the transaction
+        // rather than handling it here: it is rethrown at the top of the
+        // provider try/catch below, so a missing file or a failed
+        // pre-upload settles through exactly the same permanent /
+        // transient / rate-limit machinery a failed `post()` does, under
+        // the row locks that make marking those rows safe.
+        [$integration, $provider] = $this->channelProvider($integrationId);
+
+        $preparedMedia = [];
+        $temporaryFiles = [];
+        $preparationFailure = null;
+
+        if ($integration !== null && $provider !== null) {
+            try {
+                [$preparedMedia, $temporaryFiles] = $this->prepareMedia($provider, $integration, $pending);
+            } catch (ProviderException|MediaTemporaryFileException $e) {
+                $preparationFailure = $e;
+            }
+        }
+
+        try {
+            return $this->publishLockedChannel(
+                $postGroupId,
+                $integrationId,
+                $pending,
+                $queueVersion,
+                $preparedMedia,
+                $preparationFailure,
+            );
+        } finally {
+            $this->mediaFiles->discard($temporaryFiles);
+        }
+    }
+
+    /**
+     * The transactional half of publishChannel() — everything that
+     * decides whether this channel publishes, and records what happened.
+     * Split out only so the media preparation above can sit outside the
+     * transaction while every lock, re-check and outcome mapping below
+     * stays exactly where (and in the order) it was.
+     *
+     * @param  Collection<int, Post>  $pending
+     * @param  array<string, list<MediaDto>>  $preparedMedia  Publish-ready DTOs (local path, pre-upload handle where the provider needs one), keyed by post id.
+     * @param  \Throwable|null  $preparationFailure  A media failure to raise inside the provider try/catch below, so it settles like any other provider failure.
+     * @return array{0: bool, 1: ?int}
+     */
+    private function publishLockedChannel(
+        string $postGroupId,
+        string $integrationId,
+        Collection $pending,
+        ?int $queueVersion,
+        array $preparedMedia,
+        ?\Throwable $preparationFailure,
+    ): array {
+        return DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion, $preparedMedia, $preparationFailure): array {
             // Re-lock exactly the rows about to be published, inside the
             // SAME transaction as the provider call and its persistence
             // — see the class docblock's idempotency section, point 4.
@@ -653,9 +737,17 @@ class PublishService
                 ->orderByDesc('order')
                 ->value('release_id');
 
-            $chain = $this->buildChain($pending, $anchor);
+            $chain = $this->buildChain($pending, $anchor, $preparedMedia);
 
             try {
+                // Raised here, not where it was caught: a media failure
+                // is a failure to publish this channel, and every kind of
+                // failure to publish this channel is settled by the same
+                // catch arms below, under these row locks.
+                if ($preparationFailure !== null) {
+                    throw $preparationFailure;
+                }
+
                 $results = $provider->post($integration, $chain);
 
                 // array_key_exists(), not isset()/direct indexing
@@ -712,6 +804,16 @@ class PublishService
                 return [true, $e->retryAfterSeconds > 0 ? $e->retryAfterSeconds : null];
             } catch (ProviderTransientException) {
                 return [true, null];
+            } catch (MediaTemporaryFileException $e) {
+                // The attachment could not be read out of storage at all
+                // (missing object, storage outage). Permanent for this
+                // run: a retry re-reads the same key, and the message
+                // names only the media id — never the storage key or the
+                // object's contents — because it lands in `posts.error`
+                // and is returned by `PostResource`.
+                $this->markAllError($pending, $e->getMessage());
+
+                return [false, null];
             } catch (ProviderPermanentException $e) {
                 $this->markAllError($pending, $e->getMessage());
 
@@ -728,19 +830,106 @@ class PublishService
     }
 
     /**
+     * Resolves this channel's integration and provider outside any
+     * transaction, for the media preparation that has to happen before
+     * one opens. Returns `[null, null]` when the integration is gone —
+     * the transaction re-reads it and owns that outcome (see
+     * publishLockedChannel()); this method never decides anything.
+     *
+     * @return array{0: Integration|null, 1: SocialProviderInterface|null}
+     */
+    private function channelProvider(string $integrationId): array
+    {
+        /** @var Integration|null $integration */
+        $integration = Integration::withoutGlobalScope('organization')->find($integrationId);
+
+        if ($integration === null) {
+            return [null, null];
+        }
+
+        return [$integration, $this->registry->get($integration->provider_identifier)];
+    }
+
+    /**
+     * Makes every attachment on every pending segment actually
+     * publishable — final-review batch 2, Critical 3 — and returns
+     * `[dtosByPostId, temporaryFilePaths]`.
+     *
+     * Two steps, in this order, per attachment:
+     *
+     *  1. Copy the object off its storage disk into a real local file
+     *     (`MediaTempFiles`) and point the DTO at THAT path. Every
+     *     provider reads its bytes from the path — `file_get_contents()`,
+     *     `filesize()`, `basename()` — and `Media::$path` is an S3/MinIO
+     *     key, so before this step Telegram and Discord were sending
+     *     zero-byte attachments.
+     *  2. If the provider implements `SupportsMedia`, pre-upload it and
+     *     keep the returned DTO (with its `$remoteId`), because
+     *     Mastodon/Bluesky/Slack reference an already-uploaded handle
+     *     from the post body and refuse — permanently — to publish a
+     *     media DTO without one. Nothing in `app/` had ever made this
+     *     call; `SupportsMedia`'s docblock claimed the editor did, and no
+     *     such call existed anywhere.
+     *
+     * The caller discards every returned temp path in a `finally`,
+     * including on the failure paths: this method's own `throw` still
+     * returns nothing, so it cleans up what it created before rethrowing.
+     *
      * @param  Collection<int, Post>  $pending
+     * @return array{0: array<string, list<MediaDto>>, 1: list<string>}
+     */
+    private function prepareMedia(SocialProviderInterface $provider, Integration $integration, Collection $pending): array
+    {
+        $prepared = [];
+        $temporaryFiles = [];
+
+        try {
+            foreach ($pending as $post) {
+                $dtos = [];
+
+                foreach ($post->media as $media) {
+                    $localPath = $this->mediaFiles->copy($media);
+                    $temporaryFiles[] = $localPath;
+
+                    $dto = $media->toDto()->withPath($localPath);
+
+                    if ($provider instanceof SupportsMedia) {
+                        $dto = $provider->uploadMedia($integration, $dto);
+                    }
+
+                    $dtos[] = $dto;
+                }
+
+                if ($dtos !== []) {
+                    $prepared[$post->id] = $dtos;
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->mediaFiles->discard($temporaryFiles);
+
+            throw $e;
+        }
+
+        return [$prepared, $temporaryFiles];
+    }
+
+    /**
+     * @param  Collection<int, Post>  $pending
+     * @param  array<string, list<MediaDto>>  $preparedMedia  Keyed by post id — see prepareMedia(). A segment with no attachments simply has no entry.
      * @return list<PostPayloadDto>
      */
-    private function buildChain(Collection $pending, ?string $anchor): array
+    private function buildChain(Collection $pending, ?string $anchor, array $preparedMedia = []): array
     {
         $chain = [];
 
         foreach ($pending as $index => $post) {
             $payload = new PostPayloadDto(
                 content: $post->content,
-                media: $post->media
-                    ->map(fn (Media $media): MediaDto => $media->toDto())
-                    ->all(),
+                // Never `$media->toDto()` directly: that DTO points at a
+                // storage key no provider can read, and carries no
+                // pre-upload handle. prepareMedia() is the only thing
+                // that produces a publishable MediaDto.
+                media: $preparedMedia[$post->id] ?? [],
                 settings: $post->settings ?? [],
             );
 
