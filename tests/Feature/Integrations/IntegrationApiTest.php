@@ -334,7 +334,7 @@ it('recovers from a lost race on the unique index instead of 500ing', function (
 
 // --- PUT /api/integrations/{id} -------------------------------------------
 
-it('updates name/group/customer/settings and replaces time_slots', function () {
+it('updates name/group/customer and replaces time_slots', function () {
     $org = Organization::factory()->create();
     $integration = Integration::factory()->create(['organization_id' => $org->id]);
     actingAsMember($org, 'ADMIN');
@@ -343,7 +343,6 @@ it('updates name/group/customer/settings and replaces time_slots', function () {
         'name' => 'Renamed',
         'group_name' => 'Group 1',
         'customer_name' => 'Acme',
-        'settings' => ['foo' => 'bar'],
         'time_slots' => [0, 60, 10079],
     ]);
 
@@ -351,7 +350,6 @@ it('updates name/group/customer/settings and replaces time_slots', function () {
     expect($response->json('name'))->toBe('Renamed')
         ->and($response->json('group_name'))->toBe('Group 1')
         ->and($response->json('customer_name'))->toBe('Acme')
-        ->and($response->json('settings'))->toBe(['foo' => 'bar'])
         ->and($response->json('time_slots'))->toEqualCanonicalizing([0, 60, 10079])
         ->and($integration->fresh()->timeSlots()->count())->toBe(3);
 });
@@ -517,4 +515,96 @@ it("rejects reading another organization's channel options as not found", functi
     actingAsMember($orgA, 'USER');
 
     $this->getJson("/api/integrations/{$foreign->id}/options/rooms")->assertNotFound();
+});
+
+/*
+ * Final-review batch 2, Important 4: `settings` is no longer a
+ * write-anything blob. The keys a channel accepts come from its own
+ * provider (App\Social\Contracts\DeclaresUpdatableSettings); a provider
+ * that declares nothing accepts nothing. Slack is the one provider with
+ * a legitimately user-changeable setting today (which channel to post
+ * into) — batch 3's picker UI writes it through exactly this endpoint,
+ * which is why this is a key allow-list rather than "drop settings".
+ */
+it('rejects a settings key the channel\'s provider does not declare updatable', function () {
+    $org = Organization::factory()->create();
+    // The Mastodon instance host is the sharpest case: repointing it aims
+    // every future publish at a server of the caller's choosing, with no
+    // connect flow — the cheapest entry into this batch's SSRF findings.
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'mastodon',
+        'settings' => ['instance' => 'mastodon.social'],
+    ]);
+    actingAsMember($org, 'ADMIN');
+
+    $this->putJson("/api/integrations/{$integration->id}", [
+        'settings' => ['instance' => 'attacker.example'],
+    ])->assertInvalid(['settings']);
+
+    expect($integration->fresh()->settings)->toBe(['instance' => 'mastodon.social']);
+});
+
+it('rejects any settings key at all for a provider declaring none', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'settings' => ['chat_id' => '-100'],
+    ]);
+    actingAsMember($org, 'ADMIN');
+
+    $this->putJson("/api/integrations/{$integration->id}", [
+        'settings' => ['chat_id' => '-999'],
+    ])->assertInvalid(['settings']);
+
+    expect($integration->fresh()->settings)->toBe(['chat_id' => '-100']);
+});
+
+it('accepts a declared settings key and merges it without dropping the rest', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'slack',
+        'settings' => ['team_id' => 'T1', 'channel_id' => 'C-old'],
+    ]);
+    actingAsMember($org, 'ADMIN');
+
+    $this->putJson("/api/integrations/{$integration->id}", [
+        'settings' => ['channel_id' => 'C-new'],
+    ])->assertOk();
+
+    // Merged, not replaced: a partial settings payload must never erase
+    // what the connect flow wrote.
+    expect($integration->fresh()->settings)->toBe(['team_id' => 'T1', 'channel_id' => 'C-new']);
+});
+
+it('validates the shape of a declared settings key', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'slack',
+        'settings' => ['channel_id' => 'C-old'],
+    ]);
+    actingAsMember($org, 'ADMIN');
+
+    $this->putJson("/api/integrations/{$integration->id}", [
+        'settings' => ['channel_id' => ['not', 'a', 'string']],
+    ])->assertInvalid(['settings.channel_id']);
+});
+
+/*
+ * Final-review batch 2, Important 5: auth-url is the second route in this
+ * application that makes a server-originated request to a caller-named
+ * host (MastodonProvider registers an OAuth app per instance), and it
+ * carried no rate limit at all. Same 10/min budget as media/from-url.
+ */
+it('throttles auth-url', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'ADMIN');
+
+    for ($i = 0; $i < 10; $i++) {
+        $this->postJson('/api/integrations/fake/auth-url')->assertOk();
+    }
+
+    $this->postJson('/api/integrations/fake/auth-url')->assertStatus(429);
 });

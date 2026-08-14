@@ -156,12 +156,27 @@ class IntegrationService
      * `UpdateIntegrationRequest` (range/uniqueness of `time_slots`
      * already enforced there).
      *
-     * @param  array{name?: string, group_name?: ?string, customer_name?: ?string, settings?: ?array<string, mixed>, time_slots?: list<int>}  $data
+     * `settings` is MERGED, never replaced — final-review batch 2,
+     * Important 4. `UpdateIntegrationRequest` now only lets through the
+     * keys the channel's own provider declares updatable
+     * (`DeclaresUpdatableSettings`), so a whole-blob assignment here
+     * would delete every key the connect flow wrote and this request did
+     * not happen to mention — e.g. saving a Slack channel choice would
+     * wipe the workspace settings alongside it. Merging is what makes
+     * "only the declared keys are writable" true of the stored row, not
+     * just of the request payload.
+     *
+     * @param  array{name?: string, group_name?: ?string, customer_name?: ?string, settings?: array<string, mixed>, time_slots?: list<int>}  $data
      */
     public function update(Integration $integration, array $data): Integration
     {
         DB::transaction(function () use ($integration, $data): void {
-            $integration->fill(Arr::only($data, ['name', 'group_name', 'customer_name', 'settings']));
+            $integration->fill(Arr::only($data, ['name', 'group_name', 'customer_name']));
+
+            if (array_key_exists('settings', $data)) {
+                $integration->settings = array_merge($integration->settings ?? [], $data['settings']);
+            }
+
             $integration->save();
 
             if (array_key_exists('time_slots', $data)) {

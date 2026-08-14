@@ -131,6 +131,16 @@ Route::middleware('auth:sanctum')->group(function () {
  * gating it here covers "starting a connect" regardless of provider. The
  * actual guarantee against a race remains IntegrationService::connect()'s
  * own withLimit() call, not this middleware.
+ *
+ * `throttle:10,1` on `auth-url` (final-review batch 2, Important 5) — the
+ * same budget `media/from-url` carries, and for the same reason: this is
+ * the second route in this application that makes a SERVER-ORIGINATED
+ * request to a host the caller names. `MastodonProvider::registerOrReuseApp()`
+ * issues a fresh `POST https://{instance}/api/v1/apps` for every host
+ * that misses the per-host cache, so without a limit an authenticated
+ * admin can drive unbounded outbound POSTs at arbitrary hosts — a
+ * reflection/amplification primitive, and a way to tie up workers.
+ * `role:ADMIN` bounds WHO, not HOW MANY.
  */
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('providers', [IntegrationController::class, 'providers']);
@@ -141,7 +151,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('organization')->group(function () {
             Route::get('/', [IntegrationController::class, 'index']);
             Route::post('{provider}/auth-url', [IntegrationController::class, 'authUrl'])
-                ->middleware(['role:ADMIN', 'plan:channels']);
+                ->middleware(['role:ADMIN', 'plan:channels', 'throttle:10,1']);
             Route::get('{id}/options/{option}', [IntegrationController::class, 'options']);
             Route::put('{id}', [IntegrationController::class, 'update']);
             Route::post('{id}/disable', [IntegrationController::class, 'disable']);

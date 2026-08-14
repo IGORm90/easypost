@@ -3,6 +3,7 @@
 namespace App\Social\Providers;
 
 use App\Models\Integration;
+use App\Social\Contracts\DeclaresUpdatableSettings;
 use App\Social\Contracts\SocialProviderInterface;
 use App\Social\Contracts\SupportsMedia;
 use App\Social\Contracts\SupportsOptions;
@@ -73,7 +74,7 @@ use InvalidArgumentException;
  * approximation, not a hidden one; see task-15-report.md for the
  * reasoning.
  */
-class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsOptions
+class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterface, SupportsMedia, SupportsOptions
 {
     use BoundsHttpTimeouts, MapsHttpErrors;
 
@@ -166,6 +167,27 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
             name: is_string($team['name'] ?? null) && $team['name'] !== '' ? (string) $team['name'] : 'Slack workspace',
             token: $accessToken,
         );
+    }
+
+    /**
+     * `channel_id` is the one setting a connected Slack workspace
+     * legitimately changes after connecting — which channel to post into
+     * — and it is what `options('channels')` above exists to let the user
+     * pick from (Task 13's generic options endpoint; the picker UI is
+     * batch 3). Everything else in this integration's settings stays
+     * where the connect flow put it. See DeclaresUpdatableSettings for
+     * why this declaration lives here rather than in the request class.
+     *
+     * The value is opaque to this application (Slack's own `C…`/`G…` id);
+     * `chat.postMessage` is the authority on whether it names a channel
+     * this token may post to, and answers `channel_not_found` if not —
+     * so this validates shape, not existence.
+     *
+     * @return array<string, list<string>>
+     */
+    public function updatableSettings(): array
+    {
+        return ['channel_id' => ['required', 'string', 'max:255']];
     }
 
     /**
@@ -472,7 +494,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
             throw new ProviderTransientException('Network error while calling the Slack API.');
         }
 
-        return $response;
+        return $this->refuseRedirect($response, $this->name());
     }
 
     /**

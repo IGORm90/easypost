@@ -18,6 +18,19 @@
  *    directly instead of going through SocialProviderInterface /
  *    ProviderRegistry). Neither check subsumes the other.
  *
+ * Two stated limits of the grep layer, corrected here rather than
+ * overclaimed (final-review batch 2, minor finding). The pattern is
+ * `['\"]{$p}['\"]`, so it only sees a provider name that is IMMEDIATELY
+ * quote-wrapped — `'telegram'`, not `telegram` in prose or
+ * `'tele'.'gram'` — and the `str_contains($line, 'app/Social/Providers')`
+ * exclusion matches the WHOLE grep line, so a violation whose own text
+ * happens to mention that path excludes itself. There are provider-name
+ * mentions in `app/` today it does not see; all of them are comments
+ * describing real behaviour, so the RULE is not violated — but this
+ * guard's reach is narrower than "any mention of a network's name
+ * anywhere else in app/", and reading it as that guarantee would be a
+ * mistake.
+ *
  * The grep check deliberately does NOT pipe grep's output through a
  * second grep with `|| true`: that pattern silently turns "the search
  * itself failed" (missing grep binary, bad path, permission error) into
