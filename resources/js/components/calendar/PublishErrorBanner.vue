@@ -85,8 +85,6 @@ async function retry(groupId: string): Promise<void> {
 }
 
 watch(() => props.range, load, { immediate: true, deep: true });
-
-defineExpose({ load });
 </script>
 
 <template>
