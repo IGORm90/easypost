@@ -34,12 +34,15 @@ use RuntimeException;
  * Idempotent by construction, not by accident: the demo user/org are
  * looked up by fixed, well-known identifiers (DEMO_EMAIL/DEMO_SLUG) via
  * `updateOrCreate()`, and every other piece of demo content under that
- * organization is deleted and rebuilt from scratch on every run —
- * `wipeExistingContent()` below, including the real objects this run's
- * predecessor wrote to the `media` disk (MinIO in dev; see
- * MediaUploadService's docblock for why that disk is never the
- * application's own filesystem). Running this command twice in a row
- * therefore converges to the exact same ten post groups and five media
+ * organization is deleted and rebuilt from scratch on every run — the
+ * real objects this run's predecessor wrote to the `media` disk (MinIO
+ * in dev; see MediaUploadService's docblock for why that disk is never
+ * the application's own filesystem) are wiped in run() itself, before
+ * `wipeExistingContent()` (below) deletes the corresponding DB rows —
+ * see run()'s comment for why those two wipes are deliberately kept on
+ * opposite sides of the DB transaction boundary. Running this command
+ * twice in a row therefore converges to the exact same ten post groups
+ * and five media
  * rows, never a growing pile of duplicates — "runnable repeatedly on a
  * dev database without corrupting it" per the task-37 brief. The
  * organization's own id is stable across runs too (same row, reused),
@@ -116,22 +119,40 @@ class DemoSeeder extends Seeder
         OrganizationContext::set($organization);
 
         try {
-            // Task 37 fix round 1 (Minor 11): wrapped in a DB transaction
-            // so a mid-run failure (e.g. MinIO down after the wipe below
-            // already ran) rolls the row-level changes back instead of
-            // leaving the demo org emptied. This is NOT a full guarantee
-            // of atomicity, though: createMedia() writes real objects to
-            // the `media` disk (MinIO/S3) via MediaUploadService::store(),
-            // and object storage writes are not part of this (or any)
-            // database transaction — a rollback here undoes the `media`
-            // table rows but cannot un-write an object that already
-            // landed on disk. A failure after some uploads succeeded can
-            // therefore leave orphaned objects under `org/{id}` even
-            // though the DB rows referencing them are gone; the next
-            // `make seed` run's wipeExistingContent() deletes that whole
-            // directory regardless of what the DB says, so orphans don't
-            // accumulate across runs, but a run that fails mid-way is not
-            // perfectly atomic end to end.
+            // Task 37 fix round 1 (Minor 11, round-2 residual 1): the
+            // object-storage wipe runs BEFORE the DB transaction opens,
+            // deliberately outside it. It used to be the first statement
+            // inside DB::transaction() below, which was worse than the
+            // original "no transaction" bug it was meant to fix: a
+            // rollback (e.g. MinIO going down partway through
+            // createMedia()) would restore the `media` rows this wipe
+            // had just deleted, while the real objects those rows point
+            // at were already gone for good — an org that looks intact
+            // in the DB but 404s on every image, strictly worse than the
+            // old "emptied" failure mode. Running it first, before any
+            // row is touched, means a failure here (or later) never
+            // leaves restored rows pointing at deleted objects: either
+            // the wipe hasn't happened yet (nothing touched) or it has
+            // and the transaction below is free to roll its row changes
+            // back without resurrecting anything that points at a
+            // deleted object.
+            //
+            // The DB transaction that follows still isn't a full
+            // atomicity guarantee: createMedia() (inside it) writes new
+            // objects to the `media` disk (MinIO/S3) via
+            // MediaUploadService::store(), and object storage writes are
+            // not part of this (or any) database transaction — a
+            // rollback undoes the new `media` rows but cannot un-write
+            // an object that already landed on disk. A failure after
+            // some uploads succeeded can therefore leave orphaned NEW
+            // objects under `org/{id}` even though the DB rows
+            // referencing them are gone; the next `make seed` run's
+            // object-storage wipe (this same line, run first again)
+            // deletes that whole directory regardless of what the DB
+            // says, so orphans don't accumulate across runs — but a run
+            // that fails mid-way is not perfectly atomic end to end.
+            Storage::disk('media')->deleteDirectory("org/{$organization->id}");
+
             DB::transaction(function () use ($organization, $user): void {
                 $this->wipeExistingContent($organization);
 
@@ -161,14 +182,18 @@ class DemoSeeder extends Seeder
     }
 
     /**
-     * Deletes every piece of demo content owned by $organization —
-     * media (row AND the real object on the `media` disk), post groups
-     * (cascades to their posts and post_group_tag rows — see the
-     * `post_groups`/`posts` migrations), integrations (soft-deleting;
-     * force-deleted here so a reseed never accumulates trashed rows a
-     * unique constraint could someday collide with), and tags. The
-     * organization and user rows themselves are reused, not deleted —
-     * see class docblock for why a stable id matters here.
+     * Deletes every DB row of existing demo content owned by
+     * $organization — media, post groups (cascades to their posts and
+     * post_group_tag rows — see the `post_groups`/`posts` migrations),
+     * integrations (soft-deleting; force-deleted here so a reseed never
+     * accumulates trashed rows a unique constraint could someday collide
+     * with), and tags. The organization and user rows themselves are
+     * reused, not deleted — see class docblock for why a stable id
+     * matters here.
+     *
+     * Deliberately does NOT touch the `media` disk — see run()'s comment
+     * for why the real object-storage wipe happens before this method is
+     * ever called, outside the DB transaction this runs inside of.
      *
      * Integration rows are force-deleted one at a time via a scoped
      * `get()->each()`, deliberately NOT `Integration::query()->forceDelete()`:
@@ -188,8 +213,6 @@ class DemoSeeder extends Seeder
      */
     private function wipeExistingContent(Organization $organization): void
     {
-        Storage::disk('media')->deleteDirectory("org/{$organization->id}");
-
         Media::query()->delete();
         PostGroup::query()->delete();
         Integration::query()->get()->each(fn (Integration $integration) => $integration->forceDelete());
