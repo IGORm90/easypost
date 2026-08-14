@@ -119,6 +119,7 @@ class Media extends Model
             mimeType: $this->mime_type,
             sizeBytes: $this->size_bytes,
             altText: $altText,
+            originalFilename: $this->original_filename,
         );
     }
 }

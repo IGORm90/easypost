@@ -257,6 +257,25 @@ it('fails the segment permanently when the attached file is gone from storage, w
     Http::assertNothingSent();
 });
 
+it('sends the customer\'s own filename, not the temp copy\'s name', function () {
+    // Re-review finding 6: providers derived the multipart filename from
+    // basename($media->path), which — once the pipeline started handing
+    // them a temp copy — meant every attachment reached the network named
+    // `publish-media-XXXXXX.png`. Slack shows that name to users.
+    Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+    [$group] = publishableMediaPost('telegram', ['chat_id' => '-100123']);
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    $bodies = collect(Http::recorded())->map(fn (array $pair): string => (string) $pair[0]->body());
+
+    expect($bodies->filter(fn (string $body): bool => str_contains($body, 'filename="attachment.png"'))->count())
+        ->toBeGreaterThan(0, 'the original filename never reached the wire')
+        ->and($bodies->filter(fn (string $body): bool => str_contains($body, 'publish-media-'))->count())
+        ->toBe(0, 'the temp copy\'s name leaked to the network');
+});
+
 it('leaves no temp files behind after publishing', function () {
     Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
@@ -266,6 +285,57 @@ it('leaves no temp files behind after publishing', function () {
     app(PublishService::class)->publishGroup($group->id);
 
     expect(count(glob(sys_get_temp_dir().'/publish-media-*') ?: []))->toBe($before);
+});
+
+it('leaves no temp file behind when the copy itself fails', function () {
+    // Re-review finding 1, proven live by the reviewer: tempnam() creates
+    // the file before a single byte is read, and every failure path used
+    // to walk past it — so each retry of a publish with an unreadable
+    // attachment leaked another temp file, and the caller could not clean
+    // up a path it was never given.
+    Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+    [$group, $post] = publishableMediaPost('telegram', ['chat_id' => '-100123']);
+    Storage::disk('media')->delete("org/{$post->organization_id}/attachment.png");
+
+    $before = count(glob(sys_get_temp_dir().'/publish-media-*') ?: []);
+
+    // Twice: a leak that only shows up on retry is the shape that
+    // actually fills a worker's disk in production.
+    app(PublishService::class)->publishGroup($group->id);
+    $post->fresh()->update(['state' => PostState::QUEUE, 'error' => null]);
+    app(PublishService::class)->publishGroup($group->id);
+
+    expect(count(glob(sys_get_temp_dir().'/publish-media-*') ?: []))->toBe($before);
+});
+
+it('leaves no temp file behind when the stored object is empty', function () {
+    // The other half of the same finding: a zero-byte object is refused
+    // AFTER the copy has already created (and written to) a temp file.
+    Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+    [$group, $post] = publishableMediaPost('telegram', ['chat_id' => '-100123']);
+    Storage::disk('media')->put("org/{$post->organization_id}/attachment.png", '');
+
+    $before = count(glob(sys_get_temp_dir().'/publish-media-*') ?: []);
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    expect($post->fresh()->state)->toBe(PostState::ERROR)
+        ->and(count(glob(sys_get_temp_dir().'/publish-media-*') ?: []))->toBe($before);
+});
+
+it('does not pre-upload anything for a superseded schedule generation', function () {
+    // The cheap pre-check: a run whose generation has been superseded
+    // must not pay for uploads before discovering it has nothing to do.
+    Http::fake(['mastodon.social/*' => Http::response(['id' => '1'])]);
+
+    [$group] = publishableMediaPost('mastodon', ['instance' => 'mastodon.social']);
+    $group->update(['queue_version' => 7]);
+
+    app(PublishService::class)->publishGroup($group->id, 6);
+
+    Http::assertNothingSent();
 });
 
 it('sends a media-free post with no attachments and no temp files', function () {

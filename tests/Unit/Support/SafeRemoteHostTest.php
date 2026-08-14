@@ -265,3 +265,43 @@ it('returns the validated addresses from assertSafeHost so a caller can pin them
 
     expect(SafeRemoteHost::assertSafeHost('mastodon.social'))->toBe(['198.51.100.10']);
 });
+
+/*
+ * Re-review finding 5: the numeric-host check is byte-wise, so it has to
+ * run on a NORMALISED host or it is trivially sidestepped. `０１７７.0.0.1`
+ * (fullwidth digits) is not byte-wise numeric, and this container's
+ * resolver applies UTS-46 and answers the public `177.0.0.1` — verified
+ * directly, and verified that the pre-fix guard ACCEPTED it. Pinning
+ * would not have saved it either: cURL keys its resolve cache on the
+ * A-label, so a pin keyed on the U-label never matches.
+ *
+ * These fake DNS to a PUBLIC address for the same reason the rest of this
+ * file does: the refusal must come from the guard, never from how a
+ * resolver happens to answer.
+ */
+it('refuses a non-ASCII host rather than letting a byte-wise check run on it', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with([
+    '０１７７.0.0.1',   // fullwidth digits, UTS-46 maps to 0177.0.0.1
+    '１２７.0.0.1',
+    'exämple.test',     // refused only because this image has no intl — see normalizeHost()
+]);
+
+it('refuses a percent-encoded host outright, whatever the resolver would make of it', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with(['%30%31%37%37.0.0.1', 'exa%6dple.com', '%2e%2e']);
+
+it('normalises the host it returns, so a caller pins and connects to the same string', function () {
+    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10']]);
+
+    [$host, $options] = SafeRemoteHost::assertSafeUrlPinned('https://MASTODON.Social/api/v1/apps');
+
+    expect($host)->toBe('mastodon.social')
+        ->and($options['curl'][CURLOPT_RESOLVE])->toBe(['mastodon.social:443:198.51.100.10']);
+});

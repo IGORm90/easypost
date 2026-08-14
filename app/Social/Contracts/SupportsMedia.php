@@ -19,16 +19,31 @@ use App\Social\Dto\MediaDto;
  * which only declare *whether/how much* media a network accepts — not
  * *how* it gets there.
  *
- * Two-phase flow: Task 25's editor calls uploadMedia() as soon as the
- * user attaches a file (so upload failures — wrong codec, file too
- * large, network error — surface immediately during composition rather
- * than at publish time). uploadMedia() returns a new MediaDto — via
- * MediaDto::withRemoteId(), since MediaDto is immutable — carrying the
- * network's handle for the now-uploaded file in $remoteId. That
- * returned MediaDto (not the original one passed in) is what gets
- * stored on PostPayloadDto::$media; when the post is eventually
- * published, post() reads $remoteId to reference the already-uploaded
- * attachment instead of re-uploading it inline.
+ * Two-phase flow, and WHO drives it: `PublishService::prepareMedia()`
+ * calls uploadMedia() for every attachment on every segment it is about
+ * to publish, immediately before `post()`, and threads the returned
+ * MediaDto — via MediaDto::withRemoteId(), since MediaDto is immutable —
+ * into the payload chain. `post()` then reads $remoteId to reference the
+ * already-uploaded attachment instead of re-uploading it inline.
+ *
+ * This docblock used to say the post editor called uploadMedia() "as
+ * soon as the user attaches a file", so upload failures would surface
+ * during composition. No such call existed anywhere in the application —
+ * that confidently-stated, entirely fictional caller is precisely what
+ * final-review batch 2's Critical 3 was raised for (media published on
+ * exactly zero of five networks), so the correction matters as much as
+ * the code fix did. The real semantics now: an upload failure surfaces at
+ * PUBLISH time, on the queue, and is settled by PublishService's normal
+ * provider-failure machinery — permanent failures mark the segment
+ * ERROR, transient ones retry. A composition-time pre-upload would be a
+ * genuine improvement (the customer would learn about a rejected codec
+ * while still at the keyboard) and is not implemented; do not describe
+ * it here until it is.
+ *
+ * Implementations are handed a MediaDto whose $path is a REAL LOCAL FILE
+ * (a temp copy the pipeline makes with MediaTempFiles), never a storage
+ * key, and whose $originalFilename carries the name to send to the
+ * network — see MediaDto::filename().
  */
 interface SupportsMedia
 {

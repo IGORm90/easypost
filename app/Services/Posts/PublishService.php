@@ -555,6 +555,18 @@ class PublishService
         // pre-upload settles through exactly the same permanent /
         // transient / rate-limit machinery a failed `post()` does, under
         // the row locks that make marking those rows safe.
+        // An unlocked pre-check, purely to avoid paying for uploads this
+        // run has already lost the right to make: a superseded generation
+        // or a redelivered job would otherwise pre-upload every
+        // attachment and only then discover, inside the transaction, that
+        // it must not publish. Deliberately NOT a guard — it decides
+        // nothing. Every authoritative check still happens under the row
+        // locks below, in the same order and with the same predicates;
+        // this can only ever cause work to be skipped, never performed.
+        if (! $this->stillPublishable($postGroupId, $queueVersion)) {
+            return [false, null];
+        }
+
         [$integration, $provider] = $this->channelProvider($integrationId);
 
         $preparedMedia = [];
@@ -827,6 +839,31 @@ class PublishService
                 return [false, null];
             }
         });
+    }
+
+    /**
+     * Cheap, unlocked "is this run still entitled to publish at all?" —
+     * the same three predicates `publishLockedChannel()` re-checks under
+     * the lock (QUEUE, matching generation, actually due). Answering
+     * `false` here only skips media preparation; answering `true` grants
+     * nothing, because nothing publishes outside that transaction.
+     */
+    private function stillPublishable(string $postGroupId, ?int $queueVersion): bool
+    {
+        /** @var PostGroup|null $group */
+        $group = PostGroup::withoutGlobalScope('organization')
+            ->whereKey($postGroupId)
+            ->first();
+
+        if ($group === null || $group->state !== PostState::QUEUE) {
+            return false;
+        }
+
+        if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+            return false;
+        }
+
+        return $this->isDueNow($group);
     }
 
     /**

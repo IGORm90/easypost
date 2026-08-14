@@ -56,7 +56,7 @@ use InvalidArgumentException;
  */
 class MastodonProvider implements SocialProviderInterface, SupportsMedia
 {
-    use BoundsHttpTimeouts, MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
     private const string APP_REGISTRATION_CACHE_PREFIX = 'mastodon_app_registration:';
 
@@ -195,7 +195,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
 
         $body = $this->call(
             fn (): Response => $this->uploadHttp()->withOptions($pin)->withToken($token)
-                ->attach('file', (string) file_get_contents($media->path), basename($media->path))
+                ->attach('file', $this->fileStream($media), $media->filename())
                 ->post("https://{$host}/api/v2/media", array_filter([
                     'description' => $media->altText,
                 ], static fn (mixed $value): bool => $value !== null)),
@@ -408,7 +408,12 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         try {
-            return [$host, SafeRemoteHost::pinOptions($host, SafeRemoteHost::assertSafeHost($host))];
+            // The normalised host, not the stored one: it is what the pin
+            // is keyed on and what the URL must be built from (re-review
+            // finding 5).
+            [$host, $ips] = SafeRemoteHost::assertSafeHostPinned($host);
+
+            return [$host, SafeRemoteHost::pinOptions($host, $ips)];
         } catch (UnsafeRemoteHostException $e) {
             throw new ProviderPermanentException(
                 "This Mastodon channel's instance host is no longer safe to connect to: {$e->getMessage()}",

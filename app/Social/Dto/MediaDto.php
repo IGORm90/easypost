@@ -25,6 +25,7 @@ final readonly class MediaDto
      * @param  int|null  $sizeBytes  File size in bytes, captured once by whatever creates this MediaDto (e.g. Task 27/28's upload/attachment code) — never re-derived later by reading $path off disk, since $path's meaning (local file vs. remote storage key) is not this DTO's concern. Null means "not known" and is a deliberate, distinct case: PostValidationService treats a null $sizeBytes as a validation failure (`file_size_unknown`), never as "skip the check" / "assume it's fine" — see that class's docblock for why silently treating unknown as valid was rejected.
      * @param  string|null  $altText  Accessibility description, when the network supports it.
      * @param  string|null  $remoteId  Provider-assigned handle returned by SupportsMedia::uploadMedia(), referenced when the post is created. Null before upload / for providers that don't pre-upload media.
+     * @param  string|null  $originalFilename  The name the customer uploaded the file under (`media.original_filename`, already sanitized at upload time). Providers must send THIS as the attachment filename — see filename(). Null means "no better name known", and filename() falls back to the path's basename.
      */
     public function __construct(
         public string $path,
@@ -32,7 +33,25 @@ final readonly class MediaDto
         public ?int $sizeBytes = null,
         public ?string $altText = null,
         public ?string $remoteId = null,
+        public ?string $originalFilename = null,
     ) {}
+
+    /**
+     * The filename to send to a network. Re-review finding 6: providers
+     * used to derive this from `basename($media->path)`, which — once the
+     * publishing pipeline started handing them a LOCAL TEMP COPY — meant
+     * every attachment reached the customer's timeline named
+     * `publish-media-XXXXXX.png`. Slack in particular shows that name to
+     * users. The stored `original_filename` is what belongs there; the
+     * basename fallback keeps a hand-built DTO (a provider's own unit
+     * test, say) working.
+     */
+    public function filename(): string
+    {
+        $name = $this->originalFilename !== null ? basename($this->originalFilename) : '';
+
+        return $name !== '' ? $name : basename($this->path);
+    }
 
     /**
      * Returns a new MediaDto identical to this one except for
@@ -43,7 +62,7 @@ final readonly class MediaDto
      */
     public function withRemoteId(string $remoteId): self
     {
-        return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId);
+        return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId, $this->originalFilename);
     }
 
     /**
@@ -57,6 +76,6 @@ final readonly class MediaDto
      */
     public function withPath(string $path): self
     {
-        return new self($path, $this->mimeType, $this->sizeBytes, $this->altText, $this->remoteId);
+        return new self($path, $this->mimeType, $this->sizeBytes, $this->altText, $this->remoteId, $this->originalFilename);
     }
 }

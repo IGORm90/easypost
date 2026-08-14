@@ -76,7 +76,7 @@ use InvalidArgumentException;
  */
 class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterface, SupportsMedia, SupportsOptions
 {
-    use BoundsHttpTimeouts, MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
     private const string API_BASE = 'https://slack.com/api';
 
@@ -234,8 +234,8 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
     public function uploadMedia(Integration $integration, MediaDto $media): MediaDto
     {
         $token = (string) $integration->token;
-        $filename = basename($media->path);
-        $length = (int) filesize($media->path);
+        $filename = $media->filename();
+        $length = $media->sizeBytes ?? (int) filesize($media->path);
 
         $body = $this->call(
             fn (): Response => $this->http()->withToken($token)->asForm()->post(self::API_BASE.'/files.getUploadURLExternal', [
@@ -263,10 +263,10 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
         // difference. Defends against a malformed/unexpected
         // upload_url in a future API response, not against the current
         // request being tampered with in flight.
-        $this->assertUploadUrlIsSlackHosted($uploadUrl);
+        $pin = $this->assertUploadUrlIsSlackHosted($uploadUrl);
 
         $this->call(
-            fn (): Response => $this->uploadHttp()->attach('file', (string) file_get_contents($media->path), $filename)
+            fn (): Response => $this->uploadHttp()->withOptions($pin)->attach('file', $this->fileStream($media), $filename)
                 ->post($uploadUrl),
             'uploading the file',
             expectsEnvelope: false,
@@ -432,11 +432,21 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
      * site in uploadMedia() for why this exists (Task 15 review, Finding
      * 3). Mapped to ProviderPermanentException: retrying will not change
      * what Slack just returned.
+     *
+     * Returns the connection-pinning options for the validated host
+     * (re-review finding 3), which the upload request must carry. This
+     * url is REMOTE-SUPPLIED — Slack's own API chose the host — so it is
+     * exactly the shape Important 6's TOCTOU window is about, even though
+     * the *.slack.com allow-list keeps it from being a live SSRF: without
+     * pinning, the address validated here and the address connected to
+     * are two separate lookups.
+     *
+     * @return array<string, mixed>
      */
-    private function assertUploadUrlIsSlackHosted(string $uploadUrl): void
+    private function assertUploadUrlIsSlackHosted(string $uploadUrl): array
     {
         try {
-            $host = SafeRemoteHost::assertSafeUrl($uploadUrl);
+            [$host, $pin] = SafeRemoteHost::assertSafeUrlPinned($uploadUrl);
         } catch (UnsafeRemoteHostException) {
             throw new ProviderPermanentException('Slack upload url is not safe to use.');
         }
@@ -444,6 +454,8 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
         if ($host !== 'slack.com' && ! str_ends_with($host, '.slack.com')) {
             throw new ProviderPermanentException("Slack upload url host [{$host}] is not a slack.com host.");
         }
+
+        return $pin;
     }
 
     /**

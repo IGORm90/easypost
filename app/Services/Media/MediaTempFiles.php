@@ -39,11 +39,23 @@ class MediaTempFiles
     /**
      * Copies $media's stored bytes into a fresh temp file and returns its
      * path. The temp filename keeps the stored key's extension so
-     * providers that derive a filename from the path (`basename()`, which
-     * is what Telegram, Discord, Mastodon and Slack all send as the
-     * multipart filename) still send something with a sensible extension
-     * — a network that sniffs `photo.tmp` as "not an image" would
-     * otherwise reject a perfectly good file.
+     * providers that derive a filename from the path still send something
+     * with a sensible extension — a network that sniffs `photo.tmp` as
+     * "not an image" would otherwise reject a perfectly good file. The
+     * name the CUSTOMER sees does not come from here at all: it travels on
+     * `MediaDto::$originalFilename` (re-review finding 6), because a temp
+     * path can never carry it faithfully.
+     *
+     * NOTHING is left on disk unless this method returns successfully —
+     * re-review finding 1, proven live: `tempnam()` creates the file
+     * immediately, and every throw below used to walk past it, so each
+     * retry of a publish whose attachment could not be read leaked another
+     * temp file (a partially-written one, if the failure came mid-copy, so
+     * not even bounded to 0 bytes). The caller cannot clean these up: it
+     * only ever learns about paths this method RETURNED. Hence the
+     * `$succeeded` flag and the unlink in `finally`, rather than an unlink
+     * repeated at each throw — a future early return would silently
+     * reintroduce the leak.
      *
      * @throws MediaTemporaryFileException when the object cannot be read
      *                                     (missing key, storage outage, a
@@ -73,6 +85,7 @@ class MediaTempFiles
 
         $source = null;
         $target = null;
+        $succeeded = false;
 
         try {
             $source = Storage::disk($media->disk)->readStream($media->path);
@@ -93,6 +106,23 @@ class MediaTempFiles
                     throw MediaTemporaryFileException::forMedia($media->id);
                 }
             }
+
+            // Closed HERE, not only in the finally: the size check below
+            // must see everything that was written, and on some drivers a
+            // buffered tail is only flushed on close.
+            fclose($target);
+            $target = null;
+
+            // An empty local copy is never publishable — and, since it is
+            // exactly what the pre-fix code produced, it is checked rather
+            // than assumed away.
+            clearstatcache(true, $tmpPath);
+
+            if (filesize($tmpPath) === 0) {
+                throw MediaTemporaryFileException::forMedia($media->id);
+            }
+
+            $succeeded = true;
         } catch (FilesystemException) {
             throw MediaTemporaryFileException::forMedia($media->id);
         } finally {
@@ -103,15 +133,10 @@ class MediaTempFiles
             if (is_resource($target)) {
                 fclose($target);
             }
-        }
 
-        // An empty local copy is never publishable — and, since it is
-        // exactly what the pre-fix code produced, it is checked rather
-        // than assumed away.
-        if (filesize($tmpPath) === 0) {
-            $this->discard([$tmpPath]);
-
-            throw MediaTemporaryFileException::forMedia($media->id);
+            if (! $succeeded) {
+                $this->discard([$tmpPath]);
+            }
         }
 
         return $tmpPath;

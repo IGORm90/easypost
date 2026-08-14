@@ -55,7 +55,7 @@ use InvalidArgumentException;
  */
 class DiscordProvider implements SocialProviderInterface
 {
-    use BoundsHttpTimeouts, MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
     public function identifier(): string
     {
@@ -142,7 +142,7 @@ class DiscordProvider implements SocialProviderInterface
             throw new ProviderPermanentException('Discord token exchange did not include a channel webhook.');
         }
 
-        $url = $this->validatedWebhookUrl((string) $webhook['url']);
+        [$url] = $this->validatedWebhookUrl((string) $webhook['url']);
 
         return new AuthResultDto(
             internalId: (string) $webhook['channel_id'],
@@ -161,7 +161,7 @@ class DiscordProvider implements SocialProviderInterface
      */
     public function post(Integration $integration, array $chain): array
     {
-        $webhookUrl = $this->webhookUrlFor($integration);
+        [$webhookUrl, $pin] = $this->webhookUrlFor($integration);
 
         $results = [];
 
@@ -183,7 +183,7 @@ class DiscordProvider implements SocialProviderInterface
             }
 
             try {
-                $result = $this->publishSegment($webhookUrl, $payload);
+                $result = $this->publishSegment($webhookUrl, $pin, $payload);
             } catch (ProviderException $e) {
                 if ($results !== []) {
                     throw new ProviderPartialFailureException($e->getMessage(), $results, $e);
@@ -198,21 +198,24 @@ class DiscordProvider implements SocialProviderInterface
         return $results;
     }
 
-    private function publishSegment(string $webhookUrl, PostPayloadDto $payload): PostResultDto
+    /**
+     * @param  array<string, mixed>  $pin  Connection-pinning options from webhookUrlFor() — see SafeRemoteHost::pinOptions().
+     */
+    private function publishSegment(string $webhookUrl, array $pin, PostPayloadDto $payload): PostResultDto
     {
         if ($payload->media === []) {
             $body = $this->call(
-                fn (): Response => $this->http()->post("{$webhookUrl}?wait=true", ['content' => $payload->content]),
+                fn (): Response => $this->http()->withOptions($pin)->post("{$webhookUrl}?wait=true", ['content' => $payload->content]),
                 'executing the webhook',
             );
 
             return $this->resultFromExecution($body);
         }
 
-        $request = $this->uploadHttp()->asMultipart();
+        $request = $this->uploadHttp()->withOptions($pin)->asMultipart();
 
         foreach ($payload->media as $index => $media) {
-            $request = $request->attach("files[{$index}]", (string) file_get_contents($media->path), basename($media->path));
+            $request = $request->attach("files[{$index}]", $this->fileStream($media), $media->filename());
         }
 
         $body = $this->call(
@@ -245,8 +248,18 @@ class DiscordProvider implements SocialProviderInterface
      * Mapped to ProviderPermanentException: retrying will not change
      * what the stored value currently is, and a human must reconnect
      * the channel.
+     *
+     * Returns the url AND the connection-pinning options for its host
+     * (re-review finding 3): `discord.com` is host-allowlisted here, so
+     * this was never a live SSRF — but the address was still resolved
+     * once for validation and a second time to connect, leaving the same
+     * TOCTOU window Important 6 is about. Pinning removes the second
+     * lookup, and costs nothing: this provider already resolves the host
+     * on every use.
+     *
+     * @return array{0: string, 1: array<string, mixed>}
      */
-    private function webhookUrlFor(Integration $integration): string
+    private function webhookUrlFor(Integration $integration): array
     {
         $token = $integration->token;
 
@@ -271,10 +284,13 @@ class DiscordProvider implements SocialProviderInterface
         }
     }
 
-    private function validatedWebhookUrl(string $url): string
+    /**
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private function validatedWebhookUrl(string $url): array
     {
         try {
-            $host = SafeRemoteHost::assertSafeUrl($url);
+            [$host, $pin] = SafeRemoteHost::assertSafeUrlPinned($url);
         } catch (UnsafeRemoteHostException) {
             throw new ProviderPermanentException('Discord webhook url is not safe to use.');
         }
@@ -283,7 +299,7 @@ class DiscordProvider implements SocialProviderInterface
             throw new ProviderPermanentException("Discord webhook url host [{$host}] is not a discord.com host.");
         }
 
-        return $url;
+        return [$url, $pin];
     }
 
     /**

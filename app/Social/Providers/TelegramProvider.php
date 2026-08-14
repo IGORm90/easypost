@@ -47,7 +47,7 @@ use InvalidArgumentException;
  */
 class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
 {
-    use BoundsHttpTimeouts, MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
     private const string API_BASE = 'https://api.telegram.org';
 
@@ -214,7 +214,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
         $field = $isVideo ? 'video' : 'photo';
 
         $body = $this->call(
-            fn (): Response => $this->uploadHttp()->attach($field, (string) file_get_contents($media->path), basename($media->path))
+            fn (): Response => $this->uploadHttp()->attach($field, $this->fileStream($media), $media->filename())
                 ->post($this->apiUrl($token, $method), array_filter([
                     'chat_id' => $chatId,
                     'caption' => $caption !== '' ? $caption : null,
@@ -236,7 +236,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
 
         foreach ($mediaList as $index => $media) {
             $field = "media{$index}";
-            $request = $request->attach($field, (string) file_get_contents($media->path), basename($media->path));
+            $request = $request->attach($field, $this->fileStream($media), $media->filename());
 
             $item = [
                 'type' => str_starts_with($media->mimeType, 'video/') ? 'video' : 'photo',

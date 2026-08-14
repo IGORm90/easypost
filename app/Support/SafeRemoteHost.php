@@ -75,11 +75,28 @@ use App\Support\Exceptions\UnsafeRemoteHostException;
  * TOCTOU/DNS-rebinding window if the attacker controls authoritative DNS
  * for the hostname and can flip the answer between those two lookups.
  * That is exactly what pinning closes, and every caller in this codebase
- * that fetches a user- or remote-influenced host now pins
- * (MediaUploadService::download(), MastodonProvider, DiscordProvider,
- * SlackProvider's upload url). A caller that only calls assertSafeHost()
- * and does not pin still carries the window; that is a property of the
- * CALL SITE now, not of this class.
+ * that resolves a host through this class now pins — and each one is
+ * covered by a test that asserts the pin is present in the options of the
+ * request it actually issues (tests/Feature/Media/PinnedRequestTest.php),
+ * because "the class produces a pin" and "the call site sends it" are two
+ * different claims and only the second one matters:
+ *
+ *   - MediaUploadService::download() — every hop of the redirect chain.
+ *   - MastodonProvider — the user-supplied instance host, connect-time and
+ *     every publish.
+ *   - DiscordProvider — the stored webhook url.
+ *   - SlackProvider — the upload url Slack's own API returns.
+ *
+ * The four networks with FIXED API hosts (api.telegram.org, bsky.social,
+ * discord.com's and slack.com's API legs) deliberately do NOT pin: they
+ * never resolve through this class in the first place, so pinning them
+ * would mean ADDING a mandatory DNS lookup — a new failure mode for hosts
+ * no caller can influence. Their redirect exposure is closed by
+ * BoundsHttpTimeouts instead.
+ *
+ * A caller that only calls assertSafeHost() and does not pin still
+ * carries the window; that is a property of the CALL SITE, not of this
+ * class.
  */
 final class SafeRemoteHost
 {
@@ -195,8 +212,12 @@ final class SafeRemoteHost
             throw UnsafeRemoteHostException::forScheme($parts['scheme']);
         }
 
-        $host = strtolower($parts['host']);
-        $ips = self::assertSafeHost($host);
+        // The NORMALISED host is what is returned and what the pin is
+        // keyed on — never the raw one from parse_url() (re-review
+        // finding 5): a caller that rebuilds a URL from this value, or
+        // pins it, must be using the same string the resolver and cURL
+        // will use.
+        [$host, $ips] = self::assertSafeHostPinned($parts['host']);
         $port = isset($parts['port']) ? (int) $parts['port'] : ($scheme === 'http' ? 80 : 443);
 
         return [$host, self::pinOptions($host, $ips, $port)];
@@ -248,6 +269,23 @@ final class SafeRemoteHost
      */
     public static function assertSafeHost(string $host): array
     {
+        return self::assertSafeHostPinned($host)[1];
+    }
+
+    /**
+     * assertSafeHost(), returning the NORMALISED host (the form the
+     * resolver and the HTTP client will both actually use) alongside the
+     * validated addresses — re-review finding 5. A caller that builds a
+     * URL or a pin from the host MUST use the returned value, not the one
+     * it passed in: `pinOptions()` keys on the exact host string cURL
+     * looks up, so pinning a form cURL never sees pins nothing at all.
+     *
+     * @return array{0: string, 1: list<string>}
+     */
+    public static function assertSafeHostPinned(string $host): array
+    {
+        $host = self::normalizeHost($host);
+
         self::assertNotAmbiguousLiteral($host);
 
         $ips = self::resolveIps($host);
@@ -268,7 +306,60 @@ final class SafeRemoteHost
             }
         }
 
-        return $ips;
+        return [$host, $ips];
+    }
+
+    /**
+     * Puts a host into the single form everything downstream agrees on —
+     * lowercase ASCII, no percent escapes — or refuses it. Re-review
+     * finding 5, and the reason it is a REAL hole rather than a tidy-up:
+     *
+     * `assertNotAmbiguousLiteral()` compares bytes, and it used to run on
+     * the raw string. `０１７７.0.0.1` (fullwidth digits) is not
+     * byte-wise numeric, so it sailed through — and then `dns_get_record()`
+     * applied UTS-46, resolved the ASCII form, and answered the public
+     * `177.0.0.1`, so the guard APPROVED it. Pinning did not save it
+     * either: cURL keys its resolve cache on the A-label, while the pin
+     * would have been keyed on the U-label, so the entry simply never
+     * matched and the connection resolved normally. Percent-encoded
+     * numeric labels (`%30%31%37%37.0.0.1`) are the same shape, refused
+     * today only by NXDOMAIN — the resolver accident this batch was told
+     * not to lean on. Both were stopped end to end by Guzzle's own
+     * `HostValidator`, i.e. by a dependency's behaviour, one client
+     * change away from being open.
+     *
+     * So: percent escapes are refused outright (no caller needs them in a
+     * host), and a non-ASCII host is converted to its A-label via UTS-46
+     * before ANY check runs. Where `intl` is unavailable — which is the
+     * case in this project's PHP image today — a non-ASCII host is
+     * refused rather than guessed at: failing closed costs an IDN
+     * Mastodon instance a connect (already impossible anyway, since
+     * `MastodonProvider::normalizeHost()`'s own `^[a-z0-9.-]+$` check
+     * rejects it) and costs an IDN media URL an import, which is a
+     * feature gap, not a bypass. Guessing costs a bypass.
+     */
+    private static function normalizeHost(string $host): string
+    {
+        if (str_contains($host, '%')) {
+            throw UnsafeRemoteHostException::forHost($host, 'contains percent-encoding, which this guard and an HTTP client would read differently');
+        }
+
+        if (preg_match('/^[\x20-\x7E]*$/', $host) !== 1) {
+            if (! function_exists('idn_to_ascii')) {
+                throw UnsafeRemoteHostException::forHost($host, 'is a non-ASCII host and this installation cannot convert it to its ASCII form');
+            }
+
+            /** @var string|false $ascii */
+            $ascii = idn_to_ascii($host, IDNA_NONTRANSITIONAL_TO_ASCII, INTL_IDNA_VARIANT_UTS46);
+
+            if (! is_string($ascii) || $ascii === '') {
+                throw UnsafeRemoteHostException::forHost($host, 'could not be converted to a valid ASCII hostname');
+            }
+
+            $host = $ascii;
+        }
+
+        return strtolower($host);
     }
 
     /**

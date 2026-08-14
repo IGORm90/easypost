@@ -20,6 +20,7 @@ use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
 use Closure;
+use GuzzleHttp\Psr7\Utils;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use InvalidArgumentException;
@@ -72,7 +73,7 @@ use InvalidArgumentException;
  */
 class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, SupportsMedia, SupportsRefresh
 {
-    use BoundsHttpTimeouts, MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
 
     private const string API_BASE = 'https://bsky.social/xrpc';
 
@@ -191,7 +192,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
 
         $body = $this->call(
             fn (): Response => $this->uploadHttp()->withToken($token)
-                ->withBody((string) file_get_contents($media->path), $media->mimeType)
+                ->withBody(Utils::streamFor($this->fileStream($media)), $media->mimeType)
                 ->post(self::API_BASE.'/com.atproto.repo.uploadBlob'),
             'uploading a blob',
         );
