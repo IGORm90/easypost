@@ -24,7 +24,6 @@ use App\Support\SafeRemoteHost;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 
 /**
@@ -76,7 +75,7 @@ use InvalidArgumentException;
  */
 class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsOptions
 {
-    use MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors;
 
     private const string API_BASE = 'https://slack.com/api';
 
@@ -146,7 +145,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         }
 
         $body = $this->call(
-            fn (): Response => Http::asForm()->post(self::API_BASE.'/oauth.v2.access', [
+            fn (): Response => $this->http()->asForm()->post(self::API_BASE.'/oauth.v2.access', [
                 'client_id' => (string) config('services.slack.integration.client_id'),
                 'client_secret' => (string) config('services.slack.integration.client_secret'),
                 'redirect_uri' => $redirectUri,
@@ -186,7 +185,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         $token = (string) $integration->token;
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->get(self::API_BASE.'/conversations.list', [
+            fn (): Response => $this->http()->withToken($token)->get(self::API_BASE.'/conversations.list', [
                 'types' => 'public_channel,private_channel',
             ]),
             'listing channels',
@@ -217,7 +216,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         $length = (int) filesize($media->path);
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->asForm()->post(self::API_BASE.'/files.getUploadURLExternal', [
+            fn (): Response => $this->http()->withToken($token)->asForm()->post(self::API_BASE.'/files.getUploadURLExternal', [
                 'filename' => $filename,
                 'length' => $length,
             ]),
@@ -245,7 +244,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         $this->assertUploadUrlIsSlackHosted($uploadUrl);
 
         $this->call(
-            fn (): Response => Http::attach('file', (string) file_get_contents($media->path), $filename)
+            fn (): Response => $this->uploadHttp()->attach('file', (string) file_get_contents($media->path), $filename)
                 ->post($uploadUrl),
             'uploading the file',
             expectsEnvelope: false,
@@ -362,7 +361,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         $text = $payload->content !== '' ? $payload->content : ' ';
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->asForm()->post(self::API_BASE.'/chat.postMessage', array_filter([
+            fn (): Response => $this->http()->withToken($token)->asForm()->post(self::API_BASE.'/chat.postMessage', array_filter([
                 'channel' => $channelId,
                 'text' => $text,
                 'thread_ts' => $threadTs,
@@ -397,7 +396,7 @@ class SlackProvider implements SocialProviderInterface, SupportsMedia, SupportsO
         }
 
         $this->call(
-            fn (): Response => Http::withToken($token)->post(self::API_BASE.'/files.completeUploadExternal', [
+            fn (): Response => $this->http()->withToken($token)->post(self::API_BASE.'/files.completeUploadExternal', [
                 'files' => $files,
                 'channel_id' => $channelId,
                 'thread_ts' => $threadTs,

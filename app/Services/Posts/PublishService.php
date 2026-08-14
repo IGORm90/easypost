@@ -138,6 +138,35 @@ use Illuminate\Support\Facades\DB;
  * in flight at the moment of the crash — not the whole group, and never
  * a channel whose provider call already returned successfully.
  *
+ * Final-review correction (Critical 3): "bounds the damage to one
+ * channel" is the honest claim, and an earlier revision of this docblock
+ * overstated it as CLOSING the crash case. It does not. A process killed
+ * mid-`post()` never throws `ProviderPartialFailureException` — nothing
+ * runs in that process again at all — so segments this channel had
+ * already put on the network are rolled back locally with no record they
+ * were sent, and the next attempt re-sends them. Two deployment
+ * settings, not this class, keep that from becoming routine:
+ * `REDIS_QUEUE_RETRY_AFTER` (300) must stay well ABOVE
+ * `supervisor-publish`'s `timeout` (90) so a slow run is never
+ * redelivered to a second worker WHILE the first is still sending — they
+ * were equal, which is the reproducible duplicate-publish path written
+ * out in `docs/DEPLOYMENT.md`, "Queue timeouts" — and every provider
+ * HTTP call carries an explicit timeout (`BoundsHttpTimeouts`) so one
+ * hung host cannot stretch a run past the worker timeout on its own.
+ * The residual case (a deploy or OOM kill landing inside a live
+ * `post()`) is accepted and documented there; no network here offers a
+ * client-supplied idempotency key that would let this class close it.
+ *
+ * Point 4's `ShouldBeUnique` claim carries the same caveat, recorded
+ * here rather than fixed in this batch: `PublishPostJob`'s unique lock
+ * is acquired at DISPATCH time with a fixed 3600s TTL, independent of
+ * `->delay()`, so for anything scheduled more than an hour out it has
+ * already expired by the time the job runs and guards nothing. The row
+ * locks below, `queue_version`, and (since this batch) `publishChannel()`
+ * and `finalizeGroupState()`'s in-transaction re-checks are what
+ * actually carry the guarantee in the common case; a dynamic
+ * `uniqueFor()` is deferred.
+ *
  * ==========================================
  * Resuming a partially published chain
  * ==========================================

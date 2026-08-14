@@ -22,7 +22,6 @@ use App\Social\Exceptions\ProviderTransientException;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 
 /**
@@ -73,7 +72,7 @@ use InvalidArgumentException;
  */
 class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, SupportsMedia, SupportsRefresh
 {
-    use MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors;
 
     private const string API_BASE = 'https://bsky.social/xrpc';
 
@@ -144,7 +143,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
         }
 
         $body = $this->call(
-            fn (): Response => Http::post(self::API_BASE.'/com.atproto.server.createSession', [
+            fn (): Response => $this->http()->post(self::API_BASE.'/com.atproto.server.createSession', [
                 'identifier' => $handle,
                 'password' => $appPassword,
             ]),
@@ -171,7 +170,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
         $refreshToken = (string) $integration->refresh_token;
 
         $body = $this->call(
-            fn (): Response => Http::withToken($refreshToken)
+            fn (): Response => $this->http()->withToken($refreshToken)
                 ->post(self::API_BASE.'/com.atproto.server.refreshSession'),
             'refreshing the session',
             authContext: true,
@@ -191,7 +190,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
         $token = (string) $integration->token;
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)
+            fn (): Response => $this->uploadHttp()->withToken($token)
                 ->withBody((string) file_get_contents($media->path), $media->mimeType)
                 ->post(self::API_BASE.'/com.atproto.repo.uploadBlob'),
             'uploading a blob',
@@ -286,7 +285,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
         }
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->post(self::API_BASE.'/com.atproto.repo.createRecord', [
+            fn (): Response => $this->http()->withToken($token)->post(self::API_BASE.'/com.atproto.repo.createRecord', [
                 'repo' => $did,
                 'collection' => self::COLLECTION,
                 'record' => $record,
@@ -324,7 +323,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
         }
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->get(self::API_BASE.'/com.atproto.repo.getRecord', [
+            fn (): Response => $this->http()->withToken($token)->get(self::API_BASE.'/com.atproto.repo.getRecord', [
                 'repo' => $did,
                 'collection' => self::COLLECTION,
                 'rkey' => $rkey,

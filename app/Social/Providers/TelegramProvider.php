@@ -20,7 +20,6 @@ use App\Social\Exceptions\ProviderTransientException;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 
 /**
@@ -48,7 +47,7 @@ use InvalidArgumentException;
  */
 class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
 {
-    use MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors;
 
     private const string API_BASE = 'https://api.telegram.org';
 
@@ -122,7 +121,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
 
         $chatId = (string) $chatId;
 
-        $response = $this->send(fn (): Response => Http::get(
+        $response = $this->send(fn (): Response => $this->http()->get(
             $this->apiUrl($botToken, 'getChat'),
             ['chat_id' => $chatId],
         ));
@@ -197,7 +196,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
     private function sendMessage(string $token, string $chatId, string $text, ?int $replyTo): PostResultDto
     {
         $body = $this->call(
-            fn (): Response => Http::asForm()->post($this->apiUrl($token, 'sendMessage'), array_filter([
+            fn (): Response => $this->http()->asForm()->post($this->apiUrl($token, 'sendMessage'), array_filter([
                 'chat_id' => $chatId,
                 'text' => $text,
                 'reply_to_message_id' => $replyTo,
@@ -215,7 +214,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
         $field = $isVideo ? 'video' : 'photo';
 
         $body = $this->call(
-            fn (): Response => Http::attach($field, (string) file_get_contents($media->path), basename($media->path))
+            fn (): Response => $this->uploadHttp()->attach($field, (string) file_get_contents($media->path), basename($media->path))
                 ->post($this->apiUrl($token, $method), array_filter([
                     'chat_id' => $chatId,
                     'caption' => $caption !== '' ? $caption : null,
@@ -232,7 +231,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
      */
     private function sendMediaGroup(string $token, string $chatId, array $mediaList, string $caption, ?int $replyTo): PostResultDto
     {
-        $request = Http::asMultipart();
+        $request = $this->uploadHttp()->asMultipart();
         $inputMedia = [];
 
         foreach ($mediaList as $index => $media) {

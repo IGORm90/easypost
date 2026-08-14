@@ -21,7 +21,6 @@ use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 
 /**
@@ -55,7 +54,7 @@ use InvalidArgumentException;
  */
 class MastodonProvider implements SocialProviderInterface, SupportsMedia
 {
-    use MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors;
 
     private const string APP_REGISTRATION_CACHE_PREFIX = 'mastodon_app_registration:';
 
@@ -149,7 +148,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             );
         }
 
-        $tokenResponse = $this->send(fn (): Response => Http::asForm()->post("https://{$host}/oauth/token", [
+        $tokenResponse = $this->send(fn (): Response => $this->http()->asForm()->post("https://{$host}/oauth/token", [
             'grant_type' => 'authorization_code',
             'client_id' => $app['client_id'],
             'client_secret' => $app['client_secret'],
@@ -168,7 +167,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new ProviderPermanentException('Mastodon token exchange did not return an access_token.');
         }
 
-        $accountResponse = $this->send(fn (): Response => Http::withToken($accessToken)
+        $accountResponse = $this->send(fn (): Response => $this->http()->withToken($accessToken)
             ->get("https://{$host}/api/v1/accounts/verify_credentials"));
 
         if (! $accountResponse->successful()) {
@@ -193,7 +192,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         $token = (string) $integration->token;
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)
+            fn (): Response => $this->uploadHttp()->withToken($token)
                 ->attach('file', (string) file_get_contents($media->path), basename($media->path))
                 ->post("https://{$host}/api/v2/media", array_filter([
                     'description' => $media->altText,
@@ -257,7 +256,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         $body = $this->call(
-            fn (): Response => Http::withToken($token)->asForm()->post("https://{$host}/api/v1/statuses", array_filter([
+            fn (): Response => $this->http()->withToken($token)->asForm()->post("https://{$host}/api/v1/statuses", array_filter([
                 'status' => $payload->content,
                 'media_ids' => $mediaIds !== [] ? $mediaIds : null,
                 'in_reply_to_id' => $replyTo,
@@ -299,7 +298,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         $body = $this->call(
-            fn (): Response => Http::asForm()->post("https://{$host}/api/v1/apps", [
+            fn (): Response => $this->http()->asForm()->post("https://{$host}/api/v1/apps", [
                 'client_name' => (string) config('app.name', 'EasyPost Scheduler'),
                 'redirect_uris' => $redirectUri,
                 'scopes' => self::SCOPES,

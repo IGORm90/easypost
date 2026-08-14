@@ -106,6 +106,49 @@ any real connected channels:
   compromise), plan it as a full "every organization reconnects every
   channel" event, not a routine maintenance step.
 
+### 3. Queue timeouts: `REDIS_QUEUE_RETRY_AFTER` must exceed every worker timeout
+
+`config/queue.php`'s `redis.retry_after` is how long the queue waits before
+deciding a reserved job was abandoned and letting another worker pop the same
+payload. `config/horizon.php`'s per-supervisor `timeout` is how long a worker
+is allowed to spend on one job before it is SIGALRM-killed. Laravel's rule is
+that **`retry_after` must be strictly greater than the longest possible job
+runtime**, and it was not: both were 90 seconds, and `.env`/`.env.example`
+never set `REDIS_QUEUE_RETRY_AFTER` at all, so the 90-second env default
+applied in production.
+
+What that produces for `PublishPostJob` — the reason this is a deployment
+concern and not a tuning preference:
+
+1. Worker W1 pops the job and enters `PublishService::publishChannel()`'s
+   transaction. It sends segments 1 and 2 of a 3-segment thread — those two
+   messages are now **live on the network** — with the transaction still open.
+2. At t = 90 s the reservation expires and worker W2 pops the identical
+   payload; it blocks on W1's row locks.
+3. Also at t = 90 s, W1 is killed. Postgres rolls its transaction back, so
+   segments 1 and 2 have no `release_id` and are back at `QUEUE`.
+4. W2's lock wait resolves, it sees three `QUEUE`/null rows, and sends the
+   whole chain again. **Segments 1 and 2 are published twice.**
+
+Two settings keep that shut, and both must hold on every environment:
+
+- `REDIS_QUEUE_RETRY_AFTER=300` (see `.env.example`) against
+  `supervisor-publish`'s `timeout: 90`. If you raise a supervisor timeout,
+  raise this first and by more.
+- Every provider HTTP call carries an explicit `->timeout()` /
+  `->connectTimeout()` (see `App\Social\Providers\BoundsHttpTimeouts`), so a
+  hung remote host cannot stretch a single publish past the worker timeout
+  while inheriting Laravel's 30-second default per call.
+
+Note what this does **not** fix, by design: if a worker is killed (deploy,
+OOM, the timeout above) *while* a provider call is in flight, that channel's
+transaction rolls back and the segments it had already sent are re-sent on the
+next attempt. The per-channel commit boundary bounds that to the one channel
+in flight; nothing can bound it further without a provider-side idempotency
+key, which none of the five networks here offers. Prefer draining Horizon
+(`php artisan horizon:terminate` and waiting) over hard-killing it during a
+deploy.
+
 ## Plans (no billing)
 
 This project ships with no Stripe, no Cashier, and no billing integration of

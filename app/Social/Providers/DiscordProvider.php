@@ -18,7 +18,6 @@ use App\Support\SafeRemoteHost;
 use Closure;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 
 /**
@@ -56,7 +55,7 @@ use InvalidArgumentException;
  */
 class DiscordProvider implements SocialProviderInterface
 {
-    use MapsHttpErrors;
+    use BoundsHttpTimeouts, MapsHttpErrors;
 
     public function identifier(): string
     {
@@ -127,7 +126,7 @@ class DiscordProvider implements SocialProviderInterface
         }
 
         $body = $this->call(
-            fn (): Response => Http::asForm()->post('https://discord.com/api/oauth2/token', [
+            fn (): Response => $this->http()->asForm()->post('https://discord.com/api/oauth2/token', [
                 'grant_type' => 'authorization_code',
                 'client_id' => (string) config('services.discord.client_id'),
                 'client_secret' => (string) config('services.discord.client_secret'),
@@ -203,14 +202,14 @@ class DiscordProvider implements SocialProviderInterface
     {
         if ($payload->media === []) {
             $body = $this->call(
-                fn (): Response => Http::post("{$webhookUrl}?wait=true", ['content' => $payload->content]),
+                fn (): Response => $this->http()->post("{$webhookUrl}?wait=true", ['content' => $payload->content]),
                 'executing the webhook',
             );
 
             return $this->resultFromExecution($body);
         }
 
-        $request = Http::asMultipart();
+        $request = $this->uploadHttp()->asMultipart();
 
         foreach ($payload->media as $index => $media) {
             $request = $request->attach("files[{$index}]", (string) file_get_contents($media->path), basename($media->path));
