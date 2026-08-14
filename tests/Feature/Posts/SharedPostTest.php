@@ -148,6 +148,44 @@ it('falls back to UTC when the group has no creator left to take a timezone from
     expect($response->json('timezone'))->toBe('UTC');
 });
 
+/*
+ * Final review, batch 4 (tenancy minors). `Integration` is soft-deleted,
+ * and disconnecting a channel is an everyday act — so a share link
+ * minted while three channels were connected 500s the moment one of them
+ * is disconnected: the relation resolves to null and the resource reads
+ * `provider_identifier` off it. The link is public and already handed
+ * out; the failure lands on the client, not the author, and it is a 500
+ * rather than anything explicable.
+ */
+it('still serves a share link after one of its channels is disconnected', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $kept = Integration::factory()->for($org)->create(['provider_identifier' => 'fake', 'name' => 'Kept']);
+    $gone = Integration::factory()->for($org)->create(['provider_identifier' => 'fake', 'name' => 'Gone']);
+    $group = PostGroup::factory()->for($org)->create(['publish_date' => '2026-09-01T10:00:00Z']);
+    Post::factory()->for($org)->for($group, 'group')->for($kept)->create(['content' => 'still here', 'order' => 0]);
+    Post::factory()->for($org)->for($group, 'group')->for($gone)->create(['content' => 'channel is gone', 'order' => 0]);
+
+    $this->postJson("/api/posts/{$group->id}/share")->assertOk();
+
+    $gone->delete();
+
+    $response = $this->getJson('/api/public/posts/'.$group->fresh()->share_token);
+
+    $response->assertOk();
+
+    // The disconnected channel's content is still shown — the page's
+    // whole purpose is reporting what went out, and it did go out. What
+    // is gone is the channel's live identity, not the post.
+    /** @var list<array{name: string}> $channels */
+    $channels = $response->json('channels');
+    $names = array_map(fn (array $channel): string => $channel['name'], $channels);
+    sort($names);
+
+    expect($channels)->toHaveCount(2)
+        ->and($names)->toBe(['Gone', 'Kept']);
+});
+
 it('404s a revoked token exactly like an unknown one', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);

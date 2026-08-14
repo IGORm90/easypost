@@ -150,10 +150,24 @@ class ShareService
         OrganizationContext::set($group->organization);
 
         try {
-            // 'posts.integration' alone is enough: PostGroup::posts()
-            // already applies ->orderBy('order') itself (see that
-            // relation), so there's no need to redeclare it here.
-            $group->load('posts.integration');
+            // 'posts.integration' alone is enough for ordering:
+            // PostGroup::posts() already applies ->orderBy('order') itself
+            // (see that relation), so there's no need to redeclare it.
+            //
+            // `withTrashed()` on the integration, though, is load-bearing
+            // (final review, batch 4). `Integration` is soft-deleted and
+            // disconnecting a channel is an everyday act — without this,
+            // the relation resolves to null the moment any one of a
+            // group's channels is disconnected, and PublicPostResource
+            // reads `provider_identifier` straight off it: a 500 on a
+            // public URL that was already handed to a client, for a post
+            // that did go out exactly as the page says.
+            //
+            // The channel's name and picture as they were is the right
+            // answer here: this page reports what was published, and that
+            // history does not stop being true when the channel is
+            // disconnected afterwards.
+            $group->load(['posts.integration' => fn ($query) => $query->withTrashed()]);
         } finally {
             OrganizationContext::clear();
         }

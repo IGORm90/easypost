@@ -2,6 +2,7 @@
 
 namespace App\Services\Integrations;
 
+use App\Enums\OrganizationRole;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Integrations\Exceptions\InvalidOAuthStateException;
@@ -133,7 +134,18 @@ class OAuthStateService
 
         $organization = Organization::find($payload['organization_id'] ?? null);
 
-        if (! $organization instanceof Organization || $organization->roleOf($user) === null) {
+        // Role, not just membership (final review, batch 4). This is the
+        // ONLY authorization on the callback path: `auth-url` carries
+        // `role:ADMIN`, but `callback` can carry no role middleware at all
+        // because it has no X-Organization header to resolve — the
+        // organization comes from the state. Re-checking membership alone
+        // left a 10-minute window (the state's TTL) in which a user
+        // demoted from ADMIN could still come back from the provider and
+        // attach a live credential to the organization. routes/api.php
+        // already promised the two bars were the same; this is the code
+        // making that true.
+        if (! $organization instanceof Organization
+            || ! ($organization->roleOf($user)?->atLeast(OrganizationRole::ADMIN) ?? false)) {
             throw new InvalidOAuthStateException('This connection request is invalid or has expired.');
         }
 

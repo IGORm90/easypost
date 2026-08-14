@@ -299,9 +299,17 @@ it('nulls out created_by instead of deleting the post group when its creator is 
 it('does not cascade a deleted user onward to the group\'s posts and comments', function () {
     $user = User::factory()->create();
     $group = PostGroup::factory()->create(['created_by' => $user->id]);
+    // The channel has to be named explicitly alongside the group.
+    // PostFactory derives `integration_id` from the group it builds
+    // ITSELF, so overriding only `post_group_id`/`organization_id` leaves
+    // the post pointing at a channel in a third, unrelated organization —
+    // which `posts_organization_matches_integration_fk` now rejects
+    // outright. The constraint caught the fixture, not the behaviour
+    // under test.
     $post = Post::factory()->create([
         'post_group_id' => $group->id,
         'organization_id' => $group->organization_id,
+        'integration_id' => Integration::factory()->create(['organization_id' => $group->organization_id])->id,
     ]);
 
     $user->delete();
