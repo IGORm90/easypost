@@ -427,7 +427,15 @@ it('refuses an IPv6 transition address whose embedded IPv4 is not public, as a l
     '[2002:6440:1::]',         // 6to4 of 100.64.0.1 (CGNAT)
     '[64:ff9b::7f00:1]',       // NAT64 of 127.0.0.1
     '[64:ff9b::a9fe:a9fe]',    // NAT64 of 169.254.169.254
-    '[64:ff9b:1::7f00:1]',     // NAT64 local-use prefix
+    // NAT64 local-use prefix with RFC 6052 §2.2's /48 embedding — IPv4
+    // at bytes 6-7 and 9-10, NOT the last four (re-review round 4: the
+    // old fixture here, '[64:ff9b:1::7f00:1]', was not the RFC form and
+    // decoded to 0.0.0.0, so it proved nothing about /48 handling).
+    '[64:ff9b:1:7f00:0:100::]',    // /48 form of 127.0.0.1
+    '[64:ff9b:1:a9fe:a9:fe00::]',  // /48 form of 169.254.169.254
+    '[64:ff9b:1:c0a8:0:100::]',    // /48 form of 192.168.0.1
+    '[64:ff9b:1:808:100:800::]',   // 8.8.8.8 but with a non-zero reserved `u` octet — not a valid embedding
+    '[64:ff9b:2::808:808]',        // a shape under 64:ff9b::/32 with no defined embedding
     '[2001:0:1::]',            // Teredo, refused outright
     '[2001::]',
 ]);
@@ -450,7 +458,8 @@ it('still accepts a transition address whose embedded IPv4 is genuinely public',
     SafeRemoteHost::assertSafeHost($host);
 })->with([
     '[2002:0808:0808::]',      // 6to4 of 8.8.8.8
-    '[64:ff9b::808:808]',      // NAT64 of 8.8.8.8
+    '[64:ff9b::808:808]',      // NAT64 well-known prefix, 8.8.8.8
+    '[64:ff9b:1:808:8:800::]', // NAT64 local-use /48 prefix, 8.8.8.8 — decoded, not blanket-rejected
     '[2001:4860:4860::8888]',  // an ordinary public IPv6 address
 ])->throwsNoExceptions();
 

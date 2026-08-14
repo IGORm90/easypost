@@ -42,7 +42,7 @@ function capabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCa
 }
 
 function segments(...contents: string[]) {
-    return contents.map((content) => ({ content, media_ids: [] }));
+    return contents.map((content) => ({ content, media_ids: [] as string[] }));
 }
 
 it('clicking "add" appends a segment to the model and emits the longer array', async () => {

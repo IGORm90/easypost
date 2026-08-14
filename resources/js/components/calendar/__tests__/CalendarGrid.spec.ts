@@ -34,7 +34,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
     tags: [],
-    posts: [{ id: 'post-1', content: 'hi', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Chan' } }],
+    posts: [{ id: 'post-1', content: 'hi', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Chan', picture: null } }],
     ...overrides,
   }
 }

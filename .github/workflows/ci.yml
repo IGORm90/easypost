@@ -85,6 +85,9 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Typecheck frontend (vue-tsc)
+        run: npm run typecheck
+
       - name: Run frontend tests (Vitest)
         run: npx vitest run
 

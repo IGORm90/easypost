@@ -346,9 +346,21 @@ final class SafeRemoteHost
      *    embedded address is the whole meaning of the prefix, so checking
      *    it is both stricter where it matters and honest where it does
      *    not.
-     *  - NAT64 (`64:ff9b::/96` and the local-use `64:ff9b:1::/48`, RFCs
-     *    6052/8215): the last four bytes are the IPv4 destination. Same
-     *    treatment.
+     *  - NAT64: two prefixes, two DIFFERENT embeddings, which an earlier
+     *    revision of this comment got wrong (re-review round 4). For the
+     *    well-known `64:ff9b::/96` (RFC 6052 §2.1) the IPv4 destination
+     *    is simply the last four bytes. For the local-use
+     *    `64:ff9b:1::/48` (RFC 8215) the /48 layout in RFC 6052 §2.2
+     *    applies instead: the IPv4 sits at bytes 6-7 and 9-10, with byte
+     *    8 — the reserved `u` octet — required to be zero, and the
+     *    remaining bytes a suffix. Reading the last four bytes there (as
+     *    this code used to) yields `0.0.0.0` for every RFC-correct
+     *    address, so the whole prefix was rejected including public
+     *    destinations: fail-closed, but by accident and against this
+     *    method's own "decode, don't blanket-reject" rule. Both are now
+     *    decoded properly, and anything else under `64:ff9b::/32` — a
+     *    prefix shape this code has no rule for — is refused rather than
+     *    guessed at.
      *  - Teredo (`2001::/32`, RFC 4380): rejected outright rather than
      *    decoded. Its embedded server and client IPv4 addresses are
      *    obfuscated (the client address is stored XOR'd) and the tunnel's
@@ -378,10 +390,32 @@ final class SafeRemoteHost
             return ! self::isPublicAddress(self::ipv4From(substr($packed, 2, 4)));
         }
 
-        // NAT64: 64:ff9b::/96 and 64:ff9b:1::/48 — the IPv4 destination
-        // is the last four bytes.
         if (substr($packed, 0, 4) === "\x00\x64\xff\x9b") {
-            return ! self::isPublicAddress(self::ipv4From(substr($packed, 12, 4)));
+            // Well-known prefix 64:ff9b::/96 (RFC 6052 §2.1): bytes 4-11
+            // are zero, the IPv4 destination is the last four.
+            if (substr($packed, 4, 8) === str_repeat("\x00", 8)) {
+                return ! self::isPublicAddress(self::ipv4From(substr($packed, 12, 4)));
+            }
+
+            // Local-use prefix 64:ff9b:1::/48 (RFC 8215) with RFC 6052
+            // §2.2's /48 embedding: IPv4 at bytes 6-7 and 9-10, byte 8
+            // reserved and required to be zero. A non-zero `u` octet is
+            // not a valid embedding at all, so there is no destination to
+            // judge — refused.
+            if (substr($packed, 4, 2) === "\x00\x01") {
+                if ($packed[8] !== "\x00") {
+                    return true;
+                }
+
+                return ! self::isPublicAddress(
+                    self::ipv4From(substr($packed, 6, 2).substr($packed, 9, 2)),
+                );
+            }
+
+            // Some other shape under 64:ff9b::/32. No RFC assigns it an
+            // embedding this code could decode, so it is refused rather
+            // than passed through as ordinary public IPv6.
+            return true;
         }
 
         return false;

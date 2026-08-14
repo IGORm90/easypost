@@ -8,7 +8,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
     tags: [],
-    posts: [{ id: 'post-1', content: 'hello there', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Announcements' } }],
+    posts: [{ id: 'post-1', content: 'hello there', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Announcements', picture: null } }],
     ...overrides,
   }
 }

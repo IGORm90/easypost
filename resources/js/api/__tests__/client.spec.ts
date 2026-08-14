@@ -1,4 +1,5 @@
 import axios, { AxiosError, isAxiosError } from 'axios'
+import type { InternalAxiosRequestConfig } from 'axios'
 import { createPinia, setActivePinia } from 'pinia'
 import { api } from '../client'
 import { useLimitToastStore } from '../../stores/limitToast'
@@ -78,7 +79,7 @@ describe('402 plan-limit interceptor', () => {
   // what a genuine 402/500 response looks like by the time it reaches the
   // response interceptor, rather than a resolved, never-rejecting promise.
   function respondWith(status: number, statusText: string, data: unknown) {
-    return (config: object) =>
+    return (config: InternalAxiosRequestConfig) =>
       Promise.reject(new AxiosError(`Request failed with status code ${status}`, AxiosError.ERR_BAD_REQUEST, config, null, {
         data,
         status,
@@ -98,7 +99,6 @@ describe('402 plan-limit interceptor', () => {
     // does, so this test's `api.post()` reaches the adapter below instead
     // of failing on a real network call first.
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
-    // @ts-expect-error -- test-only adapter override, not part of the public config type
     api.defaults.adapter = respondWith(402, 'Payment Required', { message: serverMessage, limit: 'channels', current: 2, max: 2 })
 
     let caught: unknown
@@ -122,7 +122,6 @@ describe('402 plan-limit interceptor', () => {
 
   it('falls back to the server\'s own message when `limit` names a key this app does not recognise', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
-    // @ts-expect-error -- test-only adapter override, not part of the public config type
     api.defaults.adapter = respondWith(402, 'Payment Required', { message: 'a brand new limit type', limit: 'some_future_limit', current: 1, max: 1 })
 
     await expect(api.post('/things')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 402)
@@ -132,7 +131,6 @@ describe('402 plan-limit interceptor', () => {
 
   it('leaves the toast untouched for a non-402 error, so it is never confused with an unrelated failure', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
-    // @ts-expect-error -- test-only adapter override, not part of the public config type
     api.defaults.adapter = respondWith(500, 'Internal Server Error', { message: 'server exploded' })
 
     await expect(api.post('/things')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 500)
