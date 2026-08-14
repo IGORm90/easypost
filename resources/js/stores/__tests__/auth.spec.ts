@@ -20,10 +20,11 @@ beforeEach(() => {
   get.mockClear()
 })
 
-it('login() populates user from the response', async () => {
+it('login() populates user AND organizations from the response', async () => {
   const { useAuthStore } = await import('../auth')
   const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'en', email_verified_at: null, created_at: '', updated_at: '' }
-  post.mockResolvedValueOnce({ data: { user } })
+  const organizations = [{ id: 'org-1', name: 'Acme', slug: 'acme', created_at: '', updated_at: '' }]
+  post.mockResolvedValueOnce({ data: { user, organizations } })
 
   const store = useAuthStore()
   await store.login('ann@example.com', 'secret1234')
@@ -31,6 +32,12 @@ it('login() populates user from the response', async () => {
   expect(post).toHaveBeenCalledWith('/auth/login', { email: 'ann@example.com', password: 'secret1234' })
   expect(store.user).toEqual(user)
   expect(store.ready).toBe(true)
+  // Final review, Critical 1: login() marks the store `ready`, so the
+  // router guard skips fetchMe() on the first navigation and the
+  // organization store syncs against exactly this array. Leaving it empty
+  // dropped `organization_id` and 403'd every request on the calendar the
+  // user had just been sent to.
+  expect(store.organizations).toEqual(organizations)
 })
 
 it('logout() clears the user and redirects to /login', async () => {

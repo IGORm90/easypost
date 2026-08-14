@@ -58,7 +58,17 @@ class AuthController extends Controller
 
         $this->auth->login($request, $user);
 
-        return response()->json(['user' => new UserResource($user)]);
+        // Same payload shape as me() below, deliberately: the SPA's router
+        // guard fetches /auth/me at most once per app load, and login()
+        // marking the store ready means the first post-login navigation
+        // never makes that call. If login() described the session less
+        // completely than me() does, the app would behave differently
+        // depending on whether the user had just signed in or reloaded the
+        // tab — which is exactly the 403-on-every-request bug this fixes.
+        return response()->json([
+            'user' => new UserResource($user),
+            'organizations' => OrganizationResource::collection($user->organizations),
+        ]);
     }
 
     public function logout(Request $request): Response

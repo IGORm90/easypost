@@ -44,8 +44,14 @@ export const useAuthStore = defineStore('auth', {
     }),
     actions: {
         async login(email: string, password: string): Promise<void> {
-            const { data } = await api.post<{ user: AuthUser }>('/auth/login', { email, password });
+            const { data } = await api.post<{ user: AuthUser; organizations: AuthOrganization[] }>('/auth/login', { email, password });
             this.user = data.user;
+            // Not optional: `ready = true` below stops the router guard from
+            // calling fetchMe(), so this array is the only membership list
+            // the app sees until the next full page load. An empty one makes
+            // the organization store clear `organization_id`, which strips
+            // X-Organization off every request and 403s the whole session.
+            this.organizations = data.organizations;
             this.ready = true;
         },
 

@@ -1,5 +1,7 @@
 <?php
 
+use App\Enums\OrganizationRole;
+use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -132,4 +134,32 @@ it('rejects a login request without a password', function () {
 
 it('returns 401 for me when there is no session', function () {
     $this->getJson('/api/auth/me')->assertUnauthorized();
+});
+
+// Final review, Critical 1: the SPA's router guard runs fetchMe() only
+// when the auth store is not yet `ready`, and login() marks it ready. So
+// the very first navigation after signing in reads whatever login()
+// returned and nothing else. When that payload carried only `user`, the
+// organization store synced against an empty membership list, cleared
+// `organization_id` from localStorage, and every subsequent request went
+// out without X-Organization — ResolveOrganization 403s the lot. login()
+// and me() must therefore describe the session identically.
+it('returns the signed-in user\'s organizations, exactly as /auth/me does', function () {
+    $user = User::factory()->create(['email' => 'ann@example.com', 'password' => Hash::make('secret1234')]);
+    $org = Organization::factory()->create(['name' => 'Acme']);
+    $org->addMember($user, OrganizationRole::ADMIN);
+
+    $login = $this->postJson('/api/auth/login', ['email' => 'ann@example.com', 'password' => 'secret1234'])
+        ->assertOk()
+        ->assertJsonCount(1, 'organizations')
+        ->assertJsonPath('organizations.0.id', $org->id)
+        ->assertJsonPath('organizations.0.name', 'Acme');
+
+    $cookieName = config('session.cookie');
+    $sessionId = $login->getCookie($cookieName)?->getValue();
+    Auth::forgetGuards();
+
+    $me = $this->withCookie($cookieName, $sessionId)->getJson('/api/auth/me')->assertOk();
+
+    expect($login->json('organizations'))->toEqual($me->json('organizations'));
 });

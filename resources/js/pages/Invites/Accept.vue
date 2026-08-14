@@ -6,6 +6,8 @@ import AppLayout from '../../layouts/AppLayout.vue';
 import Card from '../../components/ui/Card.vue';
 import Button from '../../components/ui/Button.vue';
 import { api } from '../../api/client';
+import { useAuthStore } from '../../stores/auth';
+import { useOrganizationStore } from '../../stores/organization';
 
 // Landing page for the link InviteController::acceptUrl() mints
 // (/invites/{token}) — see that method's docblock. Accepting is a
@@ -15,6 +17,8 @@ import { api } from '../../api/client';
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
+const organization = useOrganizationStore();
 
 const token = String(route.params.token ?? '');
 const loading = ref(false);
@@ -27,6 +31,14 @@ async function accept(): Promise<void> {
 
     try {
         await api.post(`/invites/${token}/accept`);
+        // The membership only exists server-side at this point. The auth
+        // store's `organizations` is populated once per app load (login()
+        // or the router guard's fetchMe()), so without this refresh the
+        // organization the user just joined is absent from the switcher —
+        // and, if it is their first, no `organization_id` is set at all and
+        // every following request 403s — until a manual page reload.
+        await auth.fetchMe();
+        organization.syncFromAuth();
         done.value = true;
     } catch {
         error.value = t('invites.accept.error');
