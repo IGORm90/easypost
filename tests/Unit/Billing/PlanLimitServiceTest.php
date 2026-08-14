@@ -3,26 +3,26 @@
 use App\Enums\OrganizationRole;
 use App\Enums\Plan;
 use App\Enums\PlanLimit;
+use App\Enums\PostState;
 use App\Models\Integration;
 use App\Models\Media;
 use App\Models\Organization;
 use App\Models\OrganizationUser;
-use App\Models\PlanUsage;
+use App\Models\PostGroup;
 use App\Models\User;
 use App\Services\Billing\Exceptions\PlanLimitExceededException;
 use App\Services\Billing\PlanLimitService;
 use App\Services\Billing\PlanRegistry;
 use App\Support\OrganizationContext;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 afterEach(function () {
     // These tests are Unit (no RefreshDatabase, see tests/Pest.php) and
     // several call OrganizationContext::set() directly -- clearing it here
     // matches BelongsToOrganizationTest's convention and stops that static
-    // state from leaking into whichever test runs next in this process
-    // (see ResolveOrganizationMiddlewareTest, which asserts an empty
-    // context and previously failed only when run after this file).
+    // state from leaking into whichever test runs next in this process.
     OrganizationContext::clear();
 });
 
@@ -48,19 +48,27 @@ it('throws when the channel limit is reached', function () {
     app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS);
 })->throws(PlanLimitExceededException::class);
 
-it('treats a null limit as unlimited', function () {
-    $org = Organization::factory()->create(['plan' => 'pro']);
+it('treats a null limit as unlimited, short-circuiting before counting anything', function () {
+    $org = Organization::factory()->create(['plan' => 'pro']); // posts_per_month: null
     OrganizationContext::set($org);
 
-    PlanUsage::factory()->create([
-        'organization_id' => $org->id,
-        'metric' => PlanLimit::POSTS_PER_MONTH->value,
-        'period' => Date::now('UTC')->format('Y-m'),
-        'count' => 10_000,
-    ]);
+    DB::enableQueryLog();
+    DB::flushQueryLog();
 
-    app(PlanLimitService::class)->check($org, PlanLimit::POSTS_PER_MONTH);
-})->throwsNoExceptions();
+    // A huge delta, no post_groups rows created at all: if this ever
+    // queried "current usage" before noticing the limit is null, it would
+    // still pass (nothing to compare against), but the query log proves
+    // it never even tries -- a null max short-circuits.
+    app(PlanLimitService::class)->check($org, PlanLimit::POSTS_PER_MONTH, 10_000);
+
+    $ranACountQuery = collect(DB::getQueryLog())->contains(
+        fn (array $entry) => str_contains(strtolower($entry['query']), 'count')
+    );
+
+    DB::disableQueryLog();
+
+    expect($ranACountQuery)->toBeFalse();
+});
 
 it('ignores soft-deleted integrations in the channel count', function () {
     $org = Organization::factory()->create(['plan' => 'free']);
@@ -82,16 +90,21 @@ it('resets the monthly post counter in a new period', function () {
     $org = Organization::factory()->create(['plan' => 'free']); // 30 posts/month
     OrganizationContext::set($org);
 
-    PlanUsage::factory()->create([
-        'organization_id' => $org->id,
-        'metric' => PlanLimit::POSTS_PER_MONTH->value,
-        'period' => '2020-01',
-        'count' => 30,
+    // A post_group genuinely created last UTC month -- bypassing
+    // Eloquent's automatic timestamping via a raw update, since
+    // PostGroupFactory (like any factory) can't backdate created_at
+    // through a normal ->create() call.
+    $stale = PostGroup::factory()->for($org)->create();
+    DB::table('post_groups')->where('id', $stale->id)->update([
+        'created_at' => Date::now('UTC')->subMonthNoOverflow(),
     ]);
 
-    // A stale period at the limit must not affect the current period.
-    app(PlanLimitService::class)->check($org, PlanLimit::POSTS_PER_MONTH);
+    // A post_group genuinely created in the current period.
+    PostGroup::factory()->for($org)->create();
 
+    // The stale period's row must not count towards the current one --
+    // counting on demand from post_groups.created_at means there is
+    // nothing to "reset": a new UTC month is simply a different window.
     expect(app(PlanLimitService::class)->usage($org)[PlanLimit::POSTS_PER_MONTH->value]['current'])->toBe(1);
 });
 
@@ -103,23 +116,47 @@ it('changes the plan through the console command', function () {
     expect($org->fresh()->plan)->toBe(Plan::PRO);
 });
 
-it('sums media storage from size_bytes only, in whole megabytes', function () {
-    $org = Organization::factory()->create(['plan' => 'free']); // 200 MB
+it('compares media storage in bytes, rounding only once for display', function () {
+    $org = Organization::factory()->create(['plan' => 'free']); // 200 MB limit
     OrganizationContext::set($org);
 
-    Media::factory()->for($org)->create(['size_bytes' => 150 * 1024 * 1024]);
+    // Two files at 0.4 MB each sum to 0.8 MB raw. Rounding each
+    // individually before comparing (ceil(0.4) + ceil(0.4) = 2 MB) was
+    // the pre-fix bug; comparing in bytes and rounding only once, for
+    // display, correctly reads this as 1 MB.
+    $bytesPerFile = (int) (0.4 * 1024 * 1024);
+    Media::factory()->for($org)->create(['size_bytes' => $bytesPerFile]);
 
-    app(PlanLimitService::class)->check($org, PlanLimit::MEDIA_STORAGE_MB, 50); // 150 + 50 = 200, exactly at the limit
+    app(PlanLimitService::class)->check($org, PlanLimit::MEDIA_STORAGE_MB, $bytesPerFile);
 
-    expect(fn () => app(PlanLimitService::class)->check($org, PlanLimit::MEDIA_STORAGE_MB, 51))
-        ->toThrow(PlanLimitExceededException::class);
+    expect(app(PlanLimitService::class)->usage($org)[PlanLimit::MEDIA_STORAGE_MB->value]['current'])->toBe(1);
+});
+
+it('rejects a delta below 1', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+
+    app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS, 0);
+})->throws(InvalidArgumentException::class);
+
+it('rejects a negative delta', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+
+    app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS, -5);
+})->throws(InvalidArgumentException::class);
+
+it('includes the UTC reset period alongside posts_per_month usage', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+    OrganizationContext::set($org);
+
+    $usage = app(PlanLimitService::class)->usage($org);
+
+    expect($usage[PlanLimit::POSTS_PER_MONTH->value]['period'])->toBe(Date::now('UTC')->format('Y-m'));
 });
 
 it('never lets two concurrent post creations both pass a limit of one', function () {
     // Sequential Pest/HTTP calls can never reproduce this race -- each
     // call's transaction fully commits before the next one starts. See
-    // raceConcurrently() in tests/Pest.php and SignaturesTest's identical
-    // rationale for its own default-signature race.
+    // raceConcurrently() in tests/Pest.php.
     config(['database.connections.race' => config('database.connections.pgsql')]);
     DB::purge('race');
 
@@ -131,14 +168,28 @@ it('never lets two concurrent post creations both pass a limit of one', function
     config(['plans.free.limits' => array_merge($originalLimits, ['posts_per_month' => 1])]);
 
     $organizationId = $organization->id;
+    $ownerId = $owner->id;
     $racerCount = 5;
 
     try {
         $racers = array_map(
-            fn () => function () use ($organizationId) {
+            fn () => function () use ($organizationId, $ownerId) {
                 $organization = Organization::findOrFail($organizationId);
 
-                app(PlanLimitService::class)->check($organization, PlanLimit::POSTS_PER_MONTH);
+                app(PlanLimitService::class)->withLimit(
+                    $organization,
+                    PlanLimit::POSTS_PER_MONTH,
+                    1,
+                    function () use ($organization, $ownerId) {
+                        PostGroup::query()->create([
+                            'organization_id' => $organization->id,
+                            'state' => PostState::DRAFT,
+                            'publish_date' => now()->addDay(),
+                            'created_by' => $ownerId,
+                            'queue_version' => 0,
+                        ]);
+                    },
+                );
             },
             range(1, $racerCount),
         );
@@ -153,15 +204,78 @@ it('never lets two concurrent post creations both pass a limit of one', function
             expect($result)->toBe('fail:App\Services\Billing\Exceptions\PlanLimitExceededException');
         }
 
-        $count = DB::connection('race')->table('plan_usages')
+        $count = DB::connection('race')->table('post_groups')
             ->where('organization_id', $organizationId)
-            ->where('metric', PlanLimit::POSTS_PER_MONTH->value)
-            ->value('count');
+            ->count();
 
-        expect((int) $count)->toBe(1);
+        expect($count)->toBe(1);
     } finally {
         config(['plans.free.limits' => $originalLimits]);
-        DB::connection('race')->table('plan_usages')->where('organization_id', $organizationId)->delete();
+        DB::connection('race')->table('post_groups')->where('organization_id', $organizationId)->delete();
+        DB::connection('race')->table('organization_user')->where('organization_id', $organizationId)->delete();
+        DB::connection('race')->table('organizations')->where('id', $organizationId)->delete();
+        DB::connection('race')->table('users')->where('id', $ownerId)->delete();
+    }
+});
+
+it('never lets two concurrent channel creations both pass a limit of one, via withLimit', function () {
+    config(['database.connections.race' => config('database.connections.pgsql')]);
+    DB::purge('race');
+
+    $owner = raceCreate(User::class, ['name' => 'Channel Race Owner', 'email' => 'channel-race-owner-'.Str::random(10).'@example.com', 'password' => 'irrelevant-hash']);
+    $organization = raceCreate(Organization::class, ['name' => 'Channel Race Co', 'slug' => 'channel-race-co-'.Str::lower(Str::random(10)), 'owner_id' => $owner->id, 'plan' => 'free']);
+    raceCreate(OrganizationUser::class, ['organization_id' => $organization->id, 'user_id' => $owner->id, 'role' => OrganizationRole::ADMIN]);
+
+    $originalLimits = config('plans.free.limits');
+    config(['plans.free.limits' => array_merge($originalLimits, ['channels' => 1])]);
+
+    $organizationId = $organization->id;
+    $racerCount = 5;
+
+    try {
+        $racers = array_map(
+            fn (int $i) => function () use ($organizationId, $i) {
+                $organization = Organization::findOrFail($organizationId);
+
+                app(PlanLimitService::class)->withLimit(
+                    $organization,
+                    PlanLimit::CHANNELS,
+                    1,
+                    function () use ($organization, $i) {
+                        Integration::query()->create([
+                            'organization_id' => $organization->id,
+                            'provider_identifier' => 'fake',
+                            'internal_id' => "race-channel-{$i}",
+                            'name' => "Race Channel {$i}",
+                            'token' => 'race-token',
+                            'refresh_token' => 'race-refresh',
+                            'settings' => [],
+                        ]);
+                    },
+                );
+            },
+            range(1, $racerCount),
+        );
+
+        $results = raceConcurrently($racers);
+
+        $succeeded = array_filter($results, fn ($r) => $r === 'ok');
+        $failed = array_filter($results, fn ($r) => $r !== 'ok');
+
+        expect($succeeded)->toHaveCount(1);
+        foreach ($failed as $result) {
+            expect($result)->toBe('fail:App\Services\Billing\Exceptions\PlanLimitExceededException');
+        }
+
+        $count = DB::connection('race')->table('integrations')
+            ->where('organization_id', $organizationId)
+            ->whereNull('deleted_at')
+            ->count();
+
+        expect($count)->toBe(1);
+    } finally {
+        config(['plans.free.limits' => $originalLimits]);
+        DB::connection('race')->table('integrations')->where('organization_id', $organizationId)->delete();
         DB::connection('race')->table('organization_user')->where('organization_id', $organizationId)->delete();
         DB::connection('race')->table('organizations')->where('id', $organizationId)->delete();
         DB::connection('race')->table('users')->where('id', $owner->id)->delete();
