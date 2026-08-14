@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { isAxiosError } from 'axios';
 import Toast from '../ui/Toast.vue';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
@@ -68,7 +69,17 @@ async function uploadFiles(files: FileList | File[]): Promise<void> {
             try {
                 const media = await store.upload(file);
                 emit('uploaded', media);
-            } catch {
+            } catch (e) {
+                // Task 36 fix round 1, Minor 5: a 402 already shows the
+                // global warning toast (api/client.ts's response
+                // interceptor) — adding this local --danger line too
+                // would put a red failure message right next to the
+                // --warning toast for the exact same event (color.md
+                // §3.8). Every other failure keeps its local line.
+                if (isAxiosError(e) && e.response?.status === 402) {
+                    return;
+                }
+
                 errors.value.push(t('media.uploader.uploadFailed', { name: file.name }));
             }
         }),
@@ -107,8 +118,11 @@ async function submitUrl(): Promise<void> {
         const media = await store.uploadFromUrl(value);
         urlValue.value = '';
         emit('uploaded', media);
-    } catch {
-        errors.value.push(t('media.uploader.urlImportFailed'));
+    } catch (e) {
+        // See uploadFiles()'s catch above — same 402/toast suppression.
+        if (!(isAxiosError(e) && e.response?.status === 402)) {
+            errors.value.push(t('media.uploader.urlImportFailed'));
+        }
     } finally {
         urlSubmitting.value = false;
     }

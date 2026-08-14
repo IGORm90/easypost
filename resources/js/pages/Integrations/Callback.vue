@@ -49,6 +49,13 @@ const store = useIntegrationsStore();
 const status = ref<'pending' | 'success' | 'error'>('pending');
 const errorMessage = ref('');
 const connectedName = ref('');
+// Task 36 fix round 1, Minor 5: true only when the callback failed with a
+// 402 — the global warning toast (api/client.ts's interceptor) already
+// surfaces that event, so this page's own local --danger alert must stay
+// hidden for it (color.md §3.8), even though `status` still moves to
+// 'error' so the "Back to channels" button appears exactly as it does
+// for every other terminal failure.
+const limitExceeded = ref(false);
 
 function firstString(value: unknown): string | undefined {
     if (typeof value === 'string') {
@@ -120,6 +127,13 @@ onMounted(async () => {
         status.value = 'success';
         connectedName.value = integration.name;
     } catch (e) {
+        if (isAxiosError(e) && e.response?.status === 402) {
+            status.value = 'error';
+            limitExceeded.value = true;
+
+            return;
+        }
+
         fail(isAxiosError(e) && e.response?.status === 422 ? t('integrations.callback.errors.invalidState') : t('integrations.callback.errors.generic'));
     }
 });
@@ -140,7 +154,7 @@ function backToChannels(): void {
                 {{ t('integrations.callback.success', { name: connectedName }) }}
             </p>
 
-            <p v-else role="alert" class="text-sm text-danger">{{ errorMessage }}</p>
+            <p v-else-if="!limitExceeded" role="alert" class="text-sm text-danger">{{ errorMessage }}</p>
 
             <Button v-if="status !== 'pending'" variant="secondary" @click="backToChannels">
                 {{ t('integrations.callback.backToChannels') }}
