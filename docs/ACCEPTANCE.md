@@ -17,15 +17,16 @@ no separate manual step:
 
 - **No Stripe/Cashier anywhere in the codebase.**
   ```bash
-  grep -rniE "stripe|cashier" app config resources
+  grep -rniE "stripe|cashier" app config resources | grep -vE ':[0-9]+:\s*(//|\*|#)'
   ```
-  Expected: no output. (The only hits anywhere in the repo are comments in
-  `app/Services/Billing/PlanRegistry.php`, `config/plans.php`, and
-  `App\Console\Commands\SetOrganizationPlanCommand` explicitly documenting
-  that neither is used — `grep -i` still matches those words inside the
-  comments themselves, so don't be alarmed if you widen the search past
-  `app config resources`; scoped to exactly those three directories the
-  command above is the one the plan specifies.)
+  Expected: no output. The trailing filter drops comment lines, because
+  three lines in `app/Services/Billing/PlanRegistry.php:14`,
+  `app/Console/Commands/SetOrganizationPlanCommand.php:11`, and
+  `config/plans.php:4` are self-documenting comments that explicitly say
+  neither Stripe nor Cashier is used, and `grep -i` matches those words
+  inside the comments themselves. Run the first `grep` alone if you want
+  to see those three hits directly — that's expected, and is not the
+  same thing as Stripe/Cashier actually being wired into the code.
 - **Interface has no raw color values, dual-theme safe.** `npx vitest run
   resources/js/__tests__/palette.spec.ts` — two specs, one failing on any
   hex literal (`#...`) in a `.vue` file, one failing on any default Tailwind
@@ -65,11 +66,14 @@ without a 404/expired-signature error.
 
 Expected: the `USER` member can *view* connected channels but has no
 control to connect a new one or disconnect an existing one — those actions
-are ADMIN/SUPERADMIN-only (`role:ADMIN` middleware on the connect/disconnect
-routes; `routes/api.php`). Confirm this both by the UI hiding/disabling the
-controls and, if you want to be thorough, by hitting
-`DELETE /api/integrations/{id}` directly as the `USER` member and confirming
-a 403.
+are ADMIN/SUPERADMIN-only. Connecting (`auth-url`) is gated by `role:ADMIN`
+middleware (`routes/api.php`); disconnecting is not — `DELETE
+/api/integrations/{id}` carries no `role:` middleware at all, and the 403
+instead comes from `IntegrationController::destroy()` calling
+`findAuthorized($id, 'manage')`, which checks `IntegrationPolicy::manage()`.
+Confirm this both by the UI hiding/disabling the controls and, if you want
+to be thorough, by hitting `DELETE /api/integrations/{id}` directly as the
+`USER` member and confirming a 403.
 
 ### 3. Each of the five providers actually connects and actually publishes
 

@@ -57,6 +57,7 @@ purpose:
 | `APP_KEY` | Encrypts sessions, cookies, and — most importantly — every stored provider token (`Integration::$token`/`refresh_token` use Eloquent's `encrypted` cast). Generated once by `make setup`/`php artisan key:generate`. **Never rotate this in a deployment that already has connected channels** — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `APP_DEBUG` | Must be `false` in production — a debug stack trace can leak more than intended even though tokens themselves are excluded from logs/exceptions by design. |
 | `APP_URL` | Base URL used to build absolute links (e.g. in emails). |
+| `APP_LOCALE`, `APP_FALLBACK_LOCALE` | Must be `en` or `ru` — those are the only two translation sets shipped (`lang/en`, `lang/ru`); any other value falls through to missing-translation-key output. |
 
 ### Database
 
@@ -72,6 +73,7 @@ purpose:
 | `SANCTUM_STATEFUL_DOMAINS` | Must include every host the SPA is served from (`localhost:8080` via nginx, `localhost:5173` via the Vite dev server) or auth requests won't be recognised as first-party. |
 | `CACHE_STORE` | Redis in dev/prod; Mastodon's per-instance dynamically-registered OAuth app id/secret is cached here (see `MastodonProvider`). |
 | `QUEUE_CONNECTION` | Redis, consumed by Horizon. `PublishPostJob` (the job that actually calls out to a provider) is dispatched here, delayed until `publish_date`. |
+| `REDIS_CLIENT`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | The actual Redis connection details. Mandatory, not optional — `SESSION_DRIVER`, `CACHE_STORE`, and `QUEUE_CONNECTION` are all `redis` above, so without these all three silently point at `127.0.0.1` instead of the `redis` container. |
 
 ### Mail
 
@@ -83,7 +85,7 @@ purpose:
 
 | Variable | Purpose |
 |---|---|
-| `FILESYSTEM_DISK` | `s3` — media always goes through the `media` disk, never local disk (see `MediaUploadService`). |
+| `FILESYSTEM_DISK` | Sets Laravel's *default* disk only (`config/filesystems.php`'s `default` key). Media uploads never use the default disk — `MediaUploadService` always writes to the `media` disk, which hardcodes `'driver' => 's3'` in `config/filesystems.php` regardless of this variable. Left at `s3` here for consistency, but changing it has no effect on where media goes. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for the `media` disk. In dev these are MinIO's root credentials (`minio` / `minio123`). |
 | `AWS_DEFAULT_REGION`, `AWS_BUCKET` | Bucket the media disk writes to. |
 | `AWS_ENDPOINT` | Where the **server** (php/horizon/scheduler containers) reaches storage — `http://minio:9000` only resolves inside the Compose network. |
@@ -120,8 +122,9 @@ provider credentials" below.
 ## Obtaining credentials for the five providers
 
 Each is connected per-organization from **Settings → Channels** in the app
-(`POST /api/integrations/{provider}/connect`, admin-only — a `USER`-role
-member cannot connect or remove channels).
+(`POST /api/integrations/{provider}/auth-url` to start the flow, then
+`POST /api/integrations/{provider}/callback` to complete it — both
+admin-only — a `USER`-role member cannot connect or remove channels).
 
 - **Telegram** — no app registration needed. Message [@BotFather](https://t.me/BotFather)
   on Telegram, run `/newbot`, and copy the bot token it gives you. Add the bot

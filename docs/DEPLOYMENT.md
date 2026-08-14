@@ -2,8 +2,8 @@
 
 ## Topology
 
-Six long-running services (`docker/compose.yaml`), all sharing one Compose
-network:
+Nine long-running services plus one one-shot init container
+(`docker/compose.yaml`), all sharing one Compose network:
 
 - **nginx** — reverse proxy in front of PHP-FPM, serves `public/`, terminates
   HTTP. `client_max_body_size` is set to `108M` (matching `php.ini`'s
@@ -16,15 +16,21 @@ network:
   notices, etc.).
 - **scheduler** — runs `php artisan schedule:run` every 60 seconds (token
   refresh sweeps, digest emails).
+- **node** — runs the Vite dev server (`npm run dev`) for the SPA frontend,
+  reachable at `http://localhost:5173`; also where the README's frontend
+  commands (`npx vitest run`, `npm run build`) are meant to be run.
 - **postgres**, **redis** — primary datastore and queue/cache/session
   backend.
-- **minio** — S3-compatible object storage for the `media` disk. An
+- **minio** — S3-compatible object storage for the `media` disk. A
   `minio-init` one-shot container creates the `media` bucket and applies a
   `GetObject`-only anonymous read policy before php/horizon/scheduler are
   allowed to start (`condition: service_completed_successfully`) — a bucket
   that doesn't exist yet means every media upload fails from the very first
   request, which is exactly the failure mode this dependency exists to
   prevent.
+- **mailpit** — catches every outbound email in dev (verification, invites,
+  reconnect notices) at `http://localhost:8025`; nothing is ever delivered
+  to a real inbox locally.
 
 `php`, `horizon`, and `scheduler` all build from the same image
 (`docker/php/Dockerfile`) and bind-mount the repository, so `vendor/` is
