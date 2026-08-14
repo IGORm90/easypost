@@ -464,6 +464,19 @@ class PublishService
      * group (the query's own `orderBy` — `groupBy()` on a Collection
      * preserves each item's original relative order within its bucket).
      *
+     * `orderBy('id')` as a tiebreaker, added post-review: `order` is
+     * assigned PER CHAIN by `PostGroupService::replaceChains()`, so every
+     * channel's first segment is `order = 0` and a multi-channel group's
+     * rows are full of ties. Without a tiebreaker the ORDER in which
+     * channels are attempted is whatever Postgres happens to return —
+     * which is not a correctness problem (channels are independent, and
+     * each one's own segments are still strictly ordered, since `order`
+     * is unique within a chain), but it is unstable: it makes a failing
+     * multi-channel run hard to reproduce, and it silently decides which
+     * channel is the one in flight when a concurrent edit lands. Post ids
+     * are ULIDs, so this resolves ties by creation order — the order the
+     * customer's own payload listed the channels in.
+     *
      * @return SupportCollection<string, Collection<int, Post>>
      */
     private function loadChains(PostGroup $group): SupportCollection
@@ -473,6 +486,7 @@ class PublishService
             ->where('post_group_id', $group->id)
             ->with(['media' => fn ($query) => $query->withoutGlobalScope('organization')])
             ->orderBy('order')
+            ->orderBy('id')
             ->get();
 
         /** @var SupportCollection<string, Collection<int, Post>> $grouped */
@@ -543,17 +557,46 @@ class PublishService
             // still went out at 07:22. Irrevocable: the message is live,
             // and `guardEditable()` 409s every later edit.
             //
-            // A plain read, deliberately NOT `lockForUpdate()`: this
-            // transaction already holds POST row locks, so locking the
-            // group here would take the two locks in the opposite order
-            // to `PostGroupService::lockGroup()` -> `guardEditable()` and
-            // `abandonGroup()` (group first, posts second) and create a
-            // deadlock cycle where there is currently none. Under READ
-            // COMMITTED a fresh statement sees every transaction
-            // committed before it starts — and any writer that could have
-            // changed this row was, by construction, blocked behind the
-            // post-row lock this transaction is holding, so it has either
-            // committed (and is visible to this SELECT) or not started.
+            // A plain read, deliberately NOT `lockForUpdate()`: a writer
+            // that could change this row (`PostGroupService::update()`,
+            // `updateDate()`) takes the GROUP lock first and is THEN
+            // blocked on `guardEditable()`'s post-row locks — the very
+            // locks this transaction is holding. Locking the group here,
+            // under those held post locks, is therefore not merely
+            // "against the group -> posts convention": it is a direct
+            // deadlock cycle with a writer already waiting on us while
+            // holding what we would be asking for.
+            //
+            // What makes the PLAIN read sufficient — and this is the
+            // subtle part, so read it before changing anything nearby.
+            // It is NOT that a concurrent writer must have committed or
+            // not started: a writer blocked in `guardEditable()` HAS
+            // started, has NOT committed, and is invisible to this
+            // SELECT, which will happily read the pre-drag
+            // `queue_version`. Safety comes from the other side of that
+            // wait: because that writer is blocked on THESE post rows, it
+            // cannot commit its bump until this transaction ends, and
+            // when its wait resolves it re-reads and sees the
+            // `release_id` this transaction just committed — so it 409s
+            // instead of superseding a publish that already went out.
+            // Either this channel sees the new version and aborts, or the
+            // writer sees the release and is refused; never both.
+            //
+            // That rests on an invariant this file cannot enforce alone,
+            // stated here and in `guardEditable()`'s docblock:
+            //
+            //   EVERY path that bumps `queue_version` or moves
+            //   `publish_date` on a QUEUE group MUST first take that
+            //   group's pending post rows FOR UPDATE (i.e. go through
+            //   `guardEditable()`).
+            //
+            // It holds today — `update()` and `updateDate()` both call
+            // `guardEditable()`, `retry()` only accepts a group already
+            // in ERROR (nothing is in flight for it), and
+            // `MissedPostsService` never bumps. A new bump path that
+            // skips those row locks would slip past this read and
+            // reopen Critical 2 exactly as it was reproduced in
+            // `PublishRaceTest`, with no test necessarily going red.
             //
             // Aborting is "no retry, no error": the superseding
             // generation has its own job, and this run has no standing to

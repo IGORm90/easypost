@@ -49,12 +49,15 @@ afterEach(function () {
  * A committed (race-connection) fixture: one organization, one QUEUE
  * group at queue_version 1 due now, and TWO single-segment channels.
  *
- * `order` is 0 for channel A and 1 for channel B deliberately:
- * `PublishService::loadChains()` orders by `order` before grouping by
- * integration, so this pins the order channels are attempted in —
- * channel A first — which is what makes the interleavings below
- * reproducible rather than dependent on whatever order Postgres happens
- * to return equal-`order` rows in.
+ * Both channels' single segment is `order = 0`, exactly as
+ * `PostGroupService::replaceChains()` writes them (`order` is assigned
+ * per chain, so every channel's first segment is 0). Channel A is still
+ * attempted first, and deterministically so, because
+ * `PublishService::loadChains()` breaks that tie on `id` — ULIDs, hence
+ * creation order, hence A. An earlier revision of this fixture gave B
+ * `order = 1` to pin the sequence; that reproduced an ordering
+ * production does not actually produce, which is the kind of fixture
+ * that quietly stops testing the real code path.
  *
  * @return array{organization: Organization, group: PostGroup, integrationA: Integration, integrationB: Integration, postA: Post, postB: Post, cleanup: Closure(): void}
  */
@@ -97,12 +100,12 @@ function publishRaceFixture(string $label): array
     ]);
 
     $posts = [];
-    foreach (['A' => 0, 'B' => 1] as $suffix => $order) {
+    foreach (['A', 'B'] as $suffix) {
         $posts[$suffix] = raceCreate(Post::class, [
             'post_group_id' => $group->id,
             'organization_id' => $organization->id,
             'integration_id' => $integrations[$suffix]->id,
-            'order' => $order,
+            'order' => 0,
             'content' => "channel {$suffix} content",
             'settings' => [],
             'state' => PostState::QUEUE,

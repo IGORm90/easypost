@@ -41,12 +41,27 @@ required after cloning, and after any dependency change.
 
 1. Pull/build the new code.
 2. Run `composer install --no-dev -o` (production) or `make setup` (dev).
-3. Run migrations: `php artisan migrate --force` (or `make migrate`).
-4. Restart `php`, `horizon`, and `scheduler` so they pick up new code (PHP-FPM
+3. **Diff `.env` against `.env.example` and add every key that is missing.**
+   A new key in `.env.example` changes nothing on its own — Laravel falls back
+   to the default compiled into `config/`, which is exactly what the
+   environment was already doing wrong. **For this release specifically, set
+   `REDIS_QUEUE_RETRY_AFTER=300`**: without it the environment keeps
+   `retry_after = 90`, equal to `supervisor-publish`'s timeout, and a slow
+   publish is redelivered to a second worker while the first is still sending
+   — segments already on the network get sent twice (troubleshooting entry 3
+   below has the full interleaving). Then:
+
+   ```bash
+   php artisan config:clear     # or config:cache, if you cache config
+   php artisan horizon:terminate # workers re-read config only on restart
+   ```
+
+4. Run migrations: `php artisan migrate --force` (or `make migrate`).
+5. Restart `php`, `horizon`, and `scheduler` so they pick up new code (PHP-FPM
    workers and long-running Artisan processes do not hot-reload).
-5. **Restart nginx too** — see the first troubleshooting entry below; skipping
+6. **Restart nginx too** — see the first troubleshooting entry below; skipping
    this step is the single most common cause of a "deploy that looks broken."
-6. Rebuild frontend assets (`npm run build`) if `resources/js` changed, and
+7. Rebuild frontend assets (`npm run build`) if `resources/js` changed, and
    make sure they're served from wherever `public/build` is expected in
    production (the bind-mount setup here is dev-only).
 

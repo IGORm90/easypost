@@ -783,6 +783,40 @@ class PostGroupService
      * than a stale snapshot. Proven directly with real OS-level
      * concurrency (a sequential Pest call cannot reproduce this race) in
      * `tests/Feature/Publishing/RescheduleTest.php`.
+     *
+     * ==========================================================
+     * INVARIANT — do not add a `queue_version`/`publish_date` write
+     * path that skips this method
+     * ==========================================================
+     *
+     * EVERY path that bumps `queue_version` or moves `publish_date` on a
+     * QUEUE group MUST take that group's pending post rows FOR UPDATE
+     * first — in practice, by calling this method. This is not only
+     * about the delete/replace case above; it is half of the fix for
+     * final-review Critical 2.
+     *
+     * `PublishService::publishChannel()` re-reads `post_groups` with a
+     * PLAIN (unlocked) read inside its own transaction, immediately
+     * before the provider call, and aborts the channel if the version
+     * has moved on. It cannot lock that row: it already holds these post
+     * locks, and a writer here holds the GROUP lock while waiting on
+     * them, so taking the group lock there would close a deadlock cycle.
+     * The plain read alone does NOT see a writer that has started and not
+     * yet committed. What closes the window is that such a writer is
+     * blocked HERE, on these post rows, until the publishing transaction
+     * ends — and then re-reads and 409s on the `release_id` it just
+     * committed. Either the publisher sees the new version and abandons
+     * the channel, or the writer sees the release and is refused.
+     *
+     * A new bump path that skips these row locks (a bulk reschedule, an
+     * admin tool, a future "move all posts" feature) breaks that pairing
+     * silently: the publisher's read would miss the bump, publish at the
+     * old time, and nothing in the test suite would necessarily go red.
+     * Route it through `lockGroup()` + this method, as every current
+     * caller does. `retry()` is the one path that legitimately does not
+     * call this method — it accepts ONLY a group already in `ERROR`, for
+     * which no run can be in flight by construction — and
+     * `MissedPostsService` never bumps at all.
      */
     private function guardEditable(PostGroup $group): void
     {

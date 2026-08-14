@@ -11,6 +11,12 @@
  * worker whose own timeout is 90s. Four calls per segment on Slack's
  * media path is all it takes to blow through that.
  *
+ * Scoped to `app/Social` as a whole, not just `app/Social/Providers`:
+ * post-review widening, because a provider helper one directory up (a
+ * shared client, a registry, a DTO that fetches something) bypasses a
+ * providers-only guard silently while making exactly the same
+ * unbounded call.
+ *
  * A rule about a string of text in a file, like the two arch tests
  * beside this one, so it is checked by grep rather than by an `arch()`
  * preset (which understands class/namespace structure, not call sites).
@@ -18,8 +24,8 @@
  * no match, >1 a real failure — so "the search itself broke" can never
  * pass as green.
  */
-it('never calls the Http facade directly from a provider adapter', function () {
-    $root = base_path('app/Social/Providers');
+it('never calls the Http facade directly anywhere under app/Social', function () {
+    $root = base_path('app/Social');
     expect(is_dir($root))->toBeTrue("search root [{$root}] does not exist — the guard cannot have run");
 
     $command = sprintf(
@@ -35,7 +41,7 @@ it('never calls the Http facade directly from a provider adapter', function () {
 
     if ($exitCode > 1) {
         throw new RuntimeException(
-            "grep failed while scanning app/Social/Providers for Http:: (exit code {$exitCode}): "
+            "grep failed while scanning app/Social for Http:: (exit code {$exitCode}): "
             .implode("\n", $outputLines),
         );
     }
