@@ -60,6 +60,7 @@ class User extends Authenticatable implements HasLocalePreference, MustVerifyEma
             'password' => 'hashed',
             'is_superadmin' => 'boolean',
             'email_notifications' => 'boolean',
+            'digest_sent_at' => 'datetime',
         ];
     }
 

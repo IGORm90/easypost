@@ -2,6 +2,7 @@
 
 use App\Console\Commands\ScheduleTokenRefresh;
 use App\Jobs\ScanMissedPostsJob;
+use App\Jobs\SendDigestEmailJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -72,5 +73,27 @@ Schedule::command(ScheduleTokenRefresh::class)
  */
 Schedule::job(new ScanMissedPostsJob)
     ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
+ * Task 33: the weekly digest. There is no single UTC instant that is
+ * "Monday 09:00" for every user — see DigestService's class docblock for
+ * the full reasoning — so this runs hourly and DigestService::isDueNow()
+ * decides, per user, whether it is currently their local Monday 09:00-09:59
+ * hour. Hourly sampling against a 60-minute-wide local window guarantees
+ * exactly one tick lands in every user's window every day, regardless of
+ * their zone's UTC offset (whole-hour, half-hour, or 45-minute).
+ *
+ * Schedule::job(), not Schedule::command() — same reasoning as
+ * ScanMissedPostsJob above: a slow digest pass never blocks the scheduler
+ * process itself. withoutOverlapping()/onOneServer() are the same
+ * dispatch-only-level guard documented there (real protection against
+ * two overlapping EXECUTIONS is SendDigestEmailJob's own ShouldBeUnique,
+ * with DigestService::claim()'s conditional UPDATE as the actual
+ * per-user, exactly-once guarantee underneath both).
+ */
+Schedule::job(new SendDigestEmailJob)
+    ->hourly()
     ->withoutOverlapping()
     ->onOneServer();

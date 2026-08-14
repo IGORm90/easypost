@@ -36,4 +36,18 @@ return [
         'action_line' => 'Please review and retry it from your calendar.',
     ],
 
+    'weekly_digest' => [
+        'subject' => 'Your weekly digest',
+        'greeting' => 'Hello :name!',
+        'intro' => 'Here is what happened across your organizations in the last week, and what is coming up in the next one.',
+        'published_heading' => 'Published this week',
+        'published_empty' => 'Nothing was published this week.',
+        'failed_heading' => 'Failed this week',
+        'failed_empty' => 'Nothing failed this week.',
+        'scheduled_heading' => 'Scheduled for the coming week',
+        'scheduled_empty' => 'Nothing is scheduled for the coming week.',
+        'more' => 'and :count more',
+        'footer' => 'You are receiving this email because weekly digests are enabled in your notification settings.',
+    ],
+
 ];
