@@ -328,7 +328,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
             throw new ProviderTransientException('Network error while calling the Telegram API.');
         }
 
-        return $response;
+        return $this->refuseRedirect($response, $this->name());
     }
 
     /**

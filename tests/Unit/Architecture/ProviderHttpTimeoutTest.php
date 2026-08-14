@@ -55,3 +55,34 @@ it('never calls the Http facade directly anywhere under app/Social', function ()
 
     expect($violations)->toBe([], "these provider call sites bypass BoundsHttpTimeouts and inherit Laravel's 30s default timeout:\n".implode("\n", $violations));
 });
+
+/**
+ * Final-review batch 2, Critical 2, made executable for FUTURE providers
+ * too: the five adapters each refuse redirects through their own send()
+ * (proven behaviourally in tests/Unit/Social/ProviderRedirectTest.php),
+ * and a sixth adapter added later must not silently reopen the hole by
+ * omission — the same failure mode that made the timeout guard above
+ * necessary.
+ *
+ * A structural check, not a behavioural one: it asserts each provider
+ * routes its responses through BoundsHttpTimeouts::refuseRedirect(). The
+ * behavioural tests are what prove the refusal actually works; this is
+ * what makes forgetting it visible.
+ */
+it('routes every provider response through the redirect refusal', function () {
+    $files = glob(base_path('app/Social/Providers').'/*Provider.php') ?: [];
+
+    expect($files)->not->toBe([], 'no provider classes found — the guard cannot have run');
+
+    $missing = [];
+
+    foreach ($files as $file) {
+        $source = (string) file_get_contents($file);
+
+        if (! str_contains($source, 'refuseRedirect(')) {
+            $missing[] = basename($file);
+        }
+    }
+
+    expect($missing)->toBe([], "these providers never refuse a redirect:\n".implode("\n", $missing));
+});

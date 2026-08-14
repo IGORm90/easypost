@@ -411,7 +411,7 @@ class BlueskyProvider implements ManualTokenAuth, SocialProviderInterface, Suppo
             throw new ProviderTransientException('Network error while calling the Bluesky API.');
         }
 
-        return $response;
+        return $this->refuseRedirect($response, $this->name());
     }
 
     private function errorFor(Response $response, string $context): ProviderException

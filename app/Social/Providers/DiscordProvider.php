@@ -322,7 +322,7 @@ class DiscordProvider implements SocialProviderInterface
             throw new ProviderTransientException('Network error while calling the Discord API.');
         }
 
-        return $response;
+        return $this->refuseRedirect($response, $this->name());
     }
 
     /**
