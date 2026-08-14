@@ -17,6 +17,7 @@ use App\Support\OrganizationContext;
 use DateTimeInterface;
 use Illuminate\Database\Seeder;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -115,17 +116,42 @@ class DemoSeeder extends Seeder
         OrganizationContext::set($organization);
 
         try {
-            $this->wipeExistingContent($organization);
+            // Task 37 fix round 1 (Minor 11): wrapped in a DB transaction
+            // so a mid-run failure (e.g. MinIO down after the wipe below
+            // already ran) rolls the row-level changes back instead of
+            // leaving the demo org emptied. This is NOT a full guarantee
+            // of atomicity, though: createMedia() writes real objects to
+            // the `media` disk (MinIO/S3) via MediaUploadService::store(),
+            // and object storage writes are not part of this (or any)
+            // database transaction — a rollback here undoes the `media`
+            // table rows but cannot un-write an object that already
+            // landed on disk. A failure after some uploads succeeded can
+            // therefore leave orphaned objects under `org/{id}` even
+            // though the DB rows referencing them are gone; the next
+            // `make seed` run's wipeExistingContent() deletes that whole
+            // directory regardless of what the DB says, so orphans don't
+            // accumulate across runs, but a run that fails mid-way is not
+            // perfectly atomic end to end.
+            DB::transaction(function () use ($organization, $user): void {
+                $this->wipeExistingContent($organization);
 
-            $integrations = $this->createIntegrations($organization);
-            $media = $this->createMedia($organization, $user);
-            $tag = Tag::create([
-                'organization_id' => $organization->id,
-                'name' => 'launch',
-                'color' => '#6d5efc',
-            ]);
+                $integrations = $this->createIntegrations($organization);
+                $media = $this->createMedia($organization, $user);
+                $tag = Tag::create([
+                    'organization_id' => $organization->id,
+                    'name' => 'launch',
+                    // Task 37 fix round 1 (Minor 10): this is tag data,
+                    // not component styling, so the no-raw-hex palette
+                    // guard (resources/js/__tests__/palette.spec.ts)
+                    // never sees it -- but a value from color.md keeps
+                    // the demo consistent with the design system anyway.
+                    // `--accent`, the token color.md documents for
+                    // "highlight in the content plan".
+                    'color' => '#A94E08',
+                ]);
 
-            $this->createPostGroups($organization, $user, $integrations, $media, $tag);
+                $this->createPostGroups($organization, $user, $integrations, $media, $tag);
+            });
         } finally {
             OrganizationContext::clear();
         }
