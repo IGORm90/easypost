@@ -5,6 +5,7 @@ use App\Http\Middleware\EnforcePlanLimit;
 use App\Http\Middleware\EnsureOrganizationRole;
 use App\Http\Middleware\EnsureSuperadmin;
 use App\Http\Middleware\ResolveOrganization;
+use App\Http\Middleware\SetLocale;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -41,6 +42,14 @@ return Application::configure(basePath: dirname(__DIR__))
             'deny_while_impersonating' => DenyWhileImpersonating::class,
             'plan' => EnforcePlanLimit::class,
         ]);
+
+        // Every API response the user reads — validation errors above
+        // all — must speak their language, not APP_LOCALE's. Appended to
+        // the group (not prepended) so it runs after Sanctum has
+        // authenticated the request and $request->user() is available:
+        // the stored profile locale is the signal that must win over
+        // whatever the browser advertises. See SetLocale's docblock.
+        $middleware->appendToGroup('api', SetLocale::class);
 
         // Lets Sanctum authenticate first-party SPA requests (from
         // SANCTUM_STATEFUL_DOMAINS) via the encrypted session cookie
