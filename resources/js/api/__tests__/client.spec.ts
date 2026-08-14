@@ -5,23 +5,28 @@ import { api } from '../client'
 import { useLimitToastStore } from '../../stores/limitToast'
 import { i18n } from '../../i18n'
 
+const push = vi.fn()
+
+vi.mock('../../router', () => ({
+  default: { push: (...args: unknown[]) => push(...args) },
+}))
+
 // A fake adapter so `api.post(...)` never hits the network — we only care
 // about the request interceptor's CSRF-priming behaviour, not a real
 // backend response.
-function okAdapter() {
+function okAdapter(config: InternalAxiosRequestConfig) {
   return Promise.resolve({
     data: {},
     status: 200,
     statusText: 'OK',
     headers: {},
-    config: {},
+    config,
   })
 }
 
 async function freshClient() {
   vi.resetModules()
   const { api } = await import('../client')
-  // @ts-expect-error -- test-only adapter override, not part of the public config type
   api.defaults.adapter = okAdapter
   return api
 }
@@ -29,6 +34,8 @@ async function freshClient() {
 beforeEach(() => {
   vi.restoreAllMocks()
   setActivePinia(createPinia())
+  push.mockClear()
+  localStorage.clear()
 })
 
 it('does not permanently poison writes after a failed CSRF priming request', async () => {
@@ -136,5 +143,94 @@ describe('402 plan-limit interceptor', () => {
     await expect(api.post('/things')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 500)
 
     expect(useLimitToastStore().message).toBeNull()
+  })
+})
+
+// Final review, Critical 3: nothing in the SPA handled 401 or 419.
+//
+// A 401 mid-session left a signed-in-looking shell where every page
+// rendered its own generic "could not load" — the router guard calls
+// fetchMe() only while the store is not `ready`, which it is after the
+// first navigation — and never told the user to sign in again.
+//
+// A 419 was worse: `csrfReady` memoises the priming promise for the app's
+// lifetime and was dropped only when priming itself rejected. Once the
+// session's CSRF token expired in an open tab, the resolved promise made
+// every write reuse the dead token, so Save failed identically forever.
+describe('session-expiry interceptor', () => {
+  function rejectWith(status: number) {
+    return (config: InternalAxiosRequestConfig) =>
+      Promise.reject(new AxiosError(`Request failed with status code ${status}`, AxiosError.ERR_BAD_REQUEST, config, null, {
+        data: {},
+        status,
+        statusText: '',
+        headers: {},
+        config,
+      }))
+  }
+
+  it('re-primes CSRF and retries the write exactly once on a 419', async () => {
+    const getSpy = vi
+      .spyOn(axios, 'get')
+      .mockResolvedValue({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
+
+    const client = await freshClient()
+    let calls = 0
+    client.defaults.adapter = (config: InternalAxiosRequestConfig) => {
+      calls += 1
+
+      return calls === 1 ? rejectWith(419)(config) : okAdapter(config)
+    }
+
+    await expect(client.post('/posts')).resolves.toMatchObject({ status: 200 })
+
+    expect(calls).toBe(2)
+    // Priming ran twice: once for the original write, once because the 419
+    // dropped the memoised promise. A stale token is never reused.
+    expect(getSpy).toHaveBeenCalledTimes(2)
+    expect(getSpy).toHaveBeenCalledWith('/sanctum/csrf-cookie')
+  })
+
+  it('gives up after one 419 retry instead of looping', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
+
+    const client = await freshClient()
+    let calls = 0
+    client.defaults.adapter = (config: InternalAxiosRequestConfig) => {
+      calls += 1
+
+      return rejectWith(419)(config)
+    }
+
+    await expect(client.post('/posts')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 419)
+    expect(calls).toBe(2)
+  })
+
+  it('on a 401 clears the auth store, flags the expiry and sends the user to login', async () => {
+    const { useAuthStore } = await import('../../stores/auth')
+    const auth = useAuthStore()
+    auth.$patch({ user: { id: 'u-1' } as never, organizations: [{ id: 'org-1' } as never], ready: true })
+    localStorage.setItem('organization_id', 'org-1')
+
+    api.defaults.adapter = rejectWith(401)
+
+    await expect(api.get('/posts')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 401)
+
+    expect(auth.user).toBeNull()
+    expect(auth.organizations).toEqual([])
+    expect(auth.sessionExpired).toBe(true)
+    expect(push).toHaveBeenCalledWith({ name: 'login' })
+  })
+
+  it('leaves a 401 from /auth/me alone — "no session yet" is that endpoint\'s normal answer', async () => {
+    const { useAuthStore } = await import('../../stores/auth')
+    const auth = useAuthStore()
+
+    api.defaults.adapter = rejectWith(401)
+
+    await expect(api.get('/auth/me')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 401)
+
+    expect(auth.sessionExpired).toBe(false)
+    expect(push).not.toHaveBeenCalled()
   })
 })

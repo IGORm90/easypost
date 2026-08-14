@@ -63,6 +63,16 @@ async function submit(): Promise<void> {
                 required
             />
 
+            <!-- Final review, Critical 3: an expired session bounces the
+                 user here from wherever they were. color.md reserves
+                 `--danger` for "this failed and nothing was saved" — an
+                 expiry is a neutral fact about the session, so it renders
+                 as a muted notice, never alongside the login error below
+                 as a second red line. -->
+            <p v-if="auth.sessionExpired && !error" role="status" class="rounded-md bg-surface-2 px-3 py-2 text-sm text-muted">
+                {{ t('auth.login.sessionExpired') }}
+            </p>
+
             <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
 
             <Button type="submit" variant="primary" :loading="loading">{{ t('auth.login.submit') }}</Button>

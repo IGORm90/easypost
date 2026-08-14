@@ -27,6 +27,8 @@ interface AuthState {
     organizations: AuthOrganization[];
     /** True once fetchMe() has resolved (successfully or not) at least once — lets the router guard fetch session state exactly once per app load. */
     ready: boolean;
+    /** True when the server rejected a request with 401 after the user had been signed in — the login page explains the sign-out rather than leaving it unexplained. Cleared on the next successful login. */
+    sessionExpired: boolean;
 }
 
 /**
@@ -41,6 +43,7 @@ export const useAuthStore = defineStore('auth', {
         user: null,
         organizations: [],
         ready: false,
+        sessionExpired: false,
     }),
     actions: {
         async login(email: string, password: string): Promise<void> {
@@ -53,6 +56,7 @@ export const useAuthStore = defineStore('auth', {
             // X-Organization off every request and 403s the whole session.
             this.organizations = data.organizations;
             this.ready = true;
+            this.sessionExpired = false;
         },
 
         /**
@@ -71,8 +75,27 @@ export const useAuthStore = defineStore('auth', {
                 this.user = null;
                 this.organizations = [];
                 this.ready = true;
+                // A deliberate log-out is not an expiry: never explain it
+                // to the user as one.
+                this.sessionExpired = false;
                 await router.push({ name: 'login' });
             }
+        },
+
+        /**
+         * Called by the API client's response interceptor when the server
+         * answers 401 for a user the app still believed was signed in.
+         * Drops every trace of the session locally — including the
+         * `organization_id` the request interceptor would otherwise keep
+         * attaching to requests made by whoever signs in next — and raises
+         * the flag the login page reads to say why they are back there.
+         */
+        markSessionExpired(): void {
+            this.user = null;
+            this.organizations = [];
+            this.ready = true;
+            this.sessionExpired = true;
+            localStorage.removeItem('organization_id');
         },
 
         /**

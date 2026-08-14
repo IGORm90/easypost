@@ -1,4 +1,5 @@
 import axios, { isAxiosError } from 'axios';
+import type { InternalAxiosRequestConfig } from 'axios';
 import { showLimitToast } from '../stores/limitToast';
 import { i18n } from '../i18n';
 
@@ -87,11 +88,81 @@ function planLimitToastMessage(data: PlanLimitBody | undefined): string {
     return typeof data?.message === 'string' ? data.message : 'This organization has reached a plan limit.';
 }
 
+// Final review, Critical 3: session expiry, in both of the forms Laravel
+// reports it.
+//
+// 419 — the session's CSRF token expired while the tab stayed open (a
+// laptop closed over lunch is enough). `csrfReady` memoises the priming
+// promise for the app's lifetime and is only dropped when priming itself
+// rejects, so a *resolved* promise over a now-dead token made every write
+// reuse it: Save failed, the retry failed identically, and the user lost
+// the composition unless they thought to reload. Drop the memo and replay
+// the request once — the request interceptor re-primes on the way out.
+// Exactly once, flagged on the config: a 419 that survives a genuine
+// re-prime is a real rejection, not something to loop on.
+//
+// 401 — the session itself is gone. The router guard only calls fetchMe()
+// while the store is not `ready`, which it is after the first navigation,
+// so nothing would ever notice: the user kept a signed-in-looking shell
+// where every page showed its own generic "could not load". Clear the
+// store, flag it so the login page can say why, and go there.
+// GET /auth/me is excluded — a 401 is that endpoint's normal "not signed
+// in" answer, and it is what the guard calls on a cold load — as is
+// /auth/login, whose 401 means "wrong password", not "session expired".
+interface RetriableConfig extends InternalAxiosRequestConfig {
+    csrfRetried?: boolean;
+}
+
+const NO_SESSION_REDIRECT_PATHS = ['/auth/me', '/auth/login'];
+
+function isSessionAgnostic(config: InternalAxiosRequestConfig | undefined): boolean {
+    const url = config?.url ?? '';
+
+    return NO_SESSION_REDIRECT_PATHS.some((path) => url.startsWith(path));
+}
+
+/**
+ * Imported lazily so this module stays free of a load-time cycle: the auth
+ * store and the router both import `api` from here.
+ */
+async function endExpiredSession(): Promise<void> {
+    const [{ useAuthStore }, { default: router }] = await Promise.all([import('../stores/auth'), import('../router')]);
+    const auth = useAuthStore();
+
+    if (auth.sessionExpired) {
+        return;
+    }
+
+    auth.markSessionExpired();
+    await router.push({ name: 'login' });
+}
+
 api.interceptors.response.use(
     (response) => response,
-    (error: unknown) => {
-        if (isAxiosError(error) && error.response?.status === 402) {
-            showLimitToast(planLimitToastMessage(error.response.data as PlanLimitBody | undefined));
+    async (error: unknown) => {
+        if (!isAxiosError(error)) {
+            return Promise.reject(error);
+        }
+
+        const status = error.response?.status;
+
+        if (status === 402) {
+            showLimitToast(planLimitToastMessage(error.response?.data as PlanLimitBody | undefined));
+        }
+
+        if (status === 419) {
+            const config = error.config as RetriableConfig | undefined;
+
+            if (config && !config.csrfRetried) {
+                config.csrfRetried = true;
+                csrfReady = null;
+
+                return api.request(config);
+            }
+        }
+
+        if (status === 401 && !isSessionAgnostic(error.config)) {
+            await endExpiredSession();
         }
 
         return Promise.reject(error);
