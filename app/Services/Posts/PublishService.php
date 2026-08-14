@@ -621,7 +621,23 @@ class PublishService
                 // never marked ERROR on its own authority.
                 return [true, null];
             } catch (ProviderRateLimitException $e) {
-                return [true, $e->retryAfterSeconds];
+                // 0 means "the network told us nothing" — final-review
+                // Important 4. ProviderRateLimitException::$retryAfterSeconds
+                // is a non-nullable int and every provider defaults it to
+                // 0 when the Retry-After header or the equivalent response
+                // field is absent, which Slack, Mastodon and Bluesky 429s
+                // frequently are. Normalising it to null HERE, at the only
+                // layer that knows the difference between "wait zero
+                // seconds" and "no figure was given", is what stops it
+                // from (a) winning publishGroup()'s min() across channels
+                // against a sibling channel's real figure, and (b)
+                // reaching PublishPostJob::handle() as a literal 0 —
+                // which released the job with no delay at all, burning
+                // every remaining attempt within milliseconds of the first
+                // 429 and turning a transient rate limit into a permanent,
+                // customer-visible ERROR (having hammered the
+                // rate-limited API three more times first).
+                return [true, $e->retryAfterSeconds > 0 ? $e->retryAfterSeconds : null];
             } catch (ProviderTransientException) {
                 return [true, null];
             } catch (ProviderPermanentException $e) {

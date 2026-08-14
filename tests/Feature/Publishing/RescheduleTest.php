@@ -180,6 +180,15 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
     // same row (lockForUpdate(), same predicate publishChannel() uses)
     // until the publish either commits or rolls back, then re-read fresh
     // — never trust a snapshot taken before that resolves.
+    //
+    // Final-review fix: the publishing racer used to hand-write
+    // `Post::query()->whereKey()->lockForUpdate()->update([...])`, which
+    // proved only that guardEditable() blocks on SOME lock on that row —
+    // not on the predicate the production code actually takes, and never
+    // that the lock is held ACROSS the provider call. It now drives the
+    // real PublishService::publishGroup(), with the fake provider
+    // sleeping inside post() to open the window, so the row lock, the
+    // network call and the release_id commit are all the production ones.
     config(['database.connections.race' => config('database.connections.pgsql')]);
     DB::purge('race');
 
@@ -196,6 +205,7 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
         'organization_id' => $organization->id,
         'state' => PostState::QUEUE,
         'publish_date' => now(),
+        'queue_version' => 1,
     ]);
     $post = raceCreate(Post::class, [
         'post_group_id' => $group->id,
@@ -209,21 +219,14 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
 
     try {
         $racers = [
-            // "publish": locks the pending row exactly like
-            // PublishService::publishChannel()'s re-lock, holds it open
-            // briefly to widen the window, then commits release_id.
-            function () use ($post, $organization) {
-                OrganizationContext::set(Organization::query()->findOrFail($organization->id));
-                DB::transaction(function () use ($post) {
-                    Post::query()->whereKey($post->id)->lockForUpdate()->firstOrFail();
-                    usleep(150_000);
-                    Post::query()->whereKey($post->id)->update([
-                        'release_id' => 'in-flight-release',
-                        'release_url' => 'https://fake.test/in-flight',
-                        'published_at' => now(),
-                        'state' => PostState::PUBLISHED->value,
-                    ]);
-                });
+            // "publish": the real publish run. publishChannel() locks the
+            // pending row, calls the provider — which sleeps 150 ms
+            // inside post(), with that lock held and the transaction
+            // still open — and only then commits release_id.
+            function () use ($group) {
+                fakeProvider()->onPostContaining('in flight', sleepMicroseconds: 150_000);
+
+                app(PublishService::class)->publishGroup($group->id, 1);
             },
             // "delete": starts shortly after the publish racer has
             // acquired its lock but before it commits. Sets
@@ -239,15 +242,21 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
         $results = raceConcurrently($racers);
 
         expect($results[0])->toBe('ok')
-            ->and($results[1])->toStartWith('fail:');
+            // guardEditable()'s ConflictHttpException, once its lock wait
+            // resolves and it re-reads a now-published segment.
+            ->and($results[1])->toBe('fail:409');
 
         OrganizationContext::set($organization);
         $freshPost = Post::query()->whereKey($post->id)->first();
         $freshGroup = PostGroup::query()->whereKey($group->id)->first();
 
         expect($freshGroup)->not->toBeNull()
+            ->and($freshGroup->state)->toBe(PostState::PUBLISHED)
             ->and($freshPost)->not->toBeNull()
-            ->and($freshPost->release_id)->toBe('in-flight-release')
+            // A real release_id, minted by the provider inside the same
+            // transaction the delete was blocked on — not a value this
+            // test wrote itself.
+            ->and($freshPost->release_id)->toStartWith('fake-release-')
             ->and($freshPost->state)->toBe(PostState::PUBLISHED);
     } finally {
         DB::connection('race')->table('posts')->where('post_group_id', $group->id)->delete();

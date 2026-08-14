@@ -9,6 +9,7 @@ use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
 use App\Services\Posts\PostGroupService;
 use App\Services\Posts\PublishService;
+use App\Social\Exceptions\ProviderRateLimitException;
 use App\Support\OrganizationContext;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Queue\Jobs\FakeJob;
@@ -334,6 +335,56 @@ it('caps a rate-limit release at this attempt\'s own backoff position, never the
     $job->handle(app(PublishService::class));
 
     $job->assertReleased(300);
+});
+
+it('treats a 429 carrying no Retry-After (retryAfterSeconds = 0) as "no specific delay", not as "retry immediately"', function () {
+    // Final-review Important 4. ProviderRateLimitException::$retryAfterSeconds
+    // is a non-nullable int that EVERY provider defaults to 0 when the
+    // header or field is absent — which Slack, Mastodon and Bluesky 429s
+    // frequently are. handle() compared it against null, and 0 is not
+    // null, so min(0, 60) = 0 -> release(0): attempts 2, 3 and 4 were
+    // consumed within milliseconds of the first 429, hammering the
+    // rate-limited API three more times on the way, and then failed() ->
+    // abandonGroup() marked every segment ERROR. A transient rate limit
+    // became a permanent, customer-visible failure. 0 must mean
+    // "unspecified", i.e. this attempt's own backoff position.
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    publishableChannel($org, $group, ['channel A']);
+
+    fakeProvider()->failNextPostWithRateLimit(0, 'slow down, no Retry-After header');
+
+    $job = new PublishPostJob($group->id, $group->queue_version);
+    $job->withFakeQueueInteractions();
+
+    $job->handle(app(PublishService::class));
+
+    $job->assertReleased(60);
+
+    expect($group->fresh()->state)->toBe(PostState::QUEUE);
+});
+
+it('lets a sibling channel\'s real rate-limit delay win over another channel\'s unspecified one', function () {
+    // The same normalisation, one level down: publishGroup() takes the
+    // MINIMUM retryAfterSeconds across channels, so an unspecified 0 from
+    // one channel used to swallow a real 45s request from another. Only
+    // publishChannel() knows a 0 means "the provider said nothing", so
+    // that is where it becomes null.
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    publishableChannel($org, $group, ['channel A']);
+    publishableChannel($org, $group, ['channel B']);
+
+    fakeProvider()
+        ->onPostContaining('channel A', new ProviderRateLimitException('no header', 0))
+        ->onPostContaining('channel B', new ProviderRateLimitException('slow down', 45));
+
+    $job = new PublishPostJob($group->id, $group->queue_version);
+    $job->withFakeQueueInteractions();
+
+    $job->handle(app(PublishService::class));
+
+    $job->assertReleased(45);
 });
 
 it('flags the integration for reconnect on auth error and errors the post', function () {

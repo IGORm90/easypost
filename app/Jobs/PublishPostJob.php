@@ -192,8 +192,19 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
             // concurrent-run race review finding 2 fixed. A plain
             // transient/partial-failure retry (no specific delay
             // requested) uses the schedule position directly, unchanged.
+            // `> 0`, not `!== null` — final-review Important 4, and
+            // defence in depth behind PublishService::publishChannel(),
+            // which already normalises a provider's 0 to null (see the
+            // comment there). A 0 arriving here means "no delay was
+            // specified", never "release immediately": min(0, $ceiling)
+            // is 0, and release(0) consumes attempts 2, 3 and 4 within
+            // milliseconds of the first 429 — a transient rate limit
+            // becoming a permanent failure, with three extra calls into
+            // an API that just asked us to stop.
             $ceiling = $this->nextBackoffDelay();
-            $delay = $e->retryAfterSeconds === null ? $ceiling : min($e->retryAfterSeconds, $ceiling);
+            $delay = ($e->retryAfterSeconds !== null && $e->retryAfterSeconds > 0)
+                ? min($e->retryAfterSeconds, $ceiling)
+                : $ceiling;
 
             $this->release($delay);
         }
