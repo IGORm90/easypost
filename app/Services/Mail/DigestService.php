@@ -119,14 +119,53 @@ use Throwable;
  * week too, purely because someone else's email bounced; (2) `claim()`
  * has already committed by the time `Mail::send()` runs, so a caught
  * exception explicitly RELEASES the claim (restores the pre-claim
- * `digest_sent_at`) rather than leaving it consumed — a failed send must
- * not burn that user's six-day cooldown, or they lose their week too,
- * just for a different reason. `sendDueDigests()`'s own loop ALSO
- * wraps each `sendIfDue()` call, purely as a second, outer safety net
- * against an exception from anywhere else in the per-user path (e.g.
- * `$user->organizations()` itself failing) that the inner try/catch
- * does not cover, for the same "one user cannot take the sweep down"
- * reason.
+ * `digest_sent_at`) via `release()`, rather than leaving it consumed.
+ * `sendDueDigests()`'s own loop ALSO wraps each `sendIfDue()` call, as a
+ * second, outer safety net against an exception from anywhere else in
+ * the per-user path (e.g. `$user->organizations()` itself failing) that
+ * the inner try/catch does not cover, for the same "one user cannot take
+ * the sweep down" reason.
+ *
+ * ------------------------------------------------------------
+ * Release-on-failure is a stated tradeoff, not a free correctness win
+ * ------------------------------------------------------------
+ *
+ * The catch in `sendIfDue()` cannot distinguish two very different
+ * failure shapes: (a) the transport REFUSED the message outright (bad
+ * address, connection refused, auth failure) — nothing was delivered,
+ * releasing the claim is strictly correct, and (b) the transport
+ * ACCEPTED the message (the SMTP server already returned 250 OK) and
+ * something threw AFTER that — a listener throwing, the connection
+ * breaking on the return path, a bug in this class itself. In case (b)
+ * the customer already has the digest, but the claim is released anyway
+ * exactly as in case (a), because there is no way from here to tell the
+ * two apart. A later tick that finds the same user due again (see
+ * `isDueNow()`'s widened `hour >= 9` window above) will then send a
+ * SECOND, duplicate digest for content that was already delivered.
+ *
+ * This was weighed deliberately and case (b) accepted, for two reasons:
+ * first, a duplicate weekly summary is a mild annoyance — the customer
+ * sees the same published/failed/scheduled list twice, nothing is
+ * exposed that shouldn't be, and no other organization's data is
+ * involved either way; a silently LOST week (the alternative — leave the
+ * claim consumed on any exception, correct for case (b) but wrong for
+ * the far more common case (a)) is worse, because a real failure — the
+ * one case this class exists to report — could be the very thing that
+ * never gets told to the customer. Second, `hour >= 9` widening the
+ * scheduling predicate widens this window's odds too, and that is worth
+ * being explicit about: under the OLD `hour === 9` predicate, the only
+ * way a released claim could be picked up again the SAME calendar
+ * Monday was the DST "fall back" double-fire (two ticks roughly an hour
+ * apart, both independently reading local hour 9) — narrow, and only
+ * possible one week a year in any given zone. `hour >= 9` turns that
+ * into up to fifteen ordinary hourly ticks (local hour 9 through 23)
+ * that Monday, any one of which can catch a released-but-actually-sent
+ * claim — what was an unlikely coincidence is now a near-certain
+ * same-day retry whenever case (b) happens at all. Nothing currently
+ * narrows this further (e.g. by inspecting whether the underlying
+ * exception occurred before or after the transport's own accept
+ * response) — a genuine follow-up if case (b) turns out to happen often
+ * enough in practice to matter, not assumed away here.
  */
 class DigestService
 {
@@ -159,11 +198,18 @@ class DigestService
                     } catch (Throwable $e) {
                         // Outer safety net — see the class docblock's "one
                         // user's failure must not cost every user after
-                        // them". Nothing here has claimed anything if it
-                        // reached this catch (sendIfDue()'s own inner
-                        // try/catch already handles the post-claim case),
-                        // so there is nothing to release; this only exists
-                        // to guarantee the loop itself never aborts.
+                        // them". This does NOT guarantee the claim is
+                        // still unstamped: sendIfDue()'s own inner
+                        // try/catch already covers the ordinary post-claim
+                        // failure by calling release(), but release()
+                        // itself is a plain database write that can throw
+                        // (the same outage that broke the send can just as
+                        // easily break the restore) -- if THAT is what
+                        // lands here, digest_sent_at may still be stamped
+                        // with this claim, unreleased. What this catch
+                        // guarantees is narrower and still the thing the
+                        // finding required: the sweep survives regardless,
+                        // and moves on to the next user.
                         Log::error('digest.sweep_failed', [
                             'user_id' => $user->id,
                             'exception' => $e->getMessage(),
@@ -354,12 +400,25 @@ class DigestService
      * avoided the scheduling-predicate version of it (see `isDueNow()`),
      * but had reintroduced an equivalent bug in the CONTENT window
      * instead. Anchoring on the real, stored `previousDigestSentAt`
-     * instead of recomputing "7 days ago" makes consecutive windows
-     * chain exactly — `[previous_send, this_send)` — with no dependency
-     * on how many real hours happened to separate them (see
-     * `DigestTest`'s DST content-window test, which walks a user across
-     * the Berlin 2026-10-19 -> 2026-10-26 fall-back and asserts a group
-     * published in that exact seam appears in exactly one digest).
+     * instead of recomputing "7 days ago" makes consecutive windows chain
+     * — this digest's start is exactly the previous digest's end — with
+     * no dependency on how many real hours happened to separate them
+     * (see `DigestTest`'s DST content-window test, which walks a user
+     * across the Berlin 2026-10-19 -> 2026-10-26 fall-back and asserts a
+     * group published in that exact seam appears in exactly one digest).
+     *
+     * NOT strictly half-open, one correction: `fetchSection()` below
+     * passes these bounds straight into `whereBetween()`, which SQL
+     * (and Laravel) treats as inclusive at BOTH ends, not `[start,
+     * end)`. So a row whose timestamp lands EXACTLY on the shared
+     * boundary instant — `$now` of one send, which becomes
+     * `previousDigestSentAt` of the next — can appear in both the
+     * digest that just closed and the one that opens next, a
+     * sub-millisecond overlap rather than a clean abutment. This is the
+     * SAFE direction to be imprecise in: worst case is the same content
+     * mentioned in two consecutive digests, never a drop, and a `Post`/
+     * `PostGroup` row landing on that exact instant to the microsecond
+     * is already an astronomically unlikely coincidence on top of that.
      *
      * The forward-looking `scheduled` window (`$now` to `$now + 7 days`)
      * is NOT anchored the same way, deliberately: nothing in the future
