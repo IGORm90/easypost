@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\DenyWhileImpersonating;
 use App\Http\Middleware\EnforcePlanLimit;
+use App\Http\Middleware\EnsureEmailIsVerified;
 use App\Http\Middleware\EnsureOrganizationRole;
 use App\Http\Middleware\EnsureSuperadmin;
 use App\Http\Middleware\ResolveOrganization;
@@ -41,6 +42,17 @@ return Application::configure(basePath: dirname(__DIR__))
             'superadmin' => EnsureSuperadmin::class,
             'deny_while_impersonating' => DenyWhileImpersonating::class,
             'plan' => EnforcePlanLimit::class,
+            // Laravel registers no alias for this by default, and without
+            // one `User implements MustVerifyEmail` is decorative: the
+            // notification is sent at registration and nothing ever
+            // requires the click. See routes/api.php's invite-accept route
+            // for the path where that mattered — final review, batch 4.
+            //
+            // App\Http\Middleware\EnsureEmailIsVerified, not the
+            // framework's: that one redirects a non-JSON request to a
+            // `verification.notice` route this API does not define, which
+            // is a 500 where a 403 belongs. See that class's docblock.
+            'verified' => EnsureEmailIsVerified::class,
         ]);
 
         // Every API response the user reads — validation errors above

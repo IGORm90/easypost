@@ -6,9 +6,14 @@ use App\Models\Media;
 use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
+use App\Models\Tag;
+use App\Services\Posts\PostGroupService;
+use App\Support\OrganizationContext;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /*
  * Task 28: attaching media to posts. media_ids in the POST/PUT
@@ -393,4 +398,58 @@ it('allows deleting media whose only real, API-created attachment is published',
 
     $this->deleteJson("/api/media/{$media->id}")->assertNoContent();
     expect(Media::query()->find($media->id))->toBeNull();
+});
+
+/*
+ * Final review, batch 4 (tenancy). `media()->attach()` and
+ * `tags()->sync()` write the pivot through a BelongsToMany, which never
+ * instantiates the related model — so the `organization` global scope is
+ * never consulted, and neither pivot table carries an `organization_id`
+ * of its own. Both were safe only because every call site is fed ids the
+ * FormRequest already filtered with
+ * `Rule::exists()->where('organization_id', …)`.
+ *
+ * "Safe because of where the guard sits" is not the same as safe. The
+ * blast radius is specific and known: `PublishService` re-loads that same
+ * pivot with `withoutGlobalScope('organization')`, so a foreign row
+ * reaching it means another tenant's private file is uploaded to a social
+ * network. These two tests call the SERVICE directly, which is exactly
+ * the shape of any future caller that is not an HTTP request — a console
+ * command, a job, an importer.
+ */
+it('refuses to attach media belonging to another organization, called service-directly', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $foreign = Media::factory()->for(Organization::factory()->create())->create();
+    // The service reads the tenant from the context the `organization`
+    // middleware would have set; there is no HTTP request here to set it.
+    OrganizationContext::set($org);
+
+    expect(fn () => app(PostGroupService::class)->create([
+        'type' => 'draft',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A', 'media_ids' => [$foreign->id]]]],
+        ],
+    ]))->toThrow(HttpException::class);
+
+    expect(DB::table('media_post')->where('media_id', $foreign->id)->count())->toBe(0);
+});
+
+it('refuses to sync a tag belonging to another organization, called service-directly', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $foreignTag = Tag::factory()->for(Organization::factory()->create())->create();
+    OrganizationContext::set($org);
+
+    expect(fn () => app(PostGroupService::class)->create([
+        'type' => 'draft',
+        'tags' => [$foreignTag->id],
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'A']]],
+        ],
+    ]))->toThrow(HttpException::class);
+
+    expect(DB::table('post_group_tag')->where('tag_id', $foreignTag->id)->count())->toBe(0);
 });

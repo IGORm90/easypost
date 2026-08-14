@@ -6,14 +6,17 @@ use App\Enums\PlanLimit;
 use App\Enums\PostState;
 use App\Jobs\PublishPostJob;
 use App\Models\Integration;
+use App\Models\Media;
 use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
+use App\Models\Tag;
 use App\Services\Billing\PlanLimitService;
 use App\Support\OrganizationContext;
 use Carbon\CarbonInterface;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Bus\UniqueLock;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -135,7 +138,7 @@ class PostGroupService
             $this->replaceChains($group, $data['posts'], $targetState);
 
             if (array_key_exists('tags', $data)) {
-                $group->tags()->sync($data['tags'] ?? []);
+                $this->syncTags($group, $data['tags'] ?? []);
             }
 
             return $group->fresh(['posts.media', 'tags']);
@@ -178,7 +181,7 @@ class PostGroupService
             $this->replaceChains($group, $data['posts'], $targetState);
 
             if (array_key_exists('tags', $data)) {
-                $group->tags()->sync($data['tags'] ?? []);
+                $this->syncTags($group, $data['tags'] ?? []);
             }
 
             return $group->fresh(['posts.media', 'tags']);
@@ -255,7 +258,7 @@ class PostGroupService
                 $idMap[$post->id] = $copy->id;
             }
 
-            $group->tags()->sync($source->tags->pluck('id'));
+            $this->syncTags($group, $source->tags->pluck('id')->all());
 
             return $group->fresh(['posts.media', 'tags']);
         });
@@ -886,11 +889,78 @@ class PostGroupService
             return;
         }
 
+        $this->assertOwnedByOrganization(Media::class, $mediaIds, $post->organization_id, 'media');
+
         $pivotRows = [];
         foreach ($mediaIds as $order => $mediaId) {
             $pivotRows[$mediaId] = ['order' => $order];
         }
 
         $post->media()->attach($pivotRows);
+    }
+
+    /**
+     * The one place tags are written onto a group, so the ownership
+     * assertion below has exactly one place to live rather than three.
+     *
+     * @param  list<string>|array<int, string>  $tagIds
+     */
+    private function syncTags(PostGroup $group, array $tagIds): void
+    {
+        $this->assertOwnedByOrganization(Tag::class, array_values($tagIds), $group->organization_id, 'tags');
+
+        $group->tags()->sync($tagIds);
+    }
+
+    /**
+     * Fails unless every one of `$ids` names a row of `$modelClass` owned
+     * by `$organizationId`.
+     *
+     * Why this exists at all (final review, batch 4 — tenancy). Both
+     * pivots this class writes — `media_post` and `post_group_tag` — are
+     * written through a `BelongsToMany`, which takes ids and writes rows
+     * without ever instantiating the related model. The `organization`
+     * global scope is therefore never consulted, and neither pivot table
+     * carries an `organization_id` column of its own to scope. The only
+     * thing that has been keeping a foreign id out is that every caller
+     * happens to be an HTTP request whose FormRequest already filtered
+     * with `Rule::exists()->where('organization_id', …)` — a property of
+     * where the guard sits, not of this code.
+     *
+     * The blast radius is not hypothetical: `PublishService` re-reads the
+     * media pivot with `withoutGlobalScope('organization')` (it must —
+     * the publish job runs with no tenant in context), so a foreign row
+     * that got in here ends up uploaded to a social network.
+     *
+     * Deliberately checked against the OWNING ROW's `organization_id`
+     * rather than `OrganizationContext`: this must hold for a caller with
+     * no context set at all — a job, a console command, an importer —
+     * which is precisely the caller the FormRequest does not protect.
+     *
+     * 404, not 403: an id from another tenant must not be distinguishable
+     * from an id that does not exist, or this becomes an oracle for what
+     * other organizations own.
+     *
+     * @param  class-string<Model>  $modelClass
+     * @param  list<string>  $ids
+     */
+    private function assertOwnedByOrganization(string $modelClass, array $ids, string $organizationId, string $label): void
+    {
+        if ($ids === []) {
+            return;
+        }
+
+        $owned = $modelClass::query()
+            ->withoutGlobalScope('organization')
+            ->whereIn('id', $ids)
+            ->where('organization_id', $organizationId)
+            ->pluck('id')
+            ->all();
+
+        $foreign = array_diff(array_unique($ids), $owned);
+
+        if ($foreign !== []) {
+            abort(404, "One or more {$label} do not exist.");
+        }
     }
 }

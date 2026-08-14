@@ -155,11 +155,17 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
      * extra query, run once per dispatch (Horizon computes tags when the
      * job is pushed onto the queue, not on every worker attempt — see
      * `Laravel\Horizon\JobPayload::prepare()`), a single indexed lookup
-     * by primary key on `post_groups`. `withoutGlobalScopes()` — not a
-     * plain `PostGroup::find()` — for the same reason every other
+     * by primary key on `post_groups`. `withoutGlobalScope('organization')`
+     * — not a plain `PostGroup::find()` — for the same reason every other
      * no-`OrganizationContext` read in this codebase uses it (see
      * `BelongsToOrganization`'s docblock): a job dispatch has no tenant
      * context set, and the scope fails closed to zero rows without it.
+     *
+     * BY NAME, never the blanket `withoutGlobalScopes()` this line used
+     * to call: that form drops every scope the model is ever given, so
+     * adding `SoftDeletes` to `PostGroup` later would silently make this
+     * read trashed rows. `tests/Unit/Architecture/GlobalScopeRemovalTest`
+     * now enforces the distinction the codebase had only been describing.
      * Tags carry ids only, never names, emails, or tokens — see
      * `config/horizon.php`'s docblock and Task 14's token-leak finding
      * this rule exists to not repeat, since tags render in a web UI.
@@ -169,7 +175,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
     public function tags(): array
     {
         /** @var string|null $organizationId */
-        $organizationId = PostGroup::withoutGlobalScopes()
+        $organizationId = PostGroup::withoutGlobalScope('organization')
             ->whereKey($this->postGroupId)
             ->value('organization_id');
 

@@ -65,7 +65,13 @@ Route::prefix('auth')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('organizations', [OrganizationController::class, 'index']);
     Route::post('organizations', [OrganizationController::class, 'store']);
-    Route::post('invites/{token}/accept', [InviteController::class, 'accept']);
+    // `verified`: accepting an invite is the one unauthenticated-to-member
+    // transition in the app, and the address match in InviteService is the
+    // only thing standing between a forwarded token and membership at the
+    // invited role. That check is worth nothing if the address was never
+    // proven — so this is where the click is required. Final review,
+    // batch 4 (tenancy).
+    Route::post('invites/{token}/accept', [InviteController::class, 'accept'])->middleware('verified');
 
     Route::middleware('organization')->prefix('organizations/current')->group(function () {
         Route::put('', [OrganizationController::class, 'update'])->middleware('role:ADMIN');

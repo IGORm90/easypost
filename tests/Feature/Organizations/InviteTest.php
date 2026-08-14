@@ -111,6 +111,61 @@ it('rejects accepting an invite addressed to a different email than the authenti
     expect($org->fresh()->roleOf($wrongUser))->toBeNull();
 });
 
+/*
+ * Final review, batch 4 (tenancy). `User implements MustVerifyEmail` and
+ * registration sends the notification, but the `verified` middleware sat
+ * on ZERO routes, so nothing ever required the click. That matters most
+ * here: the email-match check above is the only thing between a forwarded
+ * invite token and membership at the invited role, and it compares
+ * against an address whose ownership was never proven. Invite URLs are
+ * handed to admins to share out-of-band, i.e. they travel through chat
+ * and paste channels where a forward is one keystroke.
+ *
+ * The reviewer registered an address without ever opening Mailpit and
+ * accepted its invite: 200.
+ */
+it('refuses to accept an invite for an address the user has not proven they own', function () {
+    $org = Organization::factory()->create();
+    $invite = Invite::factory()->for($org)->create(['role' => 'ADMIN', 'expires_at' => now()->addDay()]);
+    $unverified = User::factory()->unverified()->create(['email' => $invite->email]);
+
+    $this->actingAs($unverified)->postJson("/api/invites/{$invite->token}/accept")
+        ->assertForbidden();
+
+    expect($org->fresh()->roleOf($unverified))->toBeNull();
+});
+
+it('refuses a shareable-link invite to an unverified user too', function () {
+    // The null-email invite skips the email-match check entirely, so
+    // verification is the ONLY proof of identity left on this path.
+    $org = Organization::factory()->create();
+    $invite = Invite::factory()->for($org)->create(['email' => null, 'role' => 'USER', 'expires_at' => now()->addDay()]);
+    $unverified = User::factory()->unverified()->create();
+
+    $this->actingAs($unverified)->postJson("/api/invites/{$invite->token}/accept")
+        ->assertForbidden();
+
+    expect($org->fresh()->roleOf($unverified))->toBeNull();
+});
+
+it('refuses an unverified user with a 403 even when the request does not announce JSON', function () {
+    // Laravel's own EnsureEmailIsVerified only aborts 403 for
+    // `expectsJson()`; otherwise it redirects to a `verification.notice`
+    // route, which this API-only app does not define — so a request
+    // without an Accept header would have died with a
+    // RouteNotFoundException (a 500 where a 403 belongs, and a stack
+    // trace where a message belongs). App\Http\Middleware\
+    // EnsureEmailIsVerified is what makes the answer the same either way.
+    $org = Organization::factory()->create();
+    $invite = Invite::factory()->for($org)->create(['expires_at' => now()->addDay()]);
+    $unverified = User::factory()->unverified()->create(['email' => $invite->email]);
+
+    $this->actingAs($unverified)->post("/api/invites/{$invite->token}/accept")
+        ->assertForbidden();
+
+    expect($org->fresh()->roleOf($unverified))->toBeNull();
+});
+
 it('allows any authenticated user to accept a null-email (shareable link) invite', function () {
     $org = Organization::factory()->create();
     $invite = Invite::factory()->for($org)->create(['email' => null, 'role' => 'USER', 'expires_at' => now()->addDay()]);

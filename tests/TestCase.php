@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use App\Support\OrganizationContext;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Tests\Support\FakeProvider;
 
@@ -10,6 +11,20 @@ abstract class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // `OrganizationContext` is a static and outlives any single test:
+        // `RefreshDatabase` rolls back the organization's ROW but not the
+        // pointer to it, so without this every test after one that set a
+        // context inherits an organization that no longer exists. An
+        // assertion such as "this fails closed with no context" then
+        // passes for entirely the wrong reason — the query matched zero
+        // rows because the stale id matches nothing, not because the
+        // guard worked. Final review, batch 4 (tenancy); see
+        // tests/Feature/OrganizationContextIsolationTest.php.
+        //
+        // In setUp() rather than tearDown() so it also holds for the
+        // first test in a process and after a test that died mid-way.
+        OrganizationContext::clear();
 
         // Test-only provider wiring. Deliberately not in
         // config/social.php (which ships to production and must never
