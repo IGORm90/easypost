@@ -61,6 +61,12 @@ final readonly class MediaDto
         $name = (string) preg_replace('/[\x00-\x1F\x7F"\\\\]/', '', $name);
         $name = trim($name);
 
+        // Capped like MediaUploadService::sanitizeFilename() does at
+        // storage time (re-review round 3, minor): in practice the column
+        // bounds this already, but the two places that produce a filename
+        // for the wire should not disagree about its limits.
+        $name = mb_substr($name, 0, 255);
+
         return $name !== '' ? $name : basename($this->path);
     }
 

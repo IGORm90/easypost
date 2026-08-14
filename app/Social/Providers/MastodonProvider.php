@@ -450,7 +450,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         $host = preg_replace('#^https?://#i', '', trim($instance));
         $host = rtrim((string) $host, '/');
 
-        if ($host === '' || str_contains($host, '/') || ! preg_match('/^[a-z0-9.-]+$/i', $host)) {
+        if ($host === '' || str_contains($host, '/') || ! preg_match('/^[a-z0-9.-]+$/iD', $host)) {
             throw new InvalidArgumentException("Mastodon instance host [{$instance}] is not a valid hostname.");
         }
 

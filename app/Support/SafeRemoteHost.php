@@ -295,18 +295,110 @@ final class SafeRemoteHost
         }
 
         foreach ($ips as $ip) {
-            $public = filter_var(
-                $ip,
-                FILTER_VALIDATE_IP,
-                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
-            );
-
-            if ($public === false || self::isMulticast($ip) || self::isCgnat($ip)) {
+            if (! self::isPublicAddress($ip)) {
                 throw UnsafeRemoteHostException::forHost($host, "resolves to a non-public address [{$ip}]");
             }
         }
 
         return [$host, $ips];
+    }
+
+    /**
+     * The single verdict on one address, so every caller (the AAAA/A
+     * answers above, and the recursive check on an IPv6 transition
+     * address's embedded IPv4 below) applies exactly the same bar.
+     */
+    private static function isPublicAddress(string $ip): bool
+    {
+        $public = filter_var(
+            $ip,
+            FILTER_VALIDATE_IP,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
+        );
+
+        if ($public === false || self::isMulticast($ip) || self::isCgnat($ip)) {
+            return false;
+        }
+
+        return ! self::isUnsafeTransitionAddress($ip);
+    }
+
+    /**
+     * IPv6 transition mechanisms that carry an IPv4 destination inside an
+     * IPv6 address — re-review round 3.
+     *
+     * `FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE` decodes the
+     * IPv4-MAPPED form (`::ffff:127.0.0.1`) and rejects it, which is
+     * easy to mistake for "PHP handles embedded IPv4". It does not handle
+     * the others: 6to4, NAT64 and Teredo all pass as ordinary public
+     * IPv6. That gap existed on the AAAA path already, and the bracketed
+     * IPv6 literal support added last round made it reachable directly —
+     * verified against the guard, `[64:ff9b::7f00:1]` and
+     * `[2002:7f00:1::]` were ACCEPTED, and the reviewer saw cURL attempt
+     * the connection. `2002:a9fe:a9fe::` is the 6to4 encoding of
+     * 169.254.169.254 — the cloud-metadata address this whole batch is
+     * about — and it was accepted too.
+     *
+     *  - 6to4 (`2002::/16`, RFC 3056): bytes 2-5 ARE the IPv4
+     *    destination. Decoded and judged by the same isPublicAddress()
+     *    bar, so `2002:0808:0808::` (8.8.8.8) still works while
+     *    `2002:7f00:1::` (127.0.0.1) does not. Not blanket-rejected: the
+     *    embedded address is the whole meaning of the prefix, so checking
+     *    it is both stricter where it matters and honest where it does
+     *    not.
+     *  - NAT64 (`64:ff9b::/96` and the local-use `64:ff9b:1::/48`, RFCs
+     *    6052/8215): the last four bytes are the IPv4 destination. Same
+     *    treatment.
+     *  - Teredo (`2001::/32`, RFC 4380): rejected outright rather than
+     *    decoded. Its embedded server and client IPv4 addresses are
+     *    obfuscated (the client address is stored XOR'd) and the tunnel's
+     *    actual destination depends on the relay, so there is no single
+     *    address to judge — and no legitimate reason for this application
+     *    to fetch a customer's media over Teredo.
+     */
+    private static function isUnsafeTransitionAddress(string $ip): bool
+    {
+        if (! str_contains($ip, ':')) {
+            return false;
+        }
+
+        $packed = @inet_pton($ip);
+
+        if ($packed === false || strlen($packed) !== 16) {
+            return false;
+        }
+
+        // Teredo: 2001:0000::/32.
+        if (substr($packed, 0, 4) === "\x20\x01\x00\x00") {
+            return true;
+        }
+
+        // 6to4: 2002::/16 — the IPv4 destination is bytes 2-5.
+        if (substr($packed, 0, 2) === "\x20\x02") {
+            return ! self::isPublicAddress(self::ipv4From(substr($packed, 2, 4)));
+        }
+
+        // NAT64: 64:ff9b::/96 and 64:ff9b:1::/48 — the IPv4 destination
+        // is the last four bytes.
+        if (substr($packed, 0, 4) === "\x00\x64\xff\x9b") {
+            return ! self::isPublicAddress(self::ipv4From(substr($packed, 12, 4)));
+        }
+
+        return false;
+    }
+
+    /**
+     * Four packed bytes as a dotted-quad string.
+     */
+    private static function ipv4From(string $packed): string
+    {
+        $address = @inet_ntop($packed);
+
+        // inet_ntop() only fails on a wrong-length input, which cannot
+        // happen from this class's own fixed substr() offsets — treated
+        // as unsafe rather than assumed away, since the caller reads the
+        // answer as an address to judge.
+        return is_string($address) ? $address : '127.0.0.1';
     }
 
     /**
@@ -370,7 +462,7 @@ final class SafeRemoteHost
             throw UnsafeRemoteHostException::forHost($host, 'contains percent-encoding, which this guard and an HTTP client would read differently');
         }
 
-        if (preg_match('/^[\x20-\x7E]*$/', $host) !== 1) {
+        if (preg_match('/^[\x20-\x7E]*$/D', $host) !== 1) {
             if (! function_exists('idn_to_ascii')) {
                 throw UnsafeRemoteHostException::forHost($host, 'is a non-ASCII host and this installation cannot convert it to its ASCII form');
             }
@@ -387,7 +479,7 @@ final class SafeRemoteHost
 
         $host = strtolower($host);
 
-        if (preg_match('/^\[(.+)]$/', $host, $matches) === 1) {
+        if (preg_match('/^\[(.+)]$/D', $host, $matches) === 1) {
             if (filter_var($matches[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
                 throw UnsafeRemoteHostException::forHost($host, 'is not a well-formed IPv6 literal');
             }
@@ -395,7 +487,7 @@ final class SafeRemoteHost
             return $host;
         }
 
-        if (preg_match('/^[a-z0-9.-]+$/', $host) !== 1) {
+        if (preg_match('/^[a-z0-9.-]+$/D', $host) !== 1) {
             throw UnsafeRemoteHostException::forHost($host, 'is not a well-formed hostname');
         }
 
@@ -413,7 +505,7 @@ final class SafeRemoteHost
      */
     private static function literalIp(string $host): ?string
     {
-        if (preg_match('/^\[(.+)]$/', $host, $matches) === 1) {
+        if (preg_match('/^\[(.+)]$/D', $host, $matches) === 1) {
             return filter_var($matches[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
                 ? $matches[1]
                 : null;
@@ -458,7 +550,7 @@ final class SafeRemoteHost
 
         $numericLabels = array_filter(
             $labels,
-            static fn (string $label): bool => preg_match('/^(0[xX][0-9a-fA-F]+|[0-9]+)$/', $label) === 1,
+            static fn (string $label): bool => preg_match('/^(0[xX][0-9a-fA-F]+|[0-9]+)$/D', $label) === 1,
         );
 
         if (count($numericLabels) === count($labels)) {

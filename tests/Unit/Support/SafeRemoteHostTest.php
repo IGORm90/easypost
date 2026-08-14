@@ -378,3 +378,85 @@ it('normalises the host it returns, so a caller pins and connects to the same st
     expect($host)->toBe('mastodon.social')
         ->and($options['curl'][CURLOPT_RESOLVE])->toBe(['mastodon.social:443:198.51.100.10']);
 });
+
+/*
+ * Re-review round 3, finding 1: PHP's `$` matches before a FINAL NEWLINE
+ * unless the pattern carries the `D` modifier — so the charset allow-list
+ * this batch added to close finding 5 was itself bypassed by a single
+ * trailing "\n", and the guard returned `evil.com\n` verbatim as the host
+ * to pin and to rebuild URLs from. Unexploitable today only because
+ * dns_get_record() answers nothing for it and cURL rejects the URL: the
+ * exact "refused by accident" pattern the allow-list existed to end.
+ *
+ * DNS is faked to a PUBLIC address for every case, so nothing here can
+ * pass because a resolver declined to answer.
+ */
+it('refuses a host with a trailing newline, which PHP\'s $ anchor would otherwise admit', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with([
+    "evil.com\n",
+    "0177.0.0.1\n",     // the ambiguous-literal label check has the same quirk
+    "[::1]\n",          // and so does the bracketed-literal match
+    "evil.com\n.internal",
+    "evil.com\r\n",
+]);
+
+/*
+ * Re-review round 3, finding 2: IPv6 transition mechanisms carry an IPv4
+ * destination inside an IPv6 address. PHP's NO_PRIV_RANGE|NO_RES_RANGE
+ * decodes the IPv4-MAPPED form and rejects it, which is easy to mistake
+ * for "embedded IPv4 is handled" — 6to4, NAT64 and Teredo all passed as
+ * ordinary public IPv6. The AAAA path had this already; bracketed
+ * literals made it directly reachable.
+ *
+ * `2002:a9fe:a9fe::` is 169.254.169.254 in 6to4 — the cloud-metadata
+ * address this entire batch is about.
+ */
+it('refuses an IPv6 transition address whose embedded IPv4 is not public, as a literal', function (string $host) {
+    SafeRemoteHost::fake([]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with([
+    '[2002:a9fe:a9fe::]',      // 6to4 of 169.254.169.254 (cloud metadata)
+    '[2002:7f00:1::]',         // 6to4 of 127.0.0.1
+    '[2002:c0a8:1::]',         // 6to4 of 192.168.0.1
+    '[2002:6440:1::]',         // 6to4 of 100.64.0.1 (CGNAT)
+    '[64:ff9b::7f00:1]',       // NAT64 of 127.0.0.1
+    '[64:ff9b::a9fe:a9fe]',    // NAT64 of 169.254.169.254
+    '[64:ff9b:1::7f00:1]',     // NAT64 local-use prefix
+    '[2001:0:1::]',            // Teredo, refused outright
+    '[2001::]',
+]);
+
+it('refuses an IPv6 transition address arriving as a DNS answer, not just as a literal', function (string $ip) {
+    // The gap this closes predates the literal support: a hostname whose
+    // AAAA record is a 6to4/NAT64 metadata address was equally accepted.
+    SafeRemoteHost::fake(['tunnel.example' => [$ip]]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost('tunnel.example'))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with(['2002:a9fe:a9fe::', '64:ff9b::a9fe:a9fe', '2001:0:1::']);
+
+it('still accepts a transition address whose embedded IPv4 is genuinely public', function (string $host) {
+    // Decoded, not blanket-rejected: the embedded address is the whole
+    // meaning of these prefixes, so the check is stricter where it
+    // matters and honest where it does not.
+    SafeRemoteHost::fake([]);
+
+    SafeRemoteHost::assertSafeHost($host);
+})->with([
+    '[2002:0808:0808::]',      // 6to4 of 8.8.8.8
+    '[64:ff9b::808:808]',      // NAT64 of 8.8.8.8
+    '[2001:4860:4860::8888]',  // an ordinary public IPv6 address
+])->throwsNoExceptions();
+
+it('still rejects the IPv4-mapped form PHP already handled, so the new checks did not replace it', function () {
+    SafeRemoteHost::fake([]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost('[::ffff:127.0.0.1]'))
+        ->toThrow(UnsafeRemoteHostException::class);
+});
