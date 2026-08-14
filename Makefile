@@ -28,12 +28,23 @@ sh:
 # the container "Up" but every schedule:run inside it still fails, so
 # nothing scheduled ever runs. Neither service declares a `restart:`
 # policy, and installing vendor/ afterwards does not revive an
-# already-crashed container. Restarting both here (harmless no-op if
-# they were already healthy) is what actually makes the documented
-# three-command quick start leave a working queue worker and scheduler
-# behind. Confirmed by reproduction: stopping vendor/, restarting both
-# services, then running this target without the final line left
-# horizon Exited(255) and scheduler silently failing every cycle.
+# already-crashed container by itself.
+#
+# `up -d horizon scheduler` below only starts a container that isn't
+# currently running -- it does NOT restart (recreate) one that already
+# is. That's enough for horizon, which stays Exited until this line
+# starts it. It is NOT what fixes scheduler: scheduler's container was
+# never stopped (its `while true; php artisan schedule:run; sleep 60;
+# done` loop, docker/compose.yaml, keeps it "Up" through every failed
+# iteration), so `up -d scheduler` here is a harmless no-op on it --
+# scheduler instead self-heals on its own the next time its loop calls
+# `schedule:run`, which is within 60s of vendor/ existing, no `make
+# setup` help required. Confirmed by reproduction: stopping vendor/,
+# restarting both containers, then running the pre-fix version of this
+# target (no final line) left horizon Exited(255) indefinitely and
+# scheduler silently failing every cycle for as long as vendor/ stayed
+# missing; with the fix, horizon comes back via this line and scheduler
+# comes back on its own within one more 60s cycle.
 setup: ensure-test-db
 	$(COMPOSE) exec php composer install
 	$(COMPOSE) exec php sh -c 'grep -q "^APP_KEY=.\+" .env || php artisan key:generate'
