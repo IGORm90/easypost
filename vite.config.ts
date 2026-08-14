@@ -28,6 +28,12 @@ export default defineConfig({
         // written there (and used for HMR/asset requests) to the address
         // the host machine's browser actually uses.
         origin: 'http://localhost:5173',
+        // Since Vite 6.0.9 the dev server only sends CORS headers for the
+        // `origin` above, so the app served from APP_URL (port 8080) gets
+        // its `app.ts` / `@vite/client` requests blocked. Allow it explicitly.
+        cors: {
+            origin: ['http://localhost:8080', 'http://127.0.0.1:8080'],
+        },
         watch: {
             ignored: ['**/storage/framework/views/**'],
         },
