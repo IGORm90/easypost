@@ -148,3 +148,29 @@ it('eventDrop on an unlocked event does not revert on success', async () => {
   expect(revert).not.toHaveBeenCalled()
   expect(w.emitted('blocked')).toBeFalsy()
 })
+
+// Final review, Critical 5: FullCalendar v6 injects its own stylesheet at
+// runtime, so every --fc-* variable this component does not re-point keeps
+// the library's hardcoded literal. The palette guard greps .vue files for
+// hex and can never see those, and one of them was unreadable:
+// --fc-more-link-bg-color #d0d0d0 with --fc-more-link-text-color
+// `inherit`, which resolves to --text #E4EFE9 in the dark theme — 1.31:1
+// on the "+3 more" chip that is the only way to reach a busy day's posts.
+// dayMaxEvents is on, so any full day renders it.
+it('re-points every off-palette FullCalendar default at a colour token', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync('resources/js/components/calendar/CalendarGrid.vue', 'utf8')
+
+  const required = [
+    'more-link-bg-color',
+    'more-link-text-color',
+    'now-indicator-color',
+    'highlight-color',
+    'non-business-color',
+    'neutral-text-color',
+  ]
+
+  const missing = required.filter((name) => !new RegExp(`--fc-${name}:\\s*var\\(--[a-z0-9-]+\\)`).test(source))
+
+  expect(missing).toEqual([])
+})

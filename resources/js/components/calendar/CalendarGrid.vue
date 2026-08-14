@@ -230,6 +230,24 @@ function goToday(): void {
     --fc-button-text-color: var(--text);
     --fc-button-hover-bg-color: var(--surface-2);
     --fc-button-active-bg-color: var(--primary-soft);
+    /* Final review, Critical 5. Everything below was left at
+       FullCalendar's own hardcoded defaults, which the palette guard
+       cannot see (it greps .vue files for hex; these literals live in
+       node_modules).
+
+       The one that mattered: --fc-more-link-bg-color defaults to #d0d0d0
+       and --fc-more-link-text-color to `inherit`, which resolves to
+       --text (#E4EFE9) in the dark theme — 1.31:1 on the "+N more" chip,
+       and `dayMaxEvents` above means any busy day renders it as the only
+       way to reach the posts it hides. The rest were merely off-palette:
+       a pure #FF0000 now-indicator reading as a sixth colour next to
+       --danger, and a pale blue drag highlight. */
+    --fc-more-link-bg-color: var(--primary-soft);
+    --fc-more-link-text-color: var(--primary);
+    --fc-now-indicator-color: var(--danger);
+    --fc-highlight-color: var(--primary-soft);
+    --fc-non-business-color: var(--surface-2);
+    --fc-neutral-text-color: var(--muted);
     font-family: inherit;
 }
 
