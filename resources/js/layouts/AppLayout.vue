@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n';
 import ThemeToggle from '../components/ui/ThemeToggle.vue';
 import OrganizationSwitcher from '../components/OrganizationSwitcher.vue';
+import LimitToast from '../components/ui/LimitToast.vue';
 import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
@@ -10,6 +11,11 @@ const auth = useAuthStore();
 
 <template>
     <div class="flex min-h-screen bg-bg text-text">
+        <!-- Global "plan limit reached" warning (Task 36) — one instance
+             for the whole authenticated app, not per-page; see
+             LimitToast.vue's docblock. -->
+        <LimitToast />
+
         <!-- Sidebar sits on the third background level (color.md §3.4). -->
         <aside class="hidden w-56 shrink-0 border-r border-border bg-surface-2 p-4 md:flex md:flex-col md:gap-1">
             <p class="mb-3 text-sm font-semibold">{{ t('app.name') }}</p>

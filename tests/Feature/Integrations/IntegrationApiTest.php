@@ -2,6 +2,7 @@
 
 use App\Models\Integration;
 use App\Models\Organization;
+use App\Services\Billing\PlanLimitService;
 use App\Services\Integrations\IntegrationService;
 use App\Social\Dto\AuthResultDto;
 use App\Support\SafeRemoteHost;
@@ -313,7 +314,7 @@ it('recovers from a lost race on the unique index instead of 500ing', function (
         'internal_id' => 'raced-account',
     ]);
 
-    $racy = new class extends IntegrationService
+    $racy = new class(app(PlanLimitService::class)) extends IntegrationService
     {
         private int $calls = 0;
 

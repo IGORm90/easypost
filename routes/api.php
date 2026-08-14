@@ -123,6 +123,14 @@ Route::middleware('auth:sanctum')->group(function () {
  * organizations/current/* above. `auth-url` additionally requires
  * `role:ADMIN`: starting a connect flow carries the same authorization
  * bar as completing one (see IntegrationPolicy::manage()).
+ *
+ * `plan:channels` (Task 36) sits on `auth-url`, not on `callback`: the
+ * callback route has no `organization` middleware/context for the plan
+ * middleware to read (see EnforcePlanLimit's docblock) — auth-url is
+ * still reached by every connect flow, OAuth and manual-token alike, so
+ * gating it here covers "starting a connect" regardless of provider. The
+ * actual guarantee against a race remains IntegrationService::connect()'s
+ * own withLimit() call, not this middleware.
  */
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('providers', [IntegrationController::class, 'providers']);
@@ -133,7 +141,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('organization')->group(function () {
             Route::get('/', [IntegrationController::class, 'index']);
             Route::post('{provider}/auth-url', [IntegrationController::class, 'authUrl'])
-                ->middleware('role:ADMIN');
+                ->middleware(['role:ADMIN', 'plan:channels']);
             Route::get('{id}/options/{option}', [IntegrationController::class, 'options']);
             Route::put('{id}', [IntegrationController::class, 'update']);
             Route::post('{id}/disable', [IntegrationController::class, 'disable']);
@@ -151,9 +159,14 @@ Route::middleware('auth:sanctum')->group(function () {
  * PostController, not via route-model binding, so a wrong-organization
  * id 404s exactly like a nonexistent one (see PostController's
  * docblock).
+ *
+ * `plan:posts` (Task 36) gates only `store` — the one action that adds a
+ * new `PostGroup` row (and therefore new monthly usage). The real
+ * guarantee against a race is PostGroupService::create()'s own
+ * withLimit() call, not this middleware.
  */
 Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(function () {
-    Route::post('/', [PostController::class, 'store']);
+    Route::post('/', [PostController::class, 'store'])->middleware('plan:posts');
     // 'find-slot' (a literal path segment) is registered before
     // '{group}' (a wildcard) deliberately — same reason
     // admin/impersonate/stop precedes admin/impersonate/{user} above:
@@ -260,10 +273,17 @@ Route::middleware(['auth:sanctum', 'organization'])->group(function () {
  * single caller can make this app hold a worker for that long, on top
  * of (not instead of) the per-request cap. See MediaUploadService::
  * download()'s docblock for the full reasoning.
+ *
+ * `plan:media_storage` (Task 36) gates only `store` (the direct-upload
+ * route) — its file size is known upfront, off the raw request, unlike
+ * `from-url`'s (unknown until the download completes; see
+ * EnforcePlanLimit's docblock for why that route relies entirely on
+ * MediaUploadService::persist()'s own check without a middleware
+ * pre-check ahead of it).
  */
 Route::middleware(['auth:sanctum', 'organization'])->prefix('media')->group(function () {
     Route::get('/', [MediaController::class, 'index']);
-    Route::post('/', [MediaController::class, 'store']);
+    Route::post('/', [MediaController::class, 'store'])->middleware('plan:media_storage');
     Route::post('from-url', [MediaController::class, 'importFromUrl'])->middleware('throttle:10,1');
     Route::delete('{id}', [MediaController::class, 'destroy']);
 });

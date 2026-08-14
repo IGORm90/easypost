@@ -2,9 +2,11 @@
 
 namespace App\Services\Media;
 
+use App\Enums\PlanLimit;
 use App\Enums\PostState;
 use App\Models\Media;
 use App\Models\Organization;
+use App\Services\Billing\PlanLimitService;
 use App\Services\Media\Exceptions\MediaImportException;
 use App\Services\Media\Exceptions\MediaInUseException;
 use App\Services\Media\Exceptions\MediaStorageException;
@@ -103,6 +105,8 @@ final class MediaUploadService
     private const int DEFAULT_IMPORT_MAX_REDIRECTS = 5;
 
     private const int DEFAULT_THUMBNAIL_WIDTH = 400;
+
+    public function __construct(private readonly PlanLimitService $planLimits) {}
 
     public function store(UploadedFile $file, Organization $organization, ?string $createdBy = null): Media
     {
@@ -429,6 +433,35 @@ final class MediaUploadService
         throw MediaImportException::forTooManyRedirects();
     }
 
+    /**
+     * Two-part plan-limit guard (Task 36), same "fast pre-check + real
+     * enforcement" split as everywhere else in this application:
+     *
+     * - `check()` runs FIRST, before a single byte reaches `writeToDisk()`
+     *   — there is no point paying for an S3/MinIO write (and, on the
+     *   `storeFromUrl()` path, the download that already happened before
+     *   this method was even called) for an upload this organization's
+     *   plan has no room for. Not itself a guarantee: two uploads racing
+     *   this close together can both pass it.
+     * - `withLimit()` wraps only the actual `Media::query()->create()`
+     *   INSERT below, AFTER the disk writes — the real guarantee a race
+     *   is decided by. `$sizeBytes` is the SAME value passed to both (the
+     *   caller's already-measured file size — `UploadedFile::getSize()`
+     *   for `store()`, `filesize()` on the downloaded temp file for
+     *   `storeFromUrl()`), so the two calls can never disagree about how
+     *   much this upload would add.
+     *
+     * Accepted trade-off: if `withLimit()`'s re-check under the lock
+     * loses a genuine race (this call and a concurrent one both passed
+     * the pre-check, only one fits), the bytes already written to the
+     * `media` disk above are NOT rolled back — they become an orphaned
+     * object with no `Media` row pointing at it. This is bounded to the
+     * narrow window between two truly concurrent uploads both clearing
+     * the pre-check, and this codebase has no general orphaned-storage
+     * cleanup job for any path today (see PostGroupService's docblock for
+     * a similarly-accepted, stated no-op elsewhere in this codebase) —
+     * adding one is a separate concern, not specific to plan limits.
+     */
     private function persist(
         string $localPath,
         string $mime,
@@ -437,6 +470,8 @@ final class MediaUploadService
         Organization $organization,
         ?string $createdBy,
     ): Media {
+        $this->planLimits->check($organization, PlanLimit::MEDIA_STORAGE_MB, $sizeBytes);
+
         $ulid = (string) Str::ulid();
         $extension = self::ALLOWED_MIME_TYPES[$mime];
         $path = "org/{$organization->id}/{$ulid}.{$extension}";
@@ -446,19 +481,24 @@ final class MediaUploadService
         $thumbnailPath = $this->maybeStoreThumbnail($localPath, $mime, $organization->id, $ulid, $extension);
         [$width, $height] = $this->extractDimensions($localPath, $mime);
 
-        /** @var Media */
-        return Media::query()->create([
-            'organization_id' => $organization->id,
-            'disk' => 'media',
-            'path' => $path,
-            'thumbnail_path' => $thumbnailPath,
-            'mime_type' => $mime,
-            'size_bytes' => $sizeBytes,
-            'width' => $width,
-            'height' => $height,
-            'original_filename' => $this->sanitizeFilename($originalFilename),
-            'created_by' => $createdBy,
-        ]);
+        /** @var Media $media */
+        $media = $this->planLimits->withLimit($organization, PlanLimit::MEDIA_STORAGE_MB, $sizeBytes, function () use ($organization, $path, $thumbnailPath, $mime, $sizeBytes, $width, $height, $originalFilename, $createdBy): Media {
+            /** @var Media */
+            return Media::query()->create([
+                'organization_id' => $organization->id,
+                'disk' => 'media',
+                'path' => $path,
+                'thumbnail_path' => $thumbnailPath,
+                'mime_type' => $mime,
+                'size_bytes' => $sizeBytes,
+                'width' => $width,
+                'height' => $height,
+                'original_filename' => $this->sanitizeFilename($originalFilename),
+                'created_by' => $createdBy,
+            ]);
+        });
+
+        return $media;
     }
 
     /**

@@ -2,8 +2,10 @@
 
 namespace App\Services\Integrations;
 
+use App\Enums\PlanLimit;
 use App\Models\Integration;
 use App\Models\Organization;
+use App\Services\Billing\PlanLimitService;
 use App\Social\Dto\AuthResultDto;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Arr;
@@ -33,6 +35,8 @@ use Illuminate\Support\Facades\DB;
  */
 class IntegrationService
 {
+    public function __construct(private readonly PlanLimitService $planLimits) {}
+
     /**
      * Upserts one `integrations` row keyed on
      * `(organization_id, provider_identifier, internal_id)`, scoped
@@ -55,6 +59,19 @@ class IntegrationService
     {
         $integration = $this->findUpsertTarget($org, $providerIdentifier, $auth->internalId);
 
+        // Whether this save is about to raise the organization's LIVE
+        // channel count (Task 36): true for a genuinely new row, and
+        // also for restoring one this same organization previously
+        // soft-deleted — both move a channel from "not counted" to
+        // "counted" by PlanLimitService::channelCount()'s definition (a
+        // plain COUNT(*) over non-trashed rows). A reconnect/token
+        // refresh of an already-live row changes nothing about that
+        // count, so it must never be gated by the plan limit at all —
+        // captured here, before $integration is possibly reassigned
+        // below, since after that point "instanceof Integration" is
+        // trivially true for both cases.
+        $increasesChannelCount = ! $integration instanceof Integration || $integration->trashed();
+
         if (! $integration instanceof Integration) {
             $integration = new Integration([
                 'organization_id' => $org->id,
@@ -73,15 +90,36 @@ class IntegrationService
         $integration->refresh_needed = false;
 
         try {
-            // Wrapped in its own transaction (a SAVEPOINT when already
-            // inside an outer one, e.g. under RefreshDatabase in tests):
-            // Postgres aborts the whole enclosing transaction after a
-            // failed statement, which would otherwise poison the
-            // recovery lookup below with "current transaction is
-            // aborted" instead of letting it run.
-            DB::transaction(function () use ($integration): void {
-                $integration->save();
-            });
+            // The real enforcement point (Task 36) for the `channels`
+            // plan limit: withLimit() locks the organization row,
+            // re-counts live channels under that lock, and only then
+            // runs the closure that performs the actual save() —
+            // wrapping just this INSERT/UPDATE, never connect() as a
+            // whole, so the exclusive organization-row lock is never held
+            // across the provider HTTP calls that already happened by
+            // the time this method is reached (authenticate(), in
+            // IntegrationController::callback()). A plain reconnect
+            // (token refresh of an already-live row) does not go through
+            // withLimit() at all — it cannot ever push the count over the
+            // limit, so there is nothing for the plan limit to guard
+            // there, and it keeps the SAVEPOINT-for-QueryException-
+            // recovery behaviour the comment below documents either way
+            // (withLimit() itself runs its closure inside DB::transaction()).
+            if ($increasesChannelCount) {
+                $this->planLimits->withLimit($org, PlanLimit::CHANNELS, 1, function () use ($integration): void {
+                    $integration->save();
+                });
+            } else {
+                // Wrapped in its own transaction (a SAVEPOINT when already
+                // inside an outer one, e.g. under RefreshDatabase in tests):
+                // Postgres aborts the whole enclosing transaction after a
+                // failed statement, which would otherwise poison the
+                // recovery lookup below with "current transaction is
+                // aborted" instead of letting it run.
+                DB::transaction(function () use ($integration): void {
+                    $integration->save();
+                });
+            }
         } catch (QueryException $e) {
             // Lost the race: our initial lookup ran before a concurrent
             // connect() for the same (org, provider, internal_id) key

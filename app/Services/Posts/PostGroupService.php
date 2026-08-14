@@ -2,17 +2,22 @@
 
 namespace App\Services\Posts;
 
+use App\Enums\PlanLimit;
 use App\Enums\PostState;
 use App\Jobs\PublishPostJob;
 use App\Models\Integration;
+use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
+use App\Services\Billing\PlanLimitService;
+use App\Support\OrganizationContext;
 use Carbon\CarbonInterface;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
@@ -76,14 +81,33 @@ class PostGroupService
 {
     public function __construct(
         private readonly PostStateMachine $stateMachine,
+        private readonly PlanLimitService $planLimits,
     ) {}
 
     /**
+     * `withLimit()` (Task 36) replaces this method's own `DB::transaction()`
+     * outright — there is no separate plain transaction underneath it,
+     * because the whole body here is exactly the "actual INSERT" the plan
+     * limit is meant to guard: a handful of local `PostGroup`/`Post`
+     * writes, no network/provider calls (unlike the channels case — see
+     * `IntegrationService::connect()`), so holding the organization row
+     * lock across all of it is bounded and cheap, not the "lock across
+     * slow I/O" mistake Task 35 review warned against for `connect()`.
+     * `$organization` comes from `OrganizationContext`, not a parameter,
+     * because `create()`'s existing signature (`array $data`, no
+     * organization) is itself the codebase's established convention here
+     * — `PostGroup`'s own `organization_id` is filled the same way, via
+     * `BelongsToOrganization`'s `creating()` hook — so this does not
+     * introduce a second, divergent way of learning the current tenant.
+     *
      * @param  array<string, mixed>  $data
      */
     public function create(array $data): PostGroup
     {
-        $group = DB::transaction(function () use ($data) {
+        $organization = $this->currentOrganization();
+
+        /** @var PostGroup $group */
+        $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($data) {
             $this->resolveIntegrations($data['posts']);
 
             $targetState = $data['type'] === 'draft' ? PostState::DRAFT : PostState::QUEUE;
@@ -390,6 +414,26 @@ class PostGroupService
         // and this class's docblock ("Deletion mirrors the edit rule")
         // for why a group with any released segment could never reach
         // this line in the first place.
+    }
+
+    /**
+     * `create()`'s only source of the current tenant (see that method's
+     * docblock). Fails closed rather than silently falling back to
+     * anything guessable: every route that reaches `create()` also
+     * carries the `organization` route middleware, so a null context here
+     * means a genuine programming error (a new caller that skipped that
+     * middleware), not a legitimate "no organization" request this method
+     * should quietly proceed without.
+     */
+    private function currentOrganization(): Organization
+    {
+        $organization = OrganizationContext::get();
+
+        if (! $organization instanceof Organization) {
+            throw new RuntimeException('PostGroupService::create() requires OrganizationContext to be set.');
+        }
+
+        return $organization;
     }
 
     /**
