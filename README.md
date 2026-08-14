@@ -123,8 +123,14 @@ provider credentials" below.
 
 Each is connected per-organization from **Settings → Channels** in the app
 (`POST /api/integrations/{provider}/auth-url` to start the flow, then
-`POST /api/integrations/{provider}/callback` to complete it — both
-admin-only — a `USER`-role member cannot connect or remove channels).
+`POST /api/integrations/{provider}/callback` to complete it). Starting a
+connection is admin-only — `auth-url` carries `role:ADMIN` middleware
+(`routes/api.php`), so a `USER`-role member cannot start one. `callback`
+itself carries no role check — it only verifies the OAuth `state` belongs
+to the calling user and that they still belong to the organization it was
+issued for (`OAuthStateService::consumeLocked()`) — but since only an
+admin could ever obtain a valid `state` in the first place, a `USER`-role
+member still cannot connect or remove a channel end to end.
 
 - **Telegram** — no app registration needed. Message [@BotFather](https://t.me/BotFather)
   on Telegram, run `/newbot`, and copy the bot token it gives you. Add the bot
