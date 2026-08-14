@@ -41,8 +41,32 @@ const PROVIDERS = ['telegram', 'mastodon', 'bluesky', 'discord', 'slack'];
  * and banning it would only get the explanation deleted rather than the
  * coupling removed.
  */
+/**
+ * Final review round 2 found two more syntaxes the alternation above
+ * still could not see, both of which need no quote adjacent to the name:
+ *
+ *  - property assignment / member access. `FIELDS.telegram = ['bot_token']`
+ *    builds the identical per-provider map the object-literal form does,
+ *    one statement later; `config.mastodon.instance` reads one. Neither
+ *    puts a quote or a `:` anywhere near the name.
+ *  - a module named after a provider. `import X from './TelegramFields.vue'`
+ *    is per-provider behaviour by filename — the name lives in the path
+ *    rather than the source, so no content pattern can reach it. Both the
+ *    importing statement and the file's own name are checked, because the
+ *    file existing outside components/previews/ is the coupling whether
+ *    or not anything imports it yet.
+ */
 const NAMES = PROVIDERS.join('|');
-const PROVIDER_PATTERN = new RegExp(`['"\`](?:${NAMES})['"\`]|(?:^|[{,[(\\s])(?:${NAMES})\\s*:`, 'im');
+const PROVIDER_PATTERN = new RegExp(
+    `['"\`](?:${NAMES})['"\`]|(?:^|[{,[(\\s])(?:${NAMES})\\s*:|\\.(?:${NAMES})\\b`,
+    'im',
+);
+/** `from './TelegramFields.vue'`, `import('../x/telegram-fields')`, `require('…')`. */
+const PROVIDER_IMPORT_PATTERN = new RegExp(
+    `(?:from|import|require)\\s*\\(?\\s*['"\`][^'"\`]*(?:${NAMES})[^'"\`]*['"\`]`,
+    'im',
+);
+const PROVIDER_FILENAME_PATTERN = new RegExp(`(?:${NAMES})`, 'i');
 
 // components/previews/ is where these identifiers are meant to live
 // (the registry map, and each Preview*.vue's own doc comments/labels).
@@ -52,12 +76,70 @@ const PROVIDER_PATTERN = new RegExp(`['"\`](?:${NAMES})['"\`]|(?:^|[{,[(\\s])(?:
 // only scanning app/, never tests/.
 const ALLOWED_DIR = 'resources/js/components/previews/';
 
-it('has no provider-specific identifiers outside components/previews/', () => {
-    const sources = globSync('resources/js/**/*.{vue,ts}').filter(
-        (file) => !file.startsWith(ALLOWED_DIR) && !file.endsWith('.spec.ts'),
-    );
+const sources = globSync('resources/js/**/*.{vue,ts}').filter(
+    (file) => !file.startsWith(ALLOWED_DIR) && !file.endsWith('.spec.ts'),
+);
 
+it('has no provider-specific identifiers outside components/previews/', () => {
     const offenders = sources.filter((file) => PROVIDER_PATTERN.test(readFileSync(file, 'utf8')));
 
     expect(offenders).toEqual([]);
+});
+
+it('imports no provider-named module outside components/previews/', () => {
+    // Reaching a provider's preview directly is the coupling
+    // resolvePreview() exists to prevent, and it leaves no provider name
+    // in the source outside the import path.
+    const offenders = sources.filter((file) => PROVIDER_IMPORT_PATTERN.test(readFileSync(file, 'utf8')));
+
+    expect(offenders).toEqual([]);
+});
+
+it('has no provider-named file outside components/previews/', () => {
+    const offenders = sources.filter((file) => PROVIDER_FILENAME_PATTERN.test(file));
+
+    expect(offenders).toEqual([]);
+});
+
+/**
+ * Same reasoning as palette.spec.ts's `the guard itself` block: this
+ * guard has now twice been found blind to the very syntax the violation
+ * used, and a pattern that matches nothing is indistinguishable from a
+ * codebase that is clean. Fixed samples, both directions.
+ */
+describe('the guard itself', () => {
+    it.each([
+        ['a quoted identifier', `if (provider === 'telegram') {`],
+        ['a bare object key', 'const MANUAL_FIELD_DEFS = { telegram: [], bluesky: [] }'],
+        ['a quoted object key', `const X = { 'mastodon': [] }`],
+        ['a property assignment', `FIELDS.telegram = ['bot_token']`],
+        ['a member read', 'const instance = config.mastodon.instance'],
+    ])('catches %s', (_label, sample) => {
+        expect(PROVIDER_PATTERN.test(sample)).toBe(true);
+    });
+
+    it.each([
+        ['a generic identifier field', 'const id = channel.provider_identifier'],
+        ['prose naming a provider as an example', "// whatever `extra` the backend returned — Mastodon's `{ instance }` — is round-tripped"],
+    ])('does not fire on %s', (_label, sample) => {
+        expect(PROVIDER_PATTERN.test(sample)).toBe(false);
+    });
+
+    it.each([
+        ['a relative import', `import X from './TelegramFields.vue'`],
+        ['a dynamic import', `const m = await import('../previews/PreviewMastodon.vue')`],
+        ['a kebab-case path', `import X from '@/widgets/bluesky-fields'`],
+    ])('catches %s', (_label, sample) => {
+        expect(PROVIDER_IMPORT_PATTERN.test(sample)).toBe(true);
+    });
+
+    it('does not fire on a provider-agnostic import', () => {
+        expect(PROVIDER_IMPORT_PATTERN.test(`import { resolvePreview } from '@/components/previews/registry'`)).toBe(false);
+    });
+
+    it('scans a non-empty set of sources', () => {
+        // If the glob or the exclusion ever stops matching, all three
+        // checks above pass vacuously and say nothing.
+        expect(sources.length).toBeGreaterThan(10);
+    });
 });

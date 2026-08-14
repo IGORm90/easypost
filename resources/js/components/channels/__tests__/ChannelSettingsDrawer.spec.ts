@@ -119,6 +119,31 @@ it('preselects the value the channel already has', async () => {
     expect((w.get('select').element as HTMLSelectElement).value).toBe('C2');
 });
 
+// Final review round 2: the placeholder option was offered even on a
+// channel that already has a value, and choosing it did nothing at all —
+// the key is omitted from the body, `IntegrationService::update()`
+// merges, the old value survives, and the `props.integration` watch snaps
+// the select back to it. The user is shown an action, performs it, and is
+// told nothing. It cannot be made to work either: the provider declares
+// `channel_id` as `required`, so `settings: {channel_id: null}` is a 422,
+// and a channel with no destination cannot publish anyway. So the action
+// is withdrawn rather than faked.
+it('does not offer the placeholder option once the channel has a value', async () => {
+    const w = await mountDrawer([provider()], integration({ settings: { channel_id: 'C2' } }));
+
+    expect(w.get('select').findAll('option').map((o) => o.text())).toEqual(['general', 'announcements']);
+});
+
+it('offers the placeholder while nothing is chosen, and drops it after a choice', async () => {
+    const w = await mountDrawer([provider()], integration());
+
+    expect(w.get('select').findAll('option')[0].text()).toBe(i18n.global.t('channels.settings.chooseOption'));
+
+    await w.get('select').setValue('C2');
+
+    expect(w.get('select').findAll('option').map((o) => o.text())).toEqual(['general', 'announcements']);
+});
+
 it('sends the picked value in the PUT body', async () => {
     const w = await mountDrawer([provider()], integration());
 

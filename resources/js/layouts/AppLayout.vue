@@ -65,6 +65,7 @@ const mobileNavOpen = ref(false);
                     type="button"
                     class="-ml-1 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
                     :aria-expanded="mobileNavOpen ? 'true' : 'false'"
+                    aria-controls="app-mobile-nav"
                     :aria-label="t('nav.menu')"
                     @click="mobileNavOpen = !mobileNavOpen"
                 >
@@ -90,8 +91,17 @@ const mobileNavOpen = ref(false);
                 </div>
             </header>
 
+            <!--
+                `v-show`, not `v-if`: the toggle's `aria-controls` above
+                has to name an element that exists in both states, or the
+                reference dangles exactly when it matters — while the menu
+                is collapsed and the user is deciding whether to open it.
+                `display: none` keeps the links out of the a11y tree and
+                the tab order just as removal did.
+            -->
             <nav
-                v-if="mobileNavOpen"
+                v-show="mobileNavOpen"
+                id="app-mobile-nav"
                 data-test="mobile-nav"
                 class="flex flex-col gap-1 border-b border-border bg-surface-2 p-4 md:hidden"
                 :aria-label="t('nav.menu')"

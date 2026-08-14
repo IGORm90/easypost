@@ -173,7 +173,18 @@ async function submit(): Promise<void> {
                     v-model="settingValues[field.key]"
                     class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
-                    <option value="">{{ t('channels.settings.chooseOption') }}</option>
+                    <!--
+                        Only while nothing is chosen. Re-selecting it on a
+                        channel that already has a value is an action the
+                        form cannot perform: the key would be omitted from
+                        the body, update() merges rather than replaces, and
+                        the watch above snaps the select straight back — a
+                        silent no-op. Un-setting is not expressible either
+                        (the provider declares the key `required`, and a
+                        channel with no destination cannot publish), so the
+                        option is withdrawn rather than left to lie.
+                    -->
+                    <option v-if="!settingValues[field.key]" value="">{{ t('channels.settings.chooseOption') }}</option>
                     <option v-for="option in settingOptions[field.key] ?? []" :key="option.value" :value="option.value">
                         {{ option.label }}
                     </option>
