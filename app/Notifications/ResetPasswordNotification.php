@@ -16,6 +16,14 @@ use Illuminate\Notifications\Notification;
  * carrying {token, email} as query params: there is no backend page here to
  * link to (Task 10 owns the reset-password Vue page), and this is the same
  * convention Laravel Breeze/Fortify use for a decoupled SPA frontend.
+ *
+ * Task 34: deliberately no `tags()` method, and no Horizon tags at all —
+ * same reasoning as `VerifyEmailNotification`'s docblock (see that
+ * class): Horizon's auto-tagging reflects over `$job->notification`
+ * only, never the wrapper's `$notifiable`, and `$token` here is a plain
+ * string, not a `Model` — so this produces an empty tag array, not an
+ * auto-derived one. Left untagged: a password-reset email has no
+ * organization/group scope to search a failure by.
  */
 class ResetPasswordNotification extends Notification implements ShouldQueue
 {

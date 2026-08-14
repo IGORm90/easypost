@@ -15,6 +15,23 @@ use Illuminate\Support\Facades\URL;
  * by Illuminate\Notifications\NotificationSender because User implements
  * HasLocalePreference (see App\Models\User::preferredLocale()), so nothing
  * here needs to call App::setLocale() itself.
+ *
+ * Task 34: deliberately no `tags()` method, and no Horizon tags at all —
+ * corrected after review, since an earlier version of this task's report
+ * claimed Horizon's reflection-based auto-tagging would still pick up
+ * the `User` notifiable here, which is wrong. `Laravel\Horizon\Tags::
+ * targetsFor()` unwraps a queued `SendQueuedNotifications` job down to
+ * `$job->notification` (this class) ALONE before reflecting for `Model`
+ * properties — the `$notifiable` (the `User`) lives on the wrapper job,
+ * never on this notification instance, and is never reflected over.
+ * This class also holds no `Model` property of its own (no constructor
+ * args at all). So a `SendQueuedNotifications` job for this notification
+ * produces an EMPTY tag array, not an auto-derived `User:` one —
+ * verified directly against `Tags::targetsFor()`/`Tags::modelsFor()`,
+ * not assumed. Left untagged rather than adding a synthetic one: this
+ * is a per-recipient signup email with no organization/group scope to
+ * search by, so a tag would not add findability the way
+ * `PublishPostJob`'s/`PostFailedNotification`'s do.
  */
 class VerifyEmailNotification extends Notification implements ShouldQueue
 {
