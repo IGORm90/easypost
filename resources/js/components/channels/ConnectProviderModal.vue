@@ -30,6 +30,16 @@ const props = defineProps<{
     providers: Provider[];
     /** Pre-selects a provider (skipping the picker) — used by the "Reconnect" flow on an already-connected, refresh_needed channel. */
     preselect?: string;
+    /**
+     * The specific channel being reconnected (Task 36 fix round 1,
+     * Critical 2). Sent as `integration_id` on `POST .../auth-url` so
+     * `EnforcePlanLimit`'s reconnect-aware pre-check can recognise this
+     * as a repair of an existing channel, not a new one — otherwise an
+     * organization already at its channel limit gets a 402 on the only
+     * path this UI offers to fix a broken channel, even though
+     * `IntegrationService::connect()` itself always allows it.
+     */
+    preselectIntegrationId?: string;
 }>();
 
 const emit = defineEmits<{ close: []; connected: [Integration] }>();
@@ -121,13 +131,19 @@ async function submit(): Promise<void> {
     error.value = null;
     submitting.value = true;
 
+    // Only present for the "Reconnect" flow (see preselectIntegrationId's
+    // docblock) — omitted entirely for a genuinely new connect, so
+    // EnforcePlanLimit's reconnect-aware check has nothing to match and
+    // falls back to its normal channel-count check, exactly as before.
+    const reconnectParams = props.preselectIntegrationId ? { integration_id: props.preselectIntegrationId } : {};
+
     try {
         if (provider.auth_type === 'manual') {
             // auth-url still mints the CSRF-bound `state` every callback
             // requires — manual providers never follow the `url` it
             // returns (see ManualTokenAuth's contract), but the state
             // itself is not optional.
-            const { state } = await store.connect(provider.identifier, {});
+            const { state } = await store.connect(provider.identifier, { ...reconnectParams });
             const integration = await store.completeCallback(provider.identifier, { state, ...values.value });
             emit('connected', integration);
             close();
@@ -135,7 +151,7 @@ async function submit(): Promise<void> {
             return;
         }
 
-        const { url, state, extra } = await store.connect(provider.identifier, values.value);
+        const { url, state, extra } = await store.connect(provider.identifier, { ...values.value, ...reconnectParams });
 
         // Round-tripped generically: whatever `extra` the backend
         // returned (Mastodon's `{ instance }`, or nothing for providers
@@ -145,9 +161,18 @@ async function submit(): Promise<void> {
         sessionStorage.setItem('channel_connect_pending', JSON.stringify({ provider: provider.identifier, state, extra }));
         window.location.assign(url);
     } catch (e) {
-        error.value = isAxiosError(e) && e.response?.status === 403
-            ? t('channels.connectModal.permissionDenied')
-            : t('channels.connectModal.error');
+        // Task 36 fix round 1, Minor 5: a 402 already shows the global
+        // warning toast (api/client.ts's response interceptor) — this
+        // local --danger line must not ALSO fire for the same event
+        // (color.md §3.8, and see EnforcePlanLimit's docblock for why
+        // this route can 402 here even for a genuine reconnect that
+        // names no live channel). Every other failure keeps its line.
+        if (!(isAxiosError(e) && e.response?.status === 402)) {
+            error.value = isAxiosError(e) && e.response?.status === 403
+                ? t('channels.connectModal.permissionDenied')
+                : t('channels.connectModal.error');
+        }
+
         submitting.value = false;
     }
 }

@@ -160,10 +160,13 @@ Route::middleware('auth:sanctum')->group(function () {
  * id 404s exactly like a nonexistent one (see PostController's
  * docblock).
  *
- * `plan:posts` (Task 36) gates only `store` — the one action that adds a
- * new `PostGroup` row (and therefore new monthly usage). The real
- * guarantee against a race is PostGroupService::create()'s own
- * withLimit() call, not this middleware.
+ * `plan:posts` (Task 36) gates `store` and `{group}/duplicate` — the two
+ * actions that add a new `PostGroup` row (and therefore new monthly
+ * usage); duplicate() was missing this pre-check in the original Task 36
+ * pass (round 1 review, Critical 1) even though PostGroupService::
+ * duplicate() inserts a `PostGroup` exactly like create() does. The real
+ * guarantee against a race is PostGroupService::create()'s/duplicate()'s
+ * own withLimit() call, not this middleware.
  */
 Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(function () {
     Route::post('/', [PostController::class, 'store'])->middleware('plan:posts');
@@ -186,7 +189,7 @@ Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(func
     Route::get('{group}', [PostController::class, 'show']);
     Route::put('{group}', [PostController::class, 'update']);
     Route::delete('{group}', [PostController::class, 'destroy']);
-    Route::post('{group}/duplicate', [PostController::class, 'duplicate']);
+    Route::post('{group}/duplicate', [PostController::class, 'duplicate'])->middleware('plan:posts');
     Route::patch('{group}/date', [PostController::class, 'updateDate']);
     Route::post('{group}/retry', [PostController::class, 'retry']);
 

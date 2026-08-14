@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Enums\PlanLimit;
+use App\Models\Integration;
 use App\Services\Billing\PlanLimitService;
 use App\Support\OrganizationContext;
 use Closure;
@@ -46,6 +47,28 @@ use Symfony\Component\HttpFoundation\Response;
  * connect" for every provider — it just means the real guard for the
  * callback itself is `IntegrationService::connect()`'s own `withLimit()`
  * call alone, not this middleware.
+ *
+ * Reconnect-aware for `channels` (Task 36 fix round 1, Critical 2):
+ * `POST .../auth-url` is not only how a brand-new channel gets connected
+ * — it is also the ONLY path `ChannelCard.vue`'s "Reconnect" button
+ * offers for repairing a channel already stuck in `refresh_needed`
+ * (`Channels/Index.vue::openReconnect()` -> `ConnectProviderModal.vue`
+ * -> `stores/integrations.ts::connect()`, all the way through this same
+ * route). `IntegrationService::connect()` deliberately *permits* that
+ * reconnect — token refresh of an already-live row never raises
+ * `channelCount()` — but this middleware runs before the controller ever
+ * reaches that service, so without this check a free org sitting exactly
+ * at its channel limit could 402 on the one path the UI gives it to fix
+ * a broken channel, even though the eventual `withLimit()` call would
+ * have allowed it. `isLiveReconnect()` below asks a narrower question
+ * than `connect()`'s own `$increasesChannelCount`: "does the request
+ * name a live, non-deleted integration that already belongs to this
+ * organization" — good enough for a friendly pre-check (which, like the
+ * rest of this class, guarantees nothing under concurrency and is never
+ * the enforcement point), without needing this middleware to know
+ * anything about `internal_id`/upsert matching the way `connect()` does.
+ * `posts`/`media_storage` have no equivalent "reconnect" concept, so this
+ * only ever applies to the `channels` key.
  *
  * `media_storage`'s delta is the uploaded file's size in BYTES, read
  * directly off the raw request — this runs before `UploadMediaRequest`'s
@@ -105,8 +128,37 @@ class EnforcePlanLimit
             return $next($request);
         }
 
+        if ($limit === PlanLimit::CHANNELS && $this->isLiveReconnect($request, $organization->id)) {
+            return $next($request);
+        }
+
         $this->limits->check($organization, $limit);
 
         return $next($request);
+    }
+
+    /**
+     * True when `$request` names (`integration_id`) a live, non-deleted
+     * `Integration` already belonging to `$organizationId` — see the
+     * class docblock. Deliberately does not also match
+     * `provider_identifier`/`internal_id` the way
+     * `IntegrationService::connect()`'s own upsert lookup does: this is
+     * only a friendly pre-check, and the real guard is that method's
+     * `withLimit()` call, which does not consult this middleware's
+     * decision at all.
+     */
+    private function isLiveReconnect(Request $request, string $organizationId): bool
+    {
+        $integrationId = $request->input('integration_id');
+
+        if (! is_string($integrationId) || $integrationId === '') {
+            return false;
+        }
+
+        return Integration::query()
+            ->withoutGlobalScope('organization')
+            ->where('organization_id', $organizationId)
+            ->whereKey($integrationId)
+            ->exists();
     }
 }

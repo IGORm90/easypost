@@ -200,10 +200,23 @@ class PostGroupService
      * (`release_id`/`release_url`/`error`/`published_at`) — a duplicate
      * is new, unpublished content, never a second claim on an existing
      * release.
+     *
+     * `withLimit()` (Task 36 fix round 1, Critical 1) replaces the plain
+     * `DB::transaction()` this method used to open on its own, for
+     * exactly the same reason `create()` already does (see that
+     * method's docblock): the row this closure inserts is counted by
+     * `PlanLimitService::postCount()` exactly like any other `PostGroup`
+     * — a duplicate is one more post against the monthly limit, not a
+     * copy operation the limit doesn't apply to. Without this, an
+     * organization sitting exactly at its monthly ceiling could still
+     * duplicate its way past it indefinitely, since `create()`'s guard
+     * only ever saw the ORIGINAL posts, never the copies.
      */
     public function duplicate(PostGroup $source): PostGroup
     {
-        return DB::transaction(function () use ($source) {
+        $organization = $this->currentOrganization();
+
+        return $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($source) {
             $group = PostGroup::create([
                 'state' => PostState::DRAFT,
                 'publish_date' => $source->publish_date,

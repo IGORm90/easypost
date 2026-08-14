@@ -46,14 +46,21 @@ const providerFor = (identifier: string) => store.providers.find((p) => p.identi
 
 const connectOpen = ref(false);
 const reconnectProvider = ref<string | undefined>(undefined);
+// Task 36 fix round 1, Critical 2: which specific channel is being
+// reconnected, so EnforcePlanLimit's pre-check can tell a repair of an
+// existing channel apart from a genuinely new connect — see
+// ConnectProviderModal.vue's preselectIntegrationId docblock.
+const reconnectIntegrationId = ref<string | undefined>(undefined);
 
 function openConnect(): void {
     reconnectProvider.value = undefined;
+    reconnectIntegrationId.value = undefined;
     connectOpen.value = true;
 }
 
 function openReconnect(integration: Integration): void {
     reconnectProvider.value = integration.provider_identifier;
+    reconnectIntegrationId.value = integration.id;
     connectOpen.value = true;
 }
 
@@ -141,6 +148,7 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
             :open="connectOpen"
             :providers="store.providers"
             :preselect="reconnectProvider"
+            :preselect-integration-id="reconnectIntegrationId"
             @close="connectOpen = false"
             @connected="onConnected"
         />

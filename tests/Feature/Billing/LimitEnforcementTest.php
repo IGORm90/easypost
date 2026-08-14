@@ -67,17 +67,18 @@ it('does not 402 a reconnect of an already-live channel, since it does not raise
     actingAsMember($org);
     Integration::factory()->for($org)->count(2)->create(['provider_identifier' => 'fake']);
 
-    // Starting a connect flow is still gated (already at 2/2)...
+    // Starting a genuinely NEW connect flow (no integration named) is
+    // still gated (already at 2/2)...
     $this->postJson('/api/integrations/fake/auth-url')->assertStatus(402);
 
     // ...but IntegrationService::connect() itself must still allow a
     // reconnect (token refresh) of one of the two already-live channels
     // — it does not increase channelCount(), so it must never be
     // rejected by the plan limit. Exercised directly at the service
-    // layer (bypassing the auth-url pre-check middleware entirely,
-    // since a real reconnect never goes through auth-url again once a
-    // channel is already connected) to prove withLimit() itself,  not
-    // just the middleware, treats this correctly.
+    // layer to prove withLimit() itself — not just
+    // EnforcePlanLimit's reconnect-aware pre-check (covered separately
+    // below, through the actual HTTP route a real reconnect uses) —
+    // treats this correctly.
     $existing = Integration::where('organization_id', $org->id)->first();
     $result = app(IntegrationService::class)->connect(
         $org,
@@ -87,6 +88,29 @@ it('does not 402 a reconnect of an already-live channel, since it does not raise
 
     expect($result->id)->toBe($existing->id)
         ->and(Integration::withoutGlobalScope('organization')->where('organization_id', $org->id)->count())->toBe(2);
+});
+
+it('lets a reconnect of a broken channel through auth-url when the request names it, even at 2/2', function () {
+    // Critical 2 (round 1 review): `POST .../auth-url` is the only path
+    // ChannelCard.vue's "Reconnect" button offers for a channel stuck in
+    // `refresh_needed` — Channels/Index.vue's openReconnect() ->
+    // ConnectProviderModal.vue -> stores/integrations.ts all route
+    // through this exact endpoint, never IntegrationService::connect()
+    // directly. A free org already at 2/2 must still be able to use it
+    // to repair its own existing channel, since doing so never raises
+    // channelCount() — only a request that does NOT name a live
+    // integration in this organization (a genuinely new connect) stays
+    // gated.
+    $org = Organization::factory()->create(['plan' => 'free']);
+    actingAsMember($org);
+    Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $broken = Integration::factory()->for($org)->create(['provider_identifier' => 'fake', 'refresh_needed' => true]);
+
+    $this->postJson('/api/integrations/fake/auth-url', ['integration_id' => $broken->id])
+        ->assertOk();
+
+    $this->postJson('/api/integrations/fake/auth-url')
+        ->assertStatus(402);
 });
 
 it('rejects a genuinely new channel at IntegrationService::connect() itself, not just the pre-check', function () {
@@ -144,6 +168,22 @@ it('allows post creation again after moving the organization to a plan with more
         'type' => 'draft',
         'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'now allowed']]]],
     ])->assertCreated();
+});
+
+it('402s duplicate on the free plan\'s monthly post limit, and creates no new PostGroup row', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+    actingAsMember($org);
+    PostGroup::factory()->for($org)->count(29)->create();
+    $source = PostGroup::factory()->for($org)->create();
+
+    $response = $this->postJson("/api/posts/{$source->id}/duplicate");
+
+    $response->assertStatus(402)->assertJson([
+        'limit' => 'posts_per_month',
+        'current' => 30,
+        'max' => 30,
+    ]);
+    expect(PostGroup::withoutGlobalScope('organization')->where('organization_id', $org->id)->count())->toBe(30);
 });
 
 // --- Media ---------------------------------------------------------------
