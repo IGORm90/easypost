@@ -63,12 +63,23 @@ use Symfony\Component\HttpFoundation\Response;
  * have allowed it. `isLiveReconnect()` below asks a narrower question
  * than `connect()`'s own `$increasesChannelCount`: "does the request
  * name a live, non-deleted integration that already belongs to this
- * organization" — good enough for a friendly pre-check (which, like the
- * rest of this class, guarantees nothing under concurrency and is never
- * the enforcement point), without needing this middleware to know
- * anything about `internal_id`/upsert matching the way `connect()` does.
- * `posts`/`media_storage` have no equivalent "reconnect" concept, so this
- * only ever applies to the `channels` key.
+ * organization, ON THIS SAME PROVIDER" — good enough for a friendly
+ * pre-check (which, like the rest of this class, guarantees nothing
+ * under concurrency and is never the enforcement point), without needing
+ * this middleware to know anything about `internal_id`/upsert matching
+ * the way `connect()` does. `posts`/`media_storage` have no equivalent
+ * "reconnect" concept, so this only ever applies to the `channels` key.
+ *
+ * Round 1 re-review, residual 2: an earlier revision of this check
+ * matched only `(organization_id, id)`, not `provider_identifier` — a
+ * client could name any live integration in the organization, on ANY
+ * provider, to skip the pre-check for a completely different provider's
+ * `auth-url`. Not a limit bypass on its own (`connect()`'s own
+ * `withLimit()` still 402s once the OAuth round-trip completes, since
+ * that genuinely new provider connection really does raise
+ * `channelCount()`), but it wastes a full OAuth round-trip before
+ * failing late instead of rejecting up front. `provider_identifier` must
+ * now match the route's own `{provider}` segment too.
  *
  * `media_storage`'s delta is the uploaded file's size in BYTES, read
  * directly off the raw request — this runs before `UploadMediaRequest`'s
@@ -139,13 +150,16 @@ class EnforcePlanLimit
 
     /**
      * True when `$request` names (`integration_id`) a live, non-deleted
-     * `Integration` already belonging to `$organizationId` — see the
-     * class docblock. Deliberately does not also match
-     * `provider_identifier`/`internal_id` the way
-     * `IntegrationService::connect()`'s own upsert lookup does: this is
-     * only a friendly pre-check, and the real guard is that method's
-     * `withLimit()` call, which does not consult this middleware's
-     * decision at all.
+     * `Integration` already belonging to `$organizationId`, ON THE SAME
+     * PROVIDER as the route's own `{provider}` segment — see the class
+     * docblock, and its "Round 1 re-review, residual 2" note for why the
+     * provider match was added: without it, a client could name any live
+     * integration in the organization to skip the pre-check for a
+     * completely unrelated provider's `auth-url`. Deliberately does not
+     * also match `internal_id` the way `IntegrationService::connect()`'s
+     * own upsert lookup does: this is only a friendly pre-check, and the
+     * real guard is that method's `withLimit()` call, which does not
+     * consult this middleware's decision at all.
      */
     private function isLiveReconnect(Request $request, string $organizationId): bool
     {
@@ -155,9 +169,16 @@ class EnforcePlanLimit
             return false;
         }
 
+        $provider = $request->route('provider');
+
+        if (! is_string($provider) || $provider === '') {
+            return false;
+        }
+
         return Integration::query()
             ->withoutGlobalScope('organization')
             ->where('organization_id', $organizationId)
+            ->where('provider_identifier', $provider)
             ->whereKey($integrationId)
             ->exists();
     }

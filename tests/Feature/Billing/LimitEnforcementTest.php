@@ -113,6 +113,36 @@ it('lets a reconnect of a broken channel through auth-url when the request names
         ->assertStatus(402);
 });
 
+it('only treats integration_id as a reconnect target when it also belongs to the route\'s own provider', function () {
+    // Round 1 re-review, residual 2: isLiveReconnect() used to match only
+    // (organization_id, id) — a client could name ANY live integration in
+    // the organization, on any provider, to skip the pre-check for a
+    // genuinely different provider's auth-url. Not a limit bypass
+    // (IntegrationService::connect()'s own withLimit() still 402s once
+    // the OAuth round-trip completes), but it wastes that whole
+    // round-trip before failing late. `provider_identifier` must now also
+    // match the route's `{provider}` segment.
+    $org = Organization::factory()->create(['plan' => 'free']);
+    actingAsMember($org);
+    $broken = Integration::factory()->for($org)->create(['provider_identifier' => 'fake', 'refresh_needed' => true]);
+    Integration::factory()->for($org)->create(['provider_identifier' => 'discord']);
+    // Org is now at 2/2 (free plan) across both providers combined —
+    // channelCount() is not scoped to any one provider.
+
+    // Direction 1: naming a live integration that belongs to a DIFFERENT
+    // provider than the route does not bypass the check. `telegram` (a
+    // manual-token provider needing no pre-redirect params) is used here
+    // so this exercises the plan-limit pre-check specifically, without
+    // tripping over an unrelated provider-specific validation error.
+    $this->postJson('/api/integrations/telegram/auth-url', ['integration_id' => $broken->id])
+        ->assertStatus(402);
+
+    // Direction 2: naming that same integration against ITS OWN
+    // provider's route still bypasses the check, exactly as before.
+    $this->postJson('/api/integrations/fake/auth-url', ['integration_id' => $broken->id])
+        ->assertOk();
+});
+
 it('rejects a genuinely new channel at IntegrationService::connect() itself, not just the pre-check', function () {
     // Proves withLimit(), not the route middleware, is the real guard:
     // calling the service directly, bypassing auth-url entirely.
