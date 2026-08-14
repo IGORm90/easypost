@@ -42,9 +42,10 @@ beforeEach(() => {
 // Task 36 fix round 1, Minor 5: a 402 from the callback request already
 // shows the global warning toast (api/client.ts's interceptor) — this
 // page's own `text-danger` alert line must not also render for that
-// event (color.md §3.8). The page must still leave `status === 'pending'`
-// so the "Back to channels" button appears — only the red text itself is
-// suppressed.
+// event (color.md §3.8). Callback.vue still moves `status` to 'error'
+// (see its `limitExceeded` ref) so the "Back to channels" button appears
+// exactly like every other terminal failure — only the red text itself
+// is suppressed.
 it('shows no local error text for a 402, but still offers a way back to channels', async () => {
     post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 402, data: { message: 'limit reached' } } });
 
