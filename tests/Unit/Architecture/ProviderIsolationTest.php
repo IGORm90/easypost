@@ -18,18 +18,28 @@
  *    directly instead of going through SocialProviderInterface /
  *    ProviderRegistry). Neither check subsumes the other.
  *
- * Two stated limits of the grep layer, corrected here rather than
- * overclaimed (final-review batch 2, minor finding). The pattern is
- * `['\"]{$p}['\"]`, so it only sees a provider name that is IMMEDIATELY
- * quote-wrapped — `'telegram'`, not `telegram` in prose or
- * `'tele'.'gram'` — and the `str_contains($line, 'app/Social/Providers')`
- * exclusion matches the WHOLE grep line, so a violation whose own text
- * happens to mention that path excludes itself. There are provider-name
- * mentions in `app/` today it does not see; all of them are comments
- * describing real behaviour, so the RULE is not violated — but this
- * guard's reach is narrower than "any mention of a network's name
- * anywhere else in app/", and reading it as that guarantee would be a
- * mistake.
+ * Both stated limits of the grep layer are now fixed rather than merely
+ * disclosed (final review, batch 4 — coverage and gates).
+ *
+ * The pattern used to be `['\"]{$p}['\"]`, which required the name to be
+ * IMMEDIATELY quote-adjacent — so `config('services.telegram.bot_token')`
+ * walked straight through it, and that is not prose about a provider,
+ * it is a service reaching into one provider's credentials by name. The
+ * pattern now matches a provider name appearing ANYWHERE INSIDE a quoted
+ * string, which is what "hardcodes a provider identifier" actually means
+ * in PHP: a dotted config key, an interpolated cache key, a route name.
+ *
+ * The exclusion used to `str_contains()` the whole grep line, so a
+ * violation whose own text happened to mention `app/Social/Providers`
+ * excluded itself. It now splits the `path:line:text` output and looks
+ * only at the path.
+ *
+ * Still deliberately NOT matched: a bare `telegram` outside quotes.
+ * Prose naming a network as an example of a generic mechanism is
+ * documentation of provider-agnostic code, and banning it would get the
+ * explanation deleted rather than the coupling removed — the same
+ * reasoning resources/js/__tests__/providerIsolation.spec.ts applies on
+ * the frontend.
  *
  * The grep check deliberately does NOT pipe grep's output through a
  * second grep with `|| true`: that pattern silently turns "the search
@@ -41,6 +51,23 @@
  * error), and provider-directory exclusion happens in PHP on the
  * captured output rather than via a second piped command.
  */
+/**
+ * Splits one `path:line:text` grep result into [path, text].
+ *
+ * `explode(':', $line, 3)` rather than `strtok()`: the TEXT routinely
+ * contains colons of its own (a URL, an array key, a time), and a
+ * two-part split would hand back a truncated line as the "text" and hide
+ * whatever came after the next colon.
+ *
+ * @return array{0: string, 1: string}
+ */
+function providerIsolationSplitGrepLine(string $line): array
+{
+    $parts = explode(':', $line, 3);
+
+    return [$parts[0], $parts[2] ?? ''];
+}
+
 it('has no provider-specific branching outside app/Social/Providers', function () {
     $root = base_path('app');
     expect(is_dir($root))->toBeTrue("search root [{$root}] does not exist — the guard cannot have run");
@@ -49,7 +76,10 @@ it('has no provider-specific branching outside app/Social/Providers', function (
     foreach (['telegram', 'mastodon', 'bluesky', 'discord', 'slack'] as $p) {
         $command = sprintf(
             'grep -rniE %s %s --include=%s',
-            escapeshellarg("['\"]{$p}['\"]"),
+            // The name anywhere inside a quoted string, not only when the
+            // quotes touch it: catches 'telegram', "services.telegram.bot_token",
+            // 'cache:telegram:app', and leaves unquoted prose alone.
+            escapeshellarg("['\"][^'\"]*{$p}[^'\"]*['\"]"),
             escapeshellarg($root),
             escapeshellarg('*.php'),
         );
@@ -70,7 +100,27 @@ it('has no provider-specific branching outside app/Social/Providers', function (
 
         $violations = array_values(array_filter(
             $outputLines,
-            fn (string $line): bool => ! str_contains($line, 'app/Social/Providers'),
+            function (string $line): bool {
+                // grep emits `path:line:text`. Only the PATH decides
+                // whether this is the allowed directory — testing the
+                // whole line let a violation exclude itself by merely
+                // mentioning that path in its own text.
+                [$path, $text] = providerIsolationSplitGrepLine($line);
+
+                if (str_contains($path, 'app/Social/Providers')) {
+                    return false;
+                }
+
+                // Whole-line comments are never a violation, and must be
+                // dropped BEFORE the quoted-string test: English prose
+                // uses the apostrophe as a possessive ("Mastodon's URLs",
+                // "discord.com's and slack.com's API legs"), so any
+                // sentence naming two providers between two apostrophes
+                // reads to a regex exactly like a quoted string with a
+                // provider name in it. Widening the pattern is what made
+                // this matter; it is prose, not coupling.
+                return preg_match('#^\s*(?:\*|//|/\*|\#)#', $text) !== 1;
+            },
         ));
 
         if ($violations !== []) {

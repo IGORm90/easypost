@@ -183,3 +183,31 @@ migration's default) and stays there until this command is run against it.
 `PlanLimitService::withLimit()` enforces the limits transactionally at the
 one point each resource (channel, post, media upload) is created; nothing
 elsewhere in the codebase re-derives or caches a usage count.
+
+## Uploaded media is public-by-URL
+
+Everything in the `media` disk is stored with public visibility, so
+`https://{bucket-host}/{path}` serves the file to anyone who has the URL,
+with no authentication and no expiry.
+
+The URL is not guessable — the path is built from ULIDs — so nothing here is
+enumerable, and every route that *hands out* a URL is tenant-scoped as
+usual. What is true is that a URL, once it has left the product, keeps
+working: forwarded in chat, present in a browser's history, or held by
+someone who has since been removed from the organization.
+
+This is a deliberate trade-off, reviewed and kept at MVP close-out. Signed,
+expiring URLs are technically available (publishing does not depend on
+public URLs — `PublishService` hands providers the file's *bytes*, via
+`MediaFileService::copy()`, never a link), but every consumer that displays
+media — the SPA and the public share page — would move to links that expire,
+so an open tab or an open share page would eventually show broken images.
+The chosen answer for an MVP with no production data is the simpler
+lifetime, stated plainly here, rather than an expiry window picked without
+evidence about how long those pages stay open.
+
+Revisit this before the product carries anything genuinely confidential.
+The change is: `visibility` to `private` on the `media` disk
+(`config/filesystems.php`) and in `MediaUploadService`, `Media::url()`/
+`thumbnailUrl()` to `temporaryUrl()`, and the disk in tests faked with
+`['serve' => true]` so the local driver can mint temporary URLs at all.

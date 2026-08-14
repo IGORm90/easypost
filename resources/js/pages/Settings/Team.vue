@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { isAxiosError } from 'axios';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Card from '../../components/ui/Card.vue';
+import PlanUsagePanel from '../../components/billing/PlanUsagePanel.vue';
 import Badge from '../../components/ui/Badge.vue';
 import Button from '../../components/ui/Button.vue';
 import Modal from '../../components/ui/Modal.vue';
@@ -156,6 +157,14 @@ async function copyInviteUrl(): Promise<void> {
                     {{ t('settings.team.invite.title') }}
                 </Button>
             </div>
+
+            <!--
+                Sits above the member table: what the plan allows is
+                context for who you can add and how much they can post,
+                and LimitToast only ever appears once a limit has already
+                been hit. Final review, batch 4.
+            -->
+            <PlanUsagePanel />
 
             <Card>
                 <table class="w-full text-left text-sm">

@@ -105,6 +105,16 @@
                 "ADMIN": "Admin",
                 "USER": "Member"
             }
+        },
+        "plan": {
+            "title": "Plan and usage",
+            "current": "Plan: {plan}",
+            "channels": "Channels",
+            "postsPerMonth": "Posts this month",
+            "mediaStorage": "Media storage (MB)",
+            "ofMax": "{current} of {max}",
+            "unlimited": "Unlimited",
+            "loadError": "Could not load plan usage."
         }
     },
     "invites": {
@@ -223,7 +233,14 @@
             "moveError": "Could not reschedule the post. Please try again.",
             "removeError": "Could not remove the post. Please try again."
         },
-        "newPost": "New post"
+        "newPost": "New post",
+        "errors": {
+            "title": "{count} scheduled post(s) failed to publish",
+            "retry": "Retry",
+            "retryError": "Could not retry this post. Please try again.",
+            "retryConflict": "This post is no longer retryable — it may have been retried already, or has since published.",
+            "unknownReason": "No reason was recorded."
+        }
     },
     "editor": {
         "titleNew": "New post",

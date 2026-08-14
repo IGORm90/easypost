@@ -21,6 +21,14 @@ make setup
 
 - `make up` builds and starts every container (nginx, php, horizon, scheduler,
   node/vite, postgres, redis, minio, mailpit).
+`make setup` is the only setup path. A second one used to exist as
+`composer setup`, left over from the Laravel skeleton; it ran an unguarded
+`php artisan key:generate`, which on an existing install silently makes
+every stored provider token undecryptable — the exact operation
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) calls unrecoverable. It has been
+deleted rather than guarded, so there is one way to do this and it is the
+documented one.
+
 - `make setup` installs PHP dependencies, generates `APP_KEY` (only if `.env`
   doesn't already have one — see the "APP_KEY is permanent" note in
   [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)), creates the `app_test` database,

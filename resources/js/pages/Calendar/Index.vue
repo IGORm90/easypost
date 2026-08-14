@@ -8,6 +8,7 @@ import Button from '../../components/ui/Button.vue';
 import CalendarGrid from '../../components/calendar/CalendarGrid.vue';
 import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewSwitcher.vue';
 import TagFilter from '../../components/calendar/TagFilter.vue';
+import PublishErrorBanner from '../../components/calendar/PublishErrorBanner.vue';
 import PostEditorModal from '../../components/editor/PostEditorModal.vue';
 import { usePostsStore, type CalendarTag } from '../../stores/posts';
 import { useAuthStore } from '../../stores/auth';
@@ -174,6 +175,15 @@ function onEditorSaved(): void {
             </div>
 
             <Toast v-if="notice" :variant="notice.variant" @dismiss="notice = null">{{ notice.text }}</Toast>
+
+            <!--
+                docs/ACCEPTANCE.md §8. Sits above the grid rather than
+                inside it: a failed publication is a thing to act on, not
+                a card to find — and it is scoped to the same visible
+                range the grid is showing, so it never speaks about posts
+                that are not on screen.
+            -->
+            <PublishErrorBanner :range="range" @retried="load" />
 
             <CalendarGrid
                 :entries="postsStore.entries"

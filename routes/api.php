@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\MediaController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\OrganizationController;
 use App\Http\Controllers\Api\PasswordResetController;
+use App\Http\Controllers\Api\PlanController;
 use App\Http\Controllers\Api\PostController;
 use App\Http\Controllers\Api\PostErrorController;
 use App\Http\Controllers\Api\ProfileController;
@@ -76,6 +77,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('organization')->prefix('organizations/current')->group(function () {
         Route::put('', [OrganizationController::class, 'update'])->middleware('role:ADMIN');
         Route::get('members', [MemberController::class, 'index']);
+        // Plain membership: how much of your own organization's quota is
+        // spent is not privileged relative to the people it constrains,
+        // and is already derivable by anyone who can list channels, posts
+        // and media. See PlanController.
+        Route::get('plan', [PlanController::class, 'show']);
         Route::delete('members/{user}', [MemberController::class, 'destroy'])->middleware('role:ADMIN');
         Route::put('members/{user}/role', [MemberController::class, 'updateRole'])->middleware('role:ADMIN');
         Route::post('invites', [InviteController::class, 'store'])->middleware('role:ADMIN');
