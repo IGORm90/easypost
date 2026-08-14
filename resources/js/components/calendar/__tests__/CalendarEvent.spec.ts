@@ -38,8 +38,25 @@ it('a non-draft card has a solid border, not dashed', () => {
 it('a locked (PUBLISHED) card shows a lock indicator instead of the remove button, and never emits remove', async () => {
   const w = mount(CalendarEvent, { props: { entry: entry({ state: 'PUBLISHED' }), locked: true } })
 
-  expect(w.find('svg[aria-label]').exists()).toBe(true)
+  expect(w.find('svg').exists()).toBe(true)
   expect(w.find('button').exists()).toBe(false)
+})
+
+// Final review, Important 11: the lock icon carried `aria-hidden="true"`
+// and `:aria-label` at once. aria-hidden wins, so the label was dead and
+// the locked state — the one state that changes what the user can do —
+// was announced nowhere. The previous assertion above passed on exactly
+// that broken markup, because it only checked the attribute was present.
+it('announces the locked state as text, since an aria-label on an aria-hidden icon is never read', () => {
+  const w = mount(CalendarEvent, { props: { entry: entry({ state: 'PUBLISHED' }), locked: true } })
+
+  expect(w.text()).toContain(en.calendar.locked)
+
+  // The lock glyph itself stays decorative; no icon in the card may carry
+  // an aria-label, which is only ever dead weight under aria-hidden.
+  const icons = w.findAll('svg')
+  expect(icons.length).toBeGreaterThan(0)
+  expect(icons.map((icon) => icon.attributes('aria-label'))).toEqual(icons.map(() => undefined))
 })
 
 it('an unlocked card exposes a remove button that emits remove with the group id', async () => {

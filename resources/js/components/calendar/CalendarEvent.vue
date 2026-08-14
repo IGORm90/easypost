@@ -76,13 +76,20 @@ function onRemoveClick(event: MouseEvent): void {
                 <span class="truncate">{{ channelNames }}</span>
             </span>
 
+            <!--
+                Final review, Important 11: this icon carried `aria-hidden`
+                and `:aria-label` at once, and aria-hidden wins — the label
+                was dead and locked state was announced nowhere. The icon
+                stays decorative; the name it was meant to carry now lives
+                in real text beside it, visually hidden.
+            -->
+            <span v-if="locked" class="sr-only">{{ t('calendar.locked') }}</span>
             <svg
                 v-if="locked"
                 class="h-3 w-3 shrink-0 text-muted"
                 viewBox="0 0 20 20"
                 fill="currentColor"
                 aria-hidden="true"
-                :aria-label="t('calendar.locked')"
             >
                 <path
                     fill-rule="evenodd"
