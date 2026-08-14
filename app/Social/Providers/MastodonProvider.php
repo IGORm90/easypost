@@ -18,9 +18,11 @@ use App\Social\Exceptions\ProviderTransientException;
 use App\Support\Exceptions\UnsafeRemoteHostException;
 use App\Support\SafeRemoteHost;
 use Closure;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use InvalidArgumentException;
 
 /**
@@ -104,8 +106,8 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      */
     public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto
     {
-        $host = $this->normalizeHost($params['instance'] ?? null);
-        $app = $this->registerOrReuseApp($host, $redirectUri);
+        [$host, $pin] = $this->normalizeHost($params['instance'] ?? null);
+        $app = $this->registerOrReuseApp($host, $pin, $redirectUri);
 
         $query = http_build_query([
             'client_id' => $app['client_id'],
@@ -133,22 +135,22 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      */
     public function authenticate(array $params, string $redirectUri): AuthResultDto
     {
-        $host = $this->normalizeHost($params['instance'] ?? null);
+        [$host, $pin] = $this->normalizeHost($params['instance'] ?? null);
         $code = $params['code'] ?? null;
 
         if (! is_string($code) || $code === '') {
             throw new InvalidArgumentException('Mastodon requires an authorization code.');
         }
 
-        $app = Cache::get(self::appCacheKey($host));
+        $app = self::cachedApp($host);
 
-        if (! is_array($app) || ! isset($app['client_id'], $app['client_secret'])) {
+        if ($app === null) {
             throw new ProviderPermanentException(
                 "No Mastodon app registration found for instance [{$host}]; the connect flow must be restarted.",
             );
         }
 
-        $tokenResponse = $this->send(fn (): Response => $this->http()->asForm()->post("https://{$host}/oauth/token", [
+        $tokenResponse = $this->send(fn (): Response => $this->http()->withOptions($pin)->asForm()->post("https://{$host}/oauth/token", [
             'grant_type' => 'authorization_code',
             'client_id' => $app['client_id'],
             'client_secret' => $app['client_secret'],
@@ -167,7 +169,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new ProviderPermanentException('Mastodon token exchange did not return an access_token.');
         }
 
-        $accountResponse = $this->send(fn (): Response => $this->http()->withToken($accessToken)
+        $accountResponse = $this->send(fn (): Response => $this->http()->withOptions($pin)->withToken($accessToken)
             ->get("https://{$host}/api/v1/accounts/verify_credentials"));
 
         if (! $accountResponse->successful()) {
@@ -188,11 +190,11 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
 
     public function uploadMedia(Integration $integration, MediaDto $media): MediaDto
     {
-        $host = $this->hostFor($integration);
+        [$host, $pin] = $this->hostFor($integration);
         $token = (string) $integration->token;
 
         $body = $this->call(
-            fn (): Response => $this->uploadHttp()->withToken($token)
+            fn (): Response => $this->uploadHttp()->withOptions($pin)->withToken($token)
                 ->attach('file', (string) file_get_contents($media->path), basename($media->path))
                 ->post("https://{$host}/api/v2/media", array_filter([
                     'description' => $media->altText,
@@ -215,7 +217,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      */
     public function post(Integration $integration, array $chain): array
     {
-        $host = $this->hostFor($integration);
+        [$host, $pin] = $this->hostFor($integration);
         $token = (string) $integration->token;
 
         $results = [];
@@ -225,7 +227,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             $replyTo = $index === 0 ? $payload->replyToReleaseId : $previousStatusId;
 
             try {
-                $result = $this->publishSegment($host, $token, $payload, $replyTo);
+                $result = $this->publishSegment($host, $pin, $token, $payload, $replyTo);
             } catch (ProviderException $e) {
                 if ($results !== []) {
                     throw new ProviderPartialFailureException($e->getMessage(), $results, $e);
@@ -241,7 +243,10 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         return $results;
     }
 
-    private function publishSegment(string $host, string $token, PostPayloadDto $payload, ?string $replyTo): PostResultDto
+    /**
+     * @param  array<string, mixed>  $pin  Connection-pinning options from hostFor() — see SafeRemoteHost::pinOptions().
+     */
+    private function publishSegment(string $host, array $pin, string $token, PostPayloadDto $payload, ?string $replyTo): PostResultDto
     {
         $mediaIds = [];
 
@@ -256,7 +261,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         $body = $this->call(
-            fn (): Response => $this->http()->withToken($token)->asForm()->post("https://{$host}/api/v1/statuses", array_filter([
+            fn (): Response => $this->http()->withOptions($pin)->withToken($token)->asForm()->post("https://{$host}/api/v1/statuses", array_filter([
                 'status' => $payload->content,
                 'media_ids' => $mediaIds !== [] ? $mediaIds : null,
                 'in_reply_to_id' => $replyTo,
@@ -285,20 +290,19 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      * a fresh "application" entry in the instance's authorized-apps list
      * every time someone in this app connects the same server.
      *
+     * @param  array<string, mixed>  $pin  Connection-pinning options for $host — see SafeRemoteHost::pinOptions().
      * @return array{client_id: string, client_secret: string}
      */
-    private function registerOrReuseApp(string $host, string $redirectUri): array
+    private function registerOrReuseApp(string $host, array $pin, string $redirectUri): array
     {
-        $cacheKey = self::appCacheKey($host);
-        $cached = Cache::get($cacheKey);
+        $cached = self::cachedApp($host);
 
-        if (is_array($cached) && isset($cached['client_id'], $cached['client_secret'])) {
-            /** @var array{client_id: string, client_secret: string} $cached */
+        if ($cached !== null) {
             return $cached;
         }
 
         $body = $this->call(
-            fn (): Response => $this->http()->asForm()->post("https://{$host}/api/v1/apps", [
+            fn (): Response => $this->http()->withOptions($pin)->asForm()->post("https://{$host}/api/v1/apps", [
                 'client_name' => (string) config('app.name', 'EasyPost Scheduler'),
                 'redirect_uris' => $redirectUri,
                 'scopes' => self::SCOPES,
@@ -314,10 +318,61 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new ProviderPermanentException("Mastodon instance [{$host}] did not return app credentials.");
         }
 
-        $app = ['client_id' => $clientId, 'client_secret' => $clientSecret];
-        Cache::put($cacheKey, $app, self::APP_REGISTRATION_TTL_SECONDS);
+        self::cacheApp($host, ['client_id' => $clientId, 'client_secret' => $clientSecret]);
 
-        return $app;
+        return ['client_id' => $clientId, 'client_secret' => $clientSecret];
+    }
+
+    /**
+     * Reads back what cacheApp() wrote. Returns null for a missing entry
+     * AND for one this application can no longer decrypt (an APP_KEY
+     * rotation, a hand-edited Redis value): both mean the same thing to
+     * every caller — there is no usable registration for this host, so
+     * register again / restart the connect flow — and neither is worth
+     * surfacing a decryption error for.
+     *
+     * @return array{client_id: string, client_secret: string}|null
+     */
+    private static function cachedApp(string $host): ?array
+    {
+        $cached = Cache::get(self::appCacheKey($host));
+
+        if (! is_string($cached)) {
+            return null;
+        }
+
+        try {
+            $decoded = json_decode(Crypt::decryptString($cached), true);
+        } catch (DecryptException) {
+            return null;
+        }
+
+        if (! is_array($decoded) || ! is_string($decoded['client_id'] ?? null) || ! is_string($decoded['client_secret'] ?? null)) {
+            return null;
+        }
+
+        return ['client_id' => $decoded['client_id'], 'client_secret' => $decoded['client_secret']];
+    }
+
+    /**
+     * Final-review batch 2, Important 7: `client_secret` is a real OAuth
+     * client credential for that instance, and it used to sit in Redis in
+     * plaintext for 30 days — the only credential in this application
+     * stored anywhere without the `encrypted` treatment every
+     * `integrations` column gets. Redis is not encrypted at rest here, so
+     * anything with read access to it (a backup, an operator, an RCE in
+     * an unrelated service sharing the instance) had it verbatim.
+     * Encrypted with the application key, exactly like the token columns.
+     *
+     * @param  array{client_id: string, client_secret: string}  $app
+     */
+    private static function cacheApp(string $host, array $app): void
+    {
+        Cache::put(
+            self::appCacheKey($host),
+            Crypt::encryptString((string) json_encode($app)),
+            self::APP_REGISTRATION_TTL_SECONDS,
+        );
     }
 
     /**
@@ -333,8 +388,18 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      * transient): retrying won't change what the channel's stored host
      * currently resolves to, and this needs a human to look at the
      * channel, not an automatic retry.
+     *
+     * Returns the host AND the connection-pinning options for it
+     * (final-review batch 2, Critical 1/Important 6): every request built
+     * from this host must carry them, so the address this method
+     * validated is the address cURL actually connects to — closing both
+     * the octal/hex parser-differential bypass and the rebinding window
+     * between this check and the request that follows it. Callers
+     * destructure: `[$host, $pin] = $this->hostFor($integration)`.
+     *
+     * @return array{0: string, 1: array<string, mixed>}
      */
-    private function hostFor(Integration $integration): string
+    private function hostFor(Integration $integration): array
     {
         $host = $integration->settings['instance'] ?? null;
 
@@ -343,14 +408,12 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         try {
-            SafeRemoteHost::assertSafeHost($host);
+            return [$host, SafeRemoteHost::pinOptions($host, SafeRemoteHost::assertSafeHost($host))];
         } catch (UnsafeRemoteHostException $e) {
             throw new ProviderPermanentException(
                 "This Mastodon channel's instance host is no longer safe to connect to: {$e->getMessage()}",
             );
         }
-
-        return $host;
     }
 
     /**
@@ -363,8 +426,17 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
      * address. Both failure modes are the caller's fault (bad/unsafe
      * input), not a live-network outcome, so both throw
      * InvalidArgumentException rather than a ProviderException.
+     *
+     * Returns `[host, pinOptions]` for the same reason hostFor() does —
+     * see that method's docblock. Note that the `^[a-z0-9.-]+$` format
+     * check below happily admits `0177.0.0.1`; what refuses it is
+     * SafeRemoteHost's own ambiguous-literal check, which is where that
+     * rule belongs (every caller of that class gets it, not just this
+     * one).
+     *
+     * @return array{0: string, 1: array<string, mixed>}
      */
-    private function normalizeHost(mixed $instance): string
+    private function normalizeHost(mixed $instance): array
     {
         if (! is_string($instance) || $instance === '') {
             throw new InvalidArgumentException('Mastodon requires an instance host (params[instance]).');
@@ -378,7 +450,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
         }
 
         try {
-            return SafeRemoteHost::assertSafeUrl("https://{$host}");
+            return SafeRemoteHost::assertSafeUrlPinned("https://{$host}");
         } catch (UnsafeRemoteHostException $e) {
             throw new InvalidArgumentException("Mastodon instance host [{$host}] is not safe to connect to: {$e->getMessage()}");
         }
@@ -423,7 +495,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
             throw new ProviderTransientException('Network error while calling the Mastodon API.');
         }
 
-        return $response;
+        return $this->refuseRedirect($response, $this->name());
     }
 
     /**

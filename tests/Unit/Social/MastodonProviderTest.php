@@ -13,6 +13,7 @@ use App\Social\Providers\MastodonProvider;
 use App\Support\SafeRemoteHost;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 
 /*
@@ -56,6 +57,22 @@ function mastodonIntegration(array $overrides = []): Integration
         'internal_id' => '109876543210123456',
         'settings' => ['instance' => 'mastodon.social'],
     ], $overrides));
+}
+
+/**
+ * Seeds a cached app registration the way MastodonProvider itself writes
+ * one — ENCRYPTED (final-review batch 2, Important 7). Deliberately not a
+ * plain `Cache::put([...])` of the raw array: this helper has to fail if
+ * the provider ever goes back to storing that client_secret in Redis in
+ * the clear, which is exactly what a plaintext fixture here would hide.
+ */
+function seedMastodonAppRegistration(string $host): void
+{
+    Cache::put(
+        "mastodon_app_registration:{$host}",
+        Crypt::encryptString((string) json_encode(['client_id' => 'client-id', 'client_secret' => 'client-secret'])),
+        60,
+    );
 }
 
 // --- registry --------------------------------------------------------------
@@ -104,10 +121,7 @@ it('rejects generateAuthUrl() with no instance host', function () {
 });
 
 it('completes authentication by exchanging the code and fetching the account', function () {
-    Cache::put('mastodon_app_registration:mastodon.social', [
-        'client_id' => 'client-id',
-        'client_secret' => 'client-secret',
-    ], 60);
+    seedMastodonAppRegistration('mastodon.social');
 
     Http::fake([
         'mastodon.social/oauth/token' => Http::response(mastodonFixture('mastodon_token')),
@@ -124,10 +138,7 @@ it('completes authentication by exchanging the code and fetching the account', f
 });
 
 it('maps an authentication rejection to an auth exception', function () {
-    Cache::put('mastodon_app_registration:mastodon.social', [
-        'client_id' => 'client-id',
-        'client_secret' => 'client-secret',
-    ], 60);
+    seedMastodonAppRegistration('mastodon.social');
 
     Http::fake([
         'mastodon.social/oauth/token' => Http::response(mastodonFixture('mastodon_error_unauthorized'), 401),
@@ -427,4 +438,32 @@ it('does not leak the access token through the exception chain on a network-leve
             expect($message)->not->toContain($token);
         }
     }
+});
+
+/*
+ * Final-review batch 2, Important 7: the per-instance app registration
+ * holds a real OAuth client_secret for that server, and it lived in Redis
+ * in plaintext for 30 days — the only credential in this application
+ * stored without encryption, while every `integrations` column gets the
+ * `encrypted` cast. Redis is not encrypted at rest in this deployment.
+ */
+it('never writes the cached mastodon client_secret to the cache store in plaintext', function () {
+    Http::fake([
+        'mastodon.social/api/v1/apps' => Http::response(mastodonFixture('mastodon_app')),
+    ]);
+
+    Cache::forget('mastodon_app_registration:mastodon.social');
+
+    app(ProviderRegistry::class)->get('mastodon')
+        ->generateAuthUrl('state', 'https://app.test/callback', ['instance' => 'mastodon.social']);
+
+    $raw = Cache::get('mastodon_app_registration:mastodon.social');
+    $secret = mastodonFixture('mastodon_app')['client_secret'];
+
+    expect($raw)->toBeString()
+        ->and($raw)->not->toContain($secret)
+        ->and($raw)->not->toContain('client_secret')
+        // ...and it is still usable: encrypted-at-rest must not mean
+        // "the connect flow silently stops working".
+        ->and(json_decode(Crypt::decryptString($raw), true)['client_secret'])->toBe($secret);
 });
