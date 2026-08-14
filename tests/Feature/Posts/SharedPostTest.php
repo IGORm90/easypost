@@ -65,7 +65,11 @@ it('serves the exact content/preview shape for a valid token, with no session re
         'picture' => 'https://example.com/pic.png',
         'token' => 'super-secret-oauth-token',
     ]);
-    $group = PostGroup::factory()->for($org)->create(['share_token' => null, 'publish_date' => '2026-09-01T10:00:00Z']);
+    $group = PostGroup::factory()->for($org)->create([
+        'share_token' => null,
+        'publish_date' => '2026-09-01T10:00:00Z',
+        'created_by' => $user->id,
+    ]);
     Post::factory()->for($group, 'group')->for($org)->for($integration)->create([
         'order' => 0,
         'parent_post_id' => null,
@@ -85,6 +89,7 @@ it('serves the exact content/preview shape for a valid token, with no session re
     $response->assertOk();
     $response->assertExactJson([
         'publish_date' => '2026-09-01T10:00:00.000000Z',
+        'timezone' => $user->timezone,
         'channels' => [
             [
                 'provider_identifier' => 'fake',
@@ -102,6 +107,45 @@ it('serves the exact content/preview shape for a valid token, with no session re
     expect($raw)->not->toContain($group->id);
     expect($raw)->not->toContain($integration->id);
     expect($raw)->not->toContain($org->id);
+});
+
+/*
+ * Final review, Minor: SharedPost.vue rendered the publish date with
+ * `new Date(...).toLocaleString()`, i.e. in the VIEWER's timezone — on
+ * the one page whose entire purpose is telling a client when something
+ * goes out. There is no organization-level timezone column; the zone a
+ * post was actually scheduled in is the scheduler's own profile timezone,
+ * which is what the calendar grid and the editor both render in, so that
+ * is what the share link has to echo.
+ */
+it('reports the timezone the post was scheduled in, so a share link does not read in the viewer\'s zone', function () {
+    $org = Organization::factory()->create();
+    $author = actingAsMember($org);
+    $author->update(['timezone' => 'Europe/Moscow']);
+    $group = PostGroup::factory()->for($org)->create([
+        'publish_date' => '2026-09-01T10:00:00Z',
+        'created_by' => $author->id,
+    ]);
+
+    $this->postJson("/api/posts/{$group->id}/share")->assertOk();
+
+    $response = $this->getJson('/api/public/posts/'.$group->fresh()->share_token);
+
+    $response->assertOk();
+    expect($response->json('timezone'))->toBe('Europe/Moscow');
+});
+
+it('falls back to UTC when the group has no creator left to take a timezone from', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $group = PostGroup::factory()->for($org)->create(['created_by' => null]);
+
+    $this->postJson("/api/posts/{$group->id}/share")->assertOk();
+
+    $response = $this->getJson('/api/public/posts/'.$group->fresh()->share_token);
+
+    $response->assertOk();
+    expect($response->json('timezone'))->toBe('UTC');
 });
 
 it('404s a revoked token exactly like an unknown one', function () {

@@ -53,6 +53,21 @@ function resolveMedia(id: string) {
     return mediaStore.items.find((item) => item.id === id);
 }
 
+/**
+ * A still image can always be shown, thumbnail or not; a video has no
+ * thumbnail until one is generated, and its own `url` is not an image,
+ * so it falls through to the glyph beside this in the template.
+ */
+function chipPreviewSrc(id: string): string | null {
+    const item = resolveMedia(id);
+
+    if (!item) {
+        return null;
+    }
+
+    return item.thumbnail_url ?? (item.mime.startsWith('video/') ? null : item.url);
+}
+
 function attachMedia(index: number): void {
     pickerSegmentIndex.value = index;
 }
@@ -125,14 +140,33 @@ function removeSegment(index: number): void {
                     <div
                         v-for="mediaId in segment.media_ids"
                         :key="mediaId"
+                        :data-testid="`media-chip-${mediaId}`"
+                        :title="resolveMedia(mediaId)?.original_filename"
                         class="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border bg-surface-2"
                     >
+                        <!--
+                            Final review, Minor: this was gated on
+                            `thumbnail_url` alone, which is null for every
+                            video, so an attached video rendered as an empty
+                            box with only an × button. Same fallback shape
+                            MediaTile.vue already uses: an image can fall
+                            back to its own url, a video to a glyph and a
+                            label.
+                        -->
                         <img
-                            v-if="resolveMedia(mediaId)?.thumbnail_url"
-                            :src="resolveMedia(mediaId)!.thumbnail_url!"
-                            :alt="resolveMedia(mediaId)!.original_filename"
+                            v-if="chipPreviewSrc(mediaId)"
+                            :src="chipPreviewSrc(mediaId)!"
+                            :alt="resolveMedia(mediaId)?.original_filename"
                             class="h-full w-full object-cover"
                         />
+                        <span v-else class="flex h-full w-full flex-col items-center justify-center text-[9px] leading-none text-muted">
+                            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path
+                                    d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm9.555 5.168A1 1 0 0012 9v2a1 1 0 001.555.832l1.444-.964a1 1 0 000-1.664l-1.444-.963z"
+                                />
+                            </svg>
+                            {{ t('media.video') }}
+                        </span>
                         <button
                             type="button"
                             class="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-surface/90 text-[10px] text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"

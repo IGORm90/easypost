@@ -50,9 +50,28 @@ class PublicPostResource extends JsonResource
     {
         /** @var Collection<int, Post> $posts */
         $posts = $this->posts;
+        /** @var PostGroup $group */
+        $group = $this->resource;
 
         return [
             'publish_date' => $this->publish_date,
+            /*
+             * Final review, Minor: the page rendered this date in the
+             * VIEWER's timezone, on the one screen whose whole purpose is
+             * telling a client when something goes out. `publish_date` is
+             * UTC (every timestamp here is `timestampTz` in UTC), so the
+             * viewer needs the zone it was scheduled in to read it. There
+             * is no organization-level timezone column; the scheduler's
+             * own profile timezone is the zone the calendar grid and the
+             * editor already render every entry in, so it is the one this
+             * date means. It exposes no more about the author than the
+             * publish time already does, and never the author themselves.
+             *
+             * Gated on the nullable `created_by` column rather than on the
+             * relation: `nullOnDelete()` means a group outlives its author,
+             * and a group with no author left has no zone to report.
+             */
+            'timezone' => $group->created_by !== null ? $group->creator->timezone : 'UTC',
             'channels' => $posts->groupBy('integration_id')->map(function (Collection $chain): array {
                 $chain = $chain->sortBy('order')->values();
 

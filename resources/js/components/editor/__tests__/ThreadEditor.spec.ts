@@ -226,3 +226,37 @@ it('removing an attached media chip filters that id out of the segment and emits
     const next = w.emitted('update:modelValue')![0][0] as Array<{ media_ids: string[] }>;
     expect(next[0].media_ids).toEqual(['med-b']);
 });
+
+// Final review, Minor: the chip's <img> was gated on `thumbnail_url`,
+// which is null for every video, so an attached video rendered as an
+// empty 40x40 box with only an × button — nothing said what was attached.
+it('shows a video attachment as a video, not as an empty box', () => {
+    const store = useMediaStore();
+    store.$patch({
+        items: [
+            {
+                id: 'med-v',
+                url: 'https://cdn.example.com/clip.mp4',
+                thumbnail_url: null,
+                mime: 'video/mp4',
+                size_bytes: 100,
+                width: 1920,
+                height: 1080,
+                original_filename: 'clip.mp4',
+                created_at: '',
+            },
+        ],
+    });
+
+    const withVideo = segments('root');
+    withVideo[0].media_ids = ['med-v'];
+
+    const w = mount(ThreadEditor, {
+        props: { modelValue: withVideo, capabilities: capabilities(), label: 'Bluesky' },
+    });
+
+    const chip = w.get('[data-testid="media-chip-med-v"]');
+
+    expect(chip.text()).toContain(i18n.global.t('media.video'));
+    expect(chip.attributes('title')).toBe('clip.mp4');
+});

@@ -80,12 +80,15 @@ onMounted(async () => {
     // never be reused by a later, unrelated navigation to this route.
     sessionStorage.removeItem('channel_connect_pending');
 
-    let pending: PendingConnect;
+    // `null` is a real outcome here (no entry, or unparseable JSON), so
+    // the type says so rather than being cast away — the guard below
+    // already handles it, and the cast only hid that from the compiler.
+    let pending: PendingConnect | null;
 
     try {
         pending = raw ? JSON.parse(raw) : null;
     } catch {
-        pending = null as unknown as PendingConnect;
+        pending = null;
     }
 
     if (!pending || !pending.state || !pending.provider) {

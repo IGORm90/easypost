@@ -101,6 +101,21 @@ it('Slack renders every reply as a direct child of the ROOT, not chained reply-t
     expect(w.text()).toContain('reply two');
 });
 
+// Final review, Minor: the count was passed as a named argument only, so
+// a thread with one reply read "1 replies in thread".
+it('Slack counts a single reply in the singular', () => {
+    const w = mount(SlackPreview, {
+        props: {
+            channelName: 'My Slack',
+            channelPicture: null,
+            segments: [{ content: 'root message' }, { content: 'the only reply' }],
+        },
+    });
+
+    expect(w.text()).toContain('1 reply in thread');
+    expect(w.text()).not.toContain('1 replies');
+});
+
 it('Discord renders extra segments as separate, explicitly unlinked messages', () => {
     const w = mount(DiscordPreview, {
         props: {

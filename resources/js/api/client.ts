@@ -85,7 +85,13 @@ function planLimitToastMessage(data: PlanLimitBody | undefined): string {
         return i18n.global.t(key, { current: data.current, max: data.max });
     }
 
-    return typeof data?.message === 'string' ? data.message : 'This organization has reached a plan limit.';
+    // The server's own message is already localized (a SetLocale middleware
+    // drives it from the user's stored locale), so preferring it over the
+    // generic key keeps the more specific wording without giving up
+    // translation. The last resort is a key, not a literal English
+    // sentence — that literal was the one user-facing string in the SPA
+    // that never went through i18n.
+    return typeof data?.message === 'string' ? data.message : i18n.global.t('limits.generic');
 }
 
 // Final review, Critical 3: session expiry, in both of the forms Laravel

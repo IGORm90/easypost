@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import { api } from '../../api/client';
@@ -43,14 +43,45 @@ interface SharedChannel {
 
 interface SharedPost {
     publish_date: string | null;
+    /** The zone the post was scheduled in — see PublicPostResource. */
+    timezone: string;
     channels: SharedChannel[];
 }
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 
 const status = ref<'loading' | 'ready' | 'not-found'>('loading');
 const post = ref<SharedPost | null>(null);
+
+/**
+ * Final review, Minor: this used `new Date(iso).toLocaleString()`, which
+ * takes both the locale and the timezone from the viewer's browser — so
+ * a client in another country was told a time the post does not go out
+ * at, on the one page whose entire purpose is telling them when it does.
+ * The zone comes from the payload (the zone it was scheduled in) and the
+ * locale from the app, and the zone is named in the output so the reader
+ * can see which clock it is on.
+ */
+const publishedAt = computed<string | null>(() => {
+    if (!post.value?.publish_date) {
+        return null;
+    }
+
+    // Spelled out field by field rather than with `dateStyle`/`timeStyle`:
+    // Intl rejects combining those with `timeZoneName`, and naming the
+    // zone is the whole point — otherwise the reader cannot tell whose
+    // clock the time is on.
+    return new Intl.DateTimeFormat(locale.value, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: post.value.timezone,
+        timeZoneName: 'short',
+    }).format(new Date(post.value.publish_date));
+});
 
 onMounted(async () => {
     const token = String(route.params.token ?? '');
@@ -81,9 +112,7 @@ onMounted(async () => {
             </p>
 
             <div v-else-if="post" class="flex flex-col gap-4">
-                <p v-if="post.publish_date" class="text-sm text-muted">
-                    {{ t('sharedPost.publishDate') }}: {{ new Date(post.publish_date).toLocaleString() }}
-                </p>
+                <p v-if="publishedAt" class="text-sm text-muted">{{ t('sharedPost.publishDate') }}: {{ publishedAt }}</p>
 
                 <Card v-for="(channel, index) in post.channels" :key="index">
                     <div class="mb-3 flex items-center gap-2">

@@ -136,6 +136,21 @@ describe('402 plan-limit interceptor', () => {
     expect(useLimitToastStore().message).toBe('a brand new limit type')
   })
 
+  // Final review, Minor: the last-resort branch was a hardcoded English
+  // sentence — the one user-facing string in the SPA not routed through
+  // i18n, so a Russian user hit an English toast whenever the 402 body
+  // carried no message of its own.
+  it('renders the last-resort limit message in the active locale', async () => {
+    i18n.global.locale.value = 'ru'
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
+    api.defaults.adapter = respondWith(402, 'Payment Required', {})
+
+    await expect(api.post('/things')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 402)
+
+    expect(useLimitToastStore().message).toBe(i18n.global.t('limits.generic'))
+    expect(useLimitToastStore().message).not.toMatch(/[A-Za-z]{4}/)
+  })
+
   it('leaves the toast untouched for a non-402 error, so it is never confused with an unrelated failure', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
     api.defaults.adapter = respondWith(500, 'Internal Server Error', { message: 'server exploded' })

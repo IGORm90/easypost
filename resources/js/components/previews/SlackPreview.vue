@@ -38,7 +38,16 @@ const replies = computed(() => props.segments.slice(1));
             <PreviewText class="text-sm text-text" :text="root.content" />
 
             <div v-if="replies.length > 0" class="ml-4 flex flex-col gap-2 border-l-2 border-border pl-3">
-                <p class="text-xs font-medium text-muted">{{ t('preview.slack.thread') }} · {{ t('preview.slack.replies', { n: replies.length }) }}</p>
+                <p class="text-xs font-medium text-muted">{{ t('preview.slack.thread') }} ·
+                    <!--
+                        Final review, Minor: this passed only a named
+                        argument, so a single reply read "1 replies in
+                        thread". The count is passed as vue-i18n's plural
+                        choice too; the Russian copy sidesteps plurals by
+                        reformatting ("Ответов в треде: {n}"), which stays
+                        correct with a single message and needs no change.
+                    -->
+                    {{ t('preview.slack.replies', { n: replies.length }, replies.length) }}</p>
                 <div v-for="(reply, index) in replies" :key="index" class="flex items-start gap-2">
                     <PreviewAvatar :name="channelName" :picture="channelPicture" shape="rounded" />
                     <PreviewText class="text-sm text-text" :text="reply.content" />

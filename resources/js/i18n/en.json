@@ -122,7 +122,8 @@
     "limits": {
         "channels": "You've reached your plan's channel limit ({current}/{max}). Disconnect a channel you no longer use to free up room.",
         "postsPerMonth": "You've reached your plan's monthly post limit ({current}/{max}). Wait for next month's reset to schedule more.",
-        "mediaStorageMb": "You've reached your plan's media storage limit ({current}/{max} MB). Delete unused files from the media library to free up room."
+        "mediaStorageMb": "You've reached your plan's media storage limit ({current}/{max} MB). Delete unused files from the media library to free up room.",
+        "generic": "This organization has reached a plan limit."
     },
     "channels": {
         "title": "Channels",
@@ -304,7 +305,7 @@
         },
         "slack": {
             "thread": "Thread",
-            "replies": "{n} replies in thread"
+            "replies": "{n} reply in thread | {n} replies in thread"
         }
     },
     "integrations": {
