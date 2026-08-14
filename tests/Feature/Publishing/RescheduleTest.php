@@ -217,23 +217,35 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
         'state' => PostState::QUEUE,
     ]);
 
+    // The handshake this race turns on. Final-review round 2: the delete
+    // racer used to `usleep(40_000)` and hope the publish racer had
+    // locked the segment row by then. Nothing guaranteed it had — under
+    // CPU load the delete landed FIRST, on an unlocked row, and
+    // succeeded, so `$results[1]` came back 'ok' and the test failed
+    // having never opened the window it exists to prove safe (1 failure
+    // in 10 clean full-suite runs, 4 more under load). The fake provider
+    // now creates this file on entry to post(), which is inside
+    // publishLockedChannel()'s transaction with the rows already locked,
+    // and the delete racer blocks on it appearing.
+    $barrier = sys_get_temp_dir().'/pest-race-barrier-'.bin2hex(random_bytes(6));
+
     try {
         $racers = [
             // "publish": the real publish run. publishChannel() locks the
             // pending row, calls the provider — which sleeps 150 ms
             // inside post(), with that lock held and the transaction
             // still open — and only then commits release_id.
-            function () use ($group) {
-                fakeProvider()->onPostContaining('in flight', sleepMicroseconds: 150_000);
+            function () use ($group, $barrier) {
+                fakeProvider()->onPostContaining('in flight', sleepMicroseconds: 150_000, barrierPath: $barrier);
 
                 app(PublishService::class)->publishGroup($group->id, 1);
             },
-            // "delete": starts shortly after the publish racer has
-            // acquired its lock but before it commits. Sets
+            // "delete": starts once the publish racer has DEMONSTRABLY
+            // acquired its lock — see raceAwaitBarrier(). Sets
             // OrganizationContext itself — this racer calls the service
             // directly rather than through HTTP, so nothing else would.
-            function () use ($group, $organization) {
-                usleep(40_000);
+            function () use ($group, $organization, $barrier) {
+                raceAwaitBarrier($barrier);
                 OrganizationContext::set(Organization::query()->findOrFail($organization->id));
                 app(PostGroupService::class)->delete(PostGroup::query()->findOrFail($group->id));
             },
@@ -259,6 +271,7 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
             ->and($freshPost->release_id)->toStartWith('fake-release-')
             ->and($freshPost->state)->toBe(PostState::PUBLISHED);
     } finally {
+        @unlink($barrier);
         DB::connection('race')->table('posts')->where('post_group_id', $group->id)->delete();
         DB::connection('race')->table('post_groups')->where('id', $group->id)->delete();
         DB::connection('race')->table('integrations')->where('id', $integration->id)->delete();

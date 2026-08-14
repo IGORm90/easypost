@@ -189,14 +189,24 @@ it('an edit landing mid-run never leaves the edited post unpublishable (Critical
     $fx = publishRaceFixture('c1-edit-midrun');
     $log = publishRaceLog();
 
+    // Handshake, not a delay — see raceAwaitBarrier(). The racer below
+    // used to `usleep()` and hope the publish run had locked channel A's
+    // rows by then; under load it can lose that guess, and then it does
+    // not exercise the race at all, it just asserts against a window that
+    // never opened (this is what made RescheduleTest's delete race fail
+    // intermittently). The fake provider creates this file on entry to
+    // post(), inside the transaction that holds those locks.
+    $barrier = sys_get_temp_dir().'/pest-race-barrier-'.bin2hex(random_bytes(6));
+
     try {
         $racers = [
             // W — the publish run, through the real service.
-            function () use ($fx) {
+            function () use ($fx, $barrier) {
                 fakeProvider()->onPostContaining(
                     'channel A',
                     new ProviderPermanentException('rejected by the network'),
                     sleepMicroseconds: 400_000,
+                    barrierPath: $barrier,
                 );
 
                 app(PublishService::class)->publishGroup($fx['group']->id, 1);
@@ -205,8 +215,8 @@ it('an edit landing mid-run never leaves the edited post unpublishable (Critical
             // while channel A's provider call is still in flight, so it
             // blocks in guardEditable() on A's rows and is first in the
             // lock queue the instant W commits channel A's failure.
-            function () use ($fx) {
-                usleep(100_000);
+            function () use ($fx, $barrier) {
+                raceAwaitBarrier($barrier);
                 Queue::fake();
                 OrganizationContext::set(Organization::query()->findOrFail($fx['organization']->id));
 
@@ -267,6 +277,7 @@ it('an edit landing mid-run never leaves the edited post unpublishable (Critical
             ->and(PostGroup::query()->whereKey($group->id)->firstOrFail()->state)->toBe(PostState::PUBLISHED)
             ->and(Post::query()->where('post_group_id', $group->id)->whereNull('release_id')->exists())->toBeFalse();
     } finally {
+        @unlink($barrier);
         @unlink($log);
         $fx['cleanup']();
     }
@@ -289,22 +300,32 @@ it('a calendar drag landing mid-run never publishes the dragged channel at the o
     $fx = publishRaceFixture('c2-drag-midrun');
     $log = publishRaceLog();
 
+    // Handshake, not a delay — see raceAwaitBarrier(). The racer below
+    // used to `usleep()` and hope the publish run had locked channel A's
+    // rows by then; under load it can lose that guess, and then it does
+    // not exercise the race at all, it just asserts against a window that
+    // never opened (this is what made RescheduleTest's delete race fail
+    // intermittently). The fake provider creates this file on entry to
+    // post(), inside the transaction that holds those locks.
+    $barrier = sys_get_temp_dir().'/pest-race-barrier-'.bin2hex(random_bytes(6));
+
     try {
         $racers = [
             // W — the publish run for schedule generation v1.
-            function () use ($fx) {
+            function () use ($fx, $barrier) {
                 fakeProvider()
                     ->onPostContaining(
                         'channel A',
                         new ProviderPermanentException('rejected by the network'),
                         sleepMicroseconds: 400_000,
+                        barrierPath: $barrier,
                     );
 
                 app(PublishService::class)->publishGroup($fx['group']->id, 1);
             },
             // U — the calendar drag, through the real service.
-            function () use ($fx) {
-                usleep(100_000);
+            function () use ($fx, $barrier) {
+                raceAwaitBarrier($barrier);
                 Queue::fake();
                 OrganizationContext::set(Organization::query()->findOrFail($fx['organization']->id));
 
@@ -350,6 +371,7 @@ it('a calendar drag landing mid-run never publishes the dragged channel at the o
         expect(trim((string) file_get_contents($log)))->toBe('1:channel B content')
             ->and(Post::query()->whereKey($postB->id)->firstOrFail()->release_id)->not->toBeNull();
     } finally {
+        @unlink($barrier);
         @unlink($log);
         $fx['cleanup']();
     }

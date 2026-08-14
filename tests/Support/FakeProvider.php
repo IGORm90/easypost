@@ -84,7 +84,7 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
      * B is slow" without depending on the order publishChannel() happens
      * to visit channels in.
      *
-     * @var array<string, array{sleepMicroseconds: int, exception: ?Throwable}>
+     * @var array<string, array{sleepMicroseconds: int, exception: ?Throwable, barrierPath: ?string}>
      */
     private array $contentBehaviours = [];
 
@@ -302,12 +302,23 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
      * fork-based test drive a genuinely multi-channel group through the
      * real production path: `PublishService::loadChains()` decides which
      * channel is attempted first, and a test must not have to guess.
+     *
+     * $barrierPath, if given, is created the moment post() is entered and
+     * BEFORE the sleep. Because `publishLockedChannel()` calls the
+     * provider from inside its own transaction, with the pending rows
+     * already `lockForUpdate()`-ed, that file appearing is proof the row
+     * lock is held right now — which is what a second process racing this
+     * one needs to wait for. A fixed `usleep()` in the other racer only
+     * guesses at it, and guesses wrong under load: the race window the
+     * test means to exercise never opens, the second process wins on an
+     * unlocked row, and the test fails having proved nothing.
      */
-    public function onPostContaining(string $needle, ?Throwable $exception = null, int $sleepMicroseconds = 0): self
+    public function onPostContaining(string $needle, ?Throwable $exception = null, int $sleepMicroseconds = 0, ?string $barrierPath = null): self
     {
         $this->contentBehaviours[$needle] = [
             'sleepMicroseconds' => $sleepMicroseconds,
             'exception' => $exception,
+            'barrierPath' => $barrierPath,
         ];
 
         return $this;
@@ -374,6 +385,13 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
             foreach ($chain as $payload) {
                 if (! str_contains($payload->content, $needle)) {
                     continue;
+                }
+
+                // Announce the held row lock before sleeping on it, never
+                // after — the whole point is that a racing process can
+                // wait for this file instead of guessing at a delay.
+                if ($behaviour['barrierPath'] !== null) {
+                    file_put_contents($behaviour['barrierPath'], 'locked');
                 }
 
                 if ($behaviour['sleepMicroseconds'] > 0) {

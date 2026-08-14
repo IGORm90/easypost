@@ -137,6 +137,40 @@ function raceConcurrently(array $racers): array
     return $results;
 }
 
+/**
+ * Blocks until $path exists, i.e. until the racer that owns the barrier
+ * has reached the point it announces — for the publishing races, entry to
+ * `FakeProvider::post()`, which happens inside
+ * `PublishService::publishLockedChannel()`'s transaction with the pending
+ * rows already `lockForUpdate()`-ed.
+ *
+ * This replaces the `usleep()` these races used to open their window
+ * with. A fixed delay encodes a guess about how long the other process
+ * takes to get to the same point, and a guess that is wrong under load
+ * does not make the test flaky in the harmless sense — it makes it assert
+ * against a window that never opened, so it reports a race-safety failure
+ * where there was no race at all.
+ *
+ * $timeoutMicroseconds is a deadlock guard, not a delay: reaching it means
+ * the other racer never got there, and returning quietly would put us back
+ * to racing blind, so it throws.
+ */
+function raceAwaitBarrier(string $path, int $timeoutMicroseconds = 10_000_000): void
+{
+    $waited = 0;
+    $step = 500;
+
+    while (! file_exists($path)) {
+        if ($waited >= $timeoutMicroseconds) {
+            throw new RuntimeException("Barrier [{$path}] never appeared — the racer that should hold the lock never reached it.");
+        }
+
+        usleep($step);
+        $waited += $step;
+        clearstatcache(true, $path);
+    }
+}
+
 function raceOutcomeStatus(Throwable $e): string
 {
     if ($e instanceof HttpExceptionInterface) {
