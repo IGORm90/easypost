@@ -2,6 +2,7 @@ import axios, { AxiosError, isAxiosError } from 'axios'
 import { createPinia, setActivePinia } from 'pinia'
 import { api } from '../client'
 import { useLimitToastStore } from '../../stores/limitToast'
+import { i18n } from '../../i18n'
 
 // A fake adapter so `api.post(...)` never hits the network — we only care
 // about the request interceptor's CSRF-priming behaviour, not a real
@@ -57,8 +58,18 @@ it('does not permanently poison writes after a failed CSRF priming request', asy
 // `useLimitToastStore` import also resolves to — see this suite's other
 // tests for why mixing `vi.resetModules()` with a statically-held Pinia
 // store reference would risk two disconnected module instances instead.
+//
+// Round 1 review, Important 3: the toast must show a translated,
+// `resources/js/i18n/{en,ru}.json`-keyed message built from the body's
+// `{limit, current, max}` fields — never the server's raw English
+// `message` verbatim — whenever `limit` names a key this app knows about.
+// The server string remains the fallback only when it doesn't (an
+// unrecognised/future `limit` value).
 describe('402 plan-limit interceptor', () => {
-  const message = "You've reached your plan's channel limit (2/2). Disconnect a channel you no longer use, or ask an organization admin to move to a plan with more channels."
+  // Deliberately NOT the current en.json wording — proves the toast is
+  // built from the i18n key, not merely coincidentally identical to
+  // whatever English text the server happens to send this version.
+  const serverMessage = "You've reached your plan's channel limit (2/2). Disconnect a channel you no longer use, or ask an organization admin to move to a plan with more channels."
 
   // A bare custom adapter (unlike axios's real xhr/http adapters) does not
   // apply `validateStatus` itself — that check lives inside those real
@@ -77,14 +88,18 @@ describe('402 plan-limit interceptor', () => {
       }))
   }
 
-  it('shows the warning toast with the server\'s message and still rejects with the original 402 AxiosError', async () => {
+  beforeEach(() => {
+    i18n.global.locale.value = 'en'
+  })
+
+  it('shows the i18n-keyed, interpolated channel-limit message (not the raw server string) and still rejects with the original 402 AxiosError', async () => {
     // The request interceptor primes CSRF (a real `axios.get()` call) ahead
     // of every write — stub it out the same way the CSRF-priming test above
     // does, so this test's `api.post()` reaches the adapter below instead
     // of failing on a real network call first.
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
     // @ts-expect-error -- test-only adapter override, not part of the public config type
-    api.defaults.adapter = respondWith(402, 'Payment Required', { message, limit: 'channels', current: 2, max: 2 })
+    api.defaults.adapter = respondWith(402, 'Payment Required', { message: serverMessage, limit: 'channels', current: 2, max: 2 })
 
     let caught: unknown
     try {
@@ -96,10 +111,23 @@ describe('402 plan-limit interceptor', () => {
     expect(isAxiosError(caught)).toBe(true)
     if (isAxiosError(caught)) {
       expect(caught.response?.status).toBe(402)
-      expect(caught.response?.data?.message).toBe(message)
+      // The original response is untouched — a caller with its own
+      // status-specific handling still sees the real server message.
+      expect(caught.response?.data?.message).toBe(serverMessage)
     }
 
-    expect(useLimitToastStore().message).toBe(message)
+    expect(useLimitToastStore().message).toBe(i18n.global.t('limits.channels', { current: 2, max: 2 }))
+    expect(useLimitToastStore().message).not.toBe(serverMessage)
+  })
+
+  it('falls back to the server\'s own message when `limit` names a key this app does not recognise', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: {}, status: 204, statusText: 'No Content', headers: {}, config: {} })
+    // @ts-expect-error -- test-only adapter override, not part of the public config type
+    api.defaults.adapter = respondWith(402, 'Payment Required', { message: 'a brand new limit type', limit: 'some_future_limit', current: 1, max: 1 })
+
+    await expect(api.post('/things')).rejects.toSatisfy((error: unknown) => isAxiosError(error) && error.response?.status === 402)
+
+    expect(useLimitToastStore().message).toBe('a brand new limit type')
   })
 
   it('leaves the toast untouched for a non-402 error, so it is never confused with an unrelated failure', async () => {

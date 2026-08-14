@@ -23,13 +23,20 @@ use RuntimeException;
  * `message` is deliberately actionable (Task 36 requirement): with no
  * billing/upgrade flow in this application at all, a bare "you've hit
  * your limit" leaves the recipient with no next step, so `describe()`
- * below names the one or two things that are actually true of every
- * organization on this codebase — free up the existing usage, wait for
- * the monthly reset (posts only), or ask whoever administers the
- * organization to move it to a plan with more room via `php artisan
- * org:plan` (the only lever this codebase has — see PlanRegistry's
- * docblock). No `upgrade_url` in the JSON body: there is nothing to link
- * to.
+ * below names the one thing that is actually true of every organization
+ * on this codebase and actually within THEIR OWN power to do — free up
+ * existing usage (disconnect a channel, delete media) or wait for the
+ * monthly reset (posts only). No `upgrade_url` in the JSON body: there
+ * is nothing to link to.
+ *
+ * Round 1 review, Important 4: an earlier revision of `describe()` also
+ * offered "ask an organization admin to move to a plan with more room"
+ * (`php artisan org:plan`). That is an ops-only console command, not a
+ * lever this application exposes to any customer, admin or not — there
+ * is no plan-change UI anywhere in this MVP. Pointing a customer at an
+ * action nobody who receives this message can actually take is worse
+ * than not naming an action at all, so that clause is gone from every
+ * case below, not reworded.
  */
 class PlanLimitExceededException extends RuntimeException
 {
@@ -44,9 +51,9 @@ class PlanLimitExceededException extends RuntimeException
     private static function describe(PlanLimit $limit, int $current, ?int $max): string
     {
         return match ($limit) {
-            PlanLimit::CHANNELS => "You've reached your plan's channel limit ({$current}/{$max}). Disconnect a channel you no longer use, or ask an organization admin to move to a plan with more channels.",
-            PlanLimit::POSTS_PER_MONTH => "You've reached your plan's monthly post limit ({$current}/{$max}). Wait for next month's reset, or ask an organization admin to move to a plan with a higher monthly limit.",
-            PlanLimit::MEDIA_STORAGE_MB => "You've reached your plan's media storage limit ({$current}/{$max} MB). Delete unused files from the media library, or ask an organization admin to move to a plan with more storage.",
+            PlanLimit::CHANNELS => "You've reached your plan's channel limit ({$current}/{$max}). Disconnect a channel you no longer use to free up room.",
+            PlanLimit::POSTS_PER_MONTH => "You've reached your plan's monthly post limit ({$current}/{$max}). Wait for next month's reset to schedule more.",
+            PlanLimit::MEDIA_STORAGE_MB => "You've reached your plan's media storage limit ({$current}/{$max} MB). Delete unused files from the media library to free up room.",
         };
     }
 
