@@ -229,26 +229,39 @@ class MissedPostsService
      *    left alone entirely: no dispatch, no log, nothing.
      *  - It says no -> the lock has OUTLIVED every window in which a
      *    legitimate attempt for this exact schedule generation could
-     *    still hold it. This is a LEAK — a hard-killed worker (SIGKILL
-     *    mid-`handle()` never runs `CallQueuedHandler`'s release path),
-     *    or a swallowed dispatch that never got as far as running at
-     *    all — not evidence of health. Left alone, this group would sit
-     *    behind that leaked lock, silently re-skipped on every 10-minute
-     *    scan, for up to the job's own `$uniqueFor` (3600s = up to an
-     *    hour) — the "declines to act on precisely the state it exists
-     *    to fix" gap the review flagged. Logged at `error` (not
-     *    `warning`) specifically so this is distinguishable from an
-     *    ordinary recovery, and the lock is force-released (matching
-     *    `PostGroupService::dispatchPublishIfQueued(forceRedispatch:
-     *    true)`'s own `UniqueLock::release()` call) before dispatching,
-     *    rather than merely logging and leaving the leak for the NEXT
-     *    scan to rediscover.
+     *    still hold it. Logged at `error` (not `warning`) specifically
+     *    so this is distinguishable from an ordinary recovery, and the
+     *    lock is force-released (matching `PostGroupService::
+     *    dispatchPublishIfQueued(forceRedispatch: true)`'s own
+     *    `UniqueLock::release()` call) before dispatching.
      *
-     * Logging happens AFTER `dispatch()`, not before (review finding 5,
-     * minor) — logging first left a log line asserting a redispatch had
-     * happened in the one case it could NOT be trusted to have (the
-     * dispatch itself being silently swallowed by `LogUniqueJobSkipped`'s
-     * own race window — see this class's docblock).
+     * HONESTY NOTE, post-review round 3 — this second branch is a
+     * DEFENSIVE BACKSTOP, not a live recovery path, now that
+     * `lockCouldStillBeLegitimate()` is anchored on
+     * `last_dispatched_at` (round 2's fix): that column is stamped at
+     * the SAME instant `PublishPostJob::dispatch()` acquires the
+     * `ShouldBeUnique` lock (both happen inside `dispatchRedispatch()`/
+     * `PostGroupService::dispatchPublishIfQueued()`, a few lines apart,
+     * no I/O between them worth mentioning), and the lock's own Redis
+     * TTL is `$uniqueFor` counted from that exact same instant. So the
+     * moment this method's bound would call the lock "expired"
+     * (`now() > last_dispatched_at + uniqueFor`) is, up to ordinary
+     * clock/scheduling jitter, the SAME moment Redis itself already
+     * expired the key — meaning the probe almost never observes "lock
+     * held" AND "bound says no" at once in production; by the time the
+     * bound would say no, `$probe->get()` has typically already
+     * succeeded on its own, taking the FIRST branch instead. Round 1's
+     * version of this method reached this branch constantly (it was
+     * anchored on `publish_date`, which drifts arbitrarily far from the
+     * lock's real acquire time) — that was a bug being exercised, not
+     * this branch being a normal, load-bearing recovery path. What
+     * still reaches it: a genuinely crashed worker (SIGKILL mid-
+     * `handle()`, so `CallQueuedHandler`'s release path never runs) or
+     * a Redis-side anomaly that keeps a key alive past its own stated
+     * TTL — both real, both worth recovering from automatically rather
+     * than waiting on Redis, which is why this branch stays rather than
+     * being deleted, but neither is the routine case the "up to an
+     * hour of silent skip" framing in earlier revisions implied.
      */
     private function redispatchIfOrphaned(PostGroup $group): void
     {

@@ -558,11 +558,18 @@ class PostGroupService
             return;
         }
 
+        // Stamped BEFORE the force-release below (post-review: an
+        // earlier revision placed this between release() and
+        // dispatch(), widening the release->dispatch window — during
+        // which a concurrent dispatch elsewhere could slip in — by one
+        // extra database round trip, for no benefit. Ordering this
+        // first removes that widening entirely; it has no dependency on
+        // the force-release having happened first.
+        PostGroup::query()->whereKey($group->id)->update(['last_dispatched_at' => now()]);
+
         if ($forceRedispatch) {
             app(UniqueLock::class)->release(new PublishPostJob($group->id, $group->queue_version));
         }
-
-        PostGroup::query()->whereKey($group->id)->update(['last_dispatched_at' => now()]);
 
         PublishPostJob::dispatch($group->id, $group->queue_version)->delay($group->publish_date);
     }

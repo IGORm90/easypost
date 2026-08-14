@@ -215,16 +215,20 @@ it('does not touch a group that is legitimately mid-retry, and logs nothing for 
 // --- Leaked locks: bounded, observable recovery -----------------------------
 
 it('treats a lock that has clearly outlived any legitimate attempt as a leak, force-releases it, logs at error, and still redispatches', function () {
-    // Review finding 3: a hard-killed worker (SIGKILL mid-handle())
-    // never runs CallQueuedHandler's release path at all, so the
-    // ShouldBeUnique lock can sit held for up to its own $uniqueFor
-    // (3600s) with NO live job behind it — the scanner must not simply
-    // decline forever. The bound: PublishPostJob's lock is acquired at
-    // DISPATCH time, independent of ->delay() (see
-    // PostGroupService::dispatchPublishIfQueued()'s docblock), so the
-    // absolute latest a lock belonging to a legitimate attempt for
-    // THIS publish_date could still be alive is publish_date +
-    // uniqueFor. This group's publish_date is set well past that.
+    // Review finding 3, with the round-3 honesty correction folded in:
+    // a hard-killed worker (SIGKILL mid-handle()) never runs
+    // CallQueuedHandler's release path at all, so the ShouldBeUnique
+    // lock can in principle sit held with NO live job behind it — the
+    // scanner must not simply decline forever. In production this
+    // branch is a defensive backstop rather than a routine path (see
+    // lockCouldStillBeLegitimate()'s and redispatchIfOrphaned()'s
+    // docblocks: last_dispatched_at is stamped at the same instant the
+    // lock is acquired, so the bound and the lock's own Redis TTL
+    // expire at essentially the same moment — the probe almost never
+    // sees "held" and the bound say "no" at once). This test forces
+    // that otherwise-rare state directly by holding the lock itself
+    // and never releasing it, standing in for exactly the crashed-
+    // worker case the backstop exists for.
     Queue::fake();
 
     $org = Organization::factory()->create();
@@ -322,6 +326,124 @@ it('does not treat the scanner\'s own previous redispatch as a leak on the next 
     } finally {
         $lock->release();
     }
+});
+
+it('does not declare a leak on the second tick after a real first-tick dispatch, with last_dispatched_at written by production code, not a fixture', function () {
+    // Review (round 3): the test above proves lockCouldStillBeLegitimate()'s
+    // BOUND, but it stamps last_dispatched_at directly on the fixture —
+    // grep over tests/ would find only that hand-written stamp, so
+    // deleting either production write
+    // (PostGroupService::dispatchPublishIfQueued() or this class's own
+    // dispatchRedispatch()) would leave every test green. This test
+    // covers the WRITE too: tick 1 is a genuine scan() that actually
+    // dispatches PublishPostJob (sync queue runs it inline against the
+    // real fake provider), which fails transiently and releases itself
+    // WITHOUT finishing — leaving the real ShouldBeUnique lock held,
+    // exactly like a job genuinely mid-retry, and (if and only if
+    // production code actually wrote it) a fresh last_dispatched_at on
+    // the group. Tick 2 must read that lock as still legitimate.
+    // publish_date is set far enough in the past that either the old
+    // publish_date-only bound OR a last_dispatched_at that was never
+    // actually written by dispatchRedispatch() would immediately fail
+    // this on the second tick.
+    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
+
+    $org = Organization::factory()->create();
+    $group = overdueGroup($org, now()->subSeconds($uniqueFor + 600));
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    Post::create([
+        'post_group_id' => $group->id,
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'order' => 0,
+        'content' => 'two-tick leak bound',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+
+    fakeProvider()->failNextPostTransiently('simulated network blip');
+
+    // Tick 1: genuinely orphaned (nothing has ever dispatched for this
+    // group before now) — redispatches for real. Sync queue runs the
+    // dispatched PublishPostJob inline; it hits the transient failure
+    // and calls release(), which does NOT finish the job (so
+    // CallQueuedHandler never releases the ShouldBeUnique lock).
+    app(MissedPostsService::class)->scan();
+
+    $afterFirstTick = $group->fresh();
+    expect($afterFirstTick->last_dispatched_at)->not->toBeNull()
+        ->and($afterFirstTick->state)->toBe(PostState::QUEUE);
+
+    // Tick 2 must find nothing to complain about: the lock from tick
+    // 1's real dispatch is still genuinely held, and lockCouldStillBeLegitimate()
+    // must read it as legitimate off the last_dispatched_at production
+    // code actually wrote a moment ago — not declare a leak, not
+    // force-release, not redispatch again.
+    Log::shouldReceive('error')->never();
+    Log::shouldReceive('warning')->never();
+
+    app(MissedPostsService::class)->scan();
+});
+
+it('does not declare a leak after PostGroupService dispatches for real, with last_dispatched_at written by that production code path too', function () {
+    // Companion to the test above, covering the OTHER production write
+    // site: PostGroupService::dispatchPublishIfQueued() (create(),
+    // update(), updateDate(), retry()) is the ONLY other place
+    // PublishPostJob::dispatch() is ever called in this codebase. The
+    // test above only exercises MissedPostsService::dispatchRedispatch()'s
+    // stamp — deleting THIS class's write would leave it green. This
+    // test drives the dispatch through PostGroupService::updateDate()
+    // instead (called directly, the same way a real reschedule request
+    // would reach it), setting the NEW publish_date deep enough in the
+    // past that only a genuinely-written last_dispatched_at can save
+    // the next scan from declaring a leak.
+    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
+
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $group = PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->addDay(),
+        'queue_version' => 1,
+    ]);
+    Post::create([
+        'post_group_id' => $group->id,
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'order' => 0,
+        'content' => 'two-tick leak bound via PostGroupService',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+
+    fakeProvider()->failNextPostTransiently('simulated network blip');
+
+    // The "dispatch": a reschedule to a date already deep in the past
+    // (never something a real FormRequest would allow, but
+    // PostGroupService::updateDate() itself places no such
+    // restriction — this proves the SERVICE's own write, independent
+    // of request-layer validation). Sync queue runs the dispatched
+    // PublishPostJob inline; it hits the transient failure and
+    // release()s without finishing, leaving the ShouldBeUnique lock
+    // held.
+    OrganizationContext::set($org);
+    app(PostGroupService::class)->updateDate($group, now()->subSeconds($uniqueFor + 600));
+    OrganizationContext::clear();
+
+    $afterDispatch = $group->fresh();
+    expect($afterDispatch->last_dispatched_at)->not->toBeNull()
+        ->and($afterDispatch->state)->toBe(PostState::QUEUE);
+
+    // The scan must find nothing to complain about: the lock from the
+    // updateDate()-triggered dispatch is still genuinely held, and
+    // lockCouldStillBeLegitimate() must read it as legitimate off the
+    // last_dispatched_at PostGroupService actually wrote — not declare
+    // a leak, not force-release, not redispatch again.
+    Log::shouldReceive('error')->never();
+    Log::shouldReceive('warning')->never();
+
+    app(MissedPostsService::class)->scan();
 });
 
 // --- Never double-publishes, proven with real OS-level concurrency ---------
