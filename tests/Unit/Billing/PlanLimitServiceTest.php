@@ -1,0 +1,169 @@
+<?php
+
+use App\Enums\OrganizationRole;
+use App\Enums\Plan;
+use App\Enums\PlanLimit;
+use App\Models\Integration;
+use App\Models\Media;
+use App\Models\Organization;
+use App\Models\OrganizationUser;
+use App\Models\PlanUsage;
+use App\Models\User;
+use App\Services\Billing\Exceptions\PlanLimitExceededException;
+use App\Services\Billing\PlanLimitService;
+use App\Services\Billing\PlanRegistry;
+use App\Support\OrganizationContext;
+use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Str;
+
+afterEach(function () {
+    // These tests are Unit (no RefreshDatabase, see tests/Pest.php) and
+    // several call OrganizationContext::set() directly -- clearing it here
+    // matches BelongsToOrganizationTest's convention and stops that static
+    // state from leaking into whichever test runs next in this process
+    // (see ResolveOrganizationMiddlewareTest, which asserts an empty
+    // context and previously failed only when run after this file).
+    OrganizationContext::clear();
+});
+
+it('falls back to the free plan for an organization without a plan', function () {
+    $org = Organization::factory()->create(['plan' => null]);
+
+    expect(app(PlanRegistry::class)->forOrganization($org)['name'])->toBe('Free');
+});
+
+it('allows creation within the plan limit', function () {
+    $org = Organization::factory()->create(['plan' => 'free']); // 2 channels
+    OrganizationContext::set($org);
+    Integration::factory()->for($org)->create();
+
+    app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS); // does not throw
+})->throwsNoExceptions();
+
+it('throws when the channel limit is reached', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+    OrganizationContext::set($org);
+    Integration::factory()->for($org)->count(2)->create();
+
+    app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS);
+})->throws(PlanLimitExceededException::class);
+
+it('treats a null limit as unlimited', function () {
+    $org = Organization::factory()->create(['plan' => 'pro']);
+    OrganizationContext::set($org);
+
+    PlanUsage::factory()->create([
+        'organization_id' => $org->id,
+        'metric' => PlanLimit::POSTS_PER_MONTH->value,
+        'period' => Date::now('UTC')->format('Y-m'),
+        'count' => 10_000,
+    ]);
+
+    app(PlanLimitService::class)->check($org, PlanLimit::POSTS_PER_MONTH);
+})->throwsNoExceptions();
+
+it('ignores soft-deleted integrations in the channel count', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+    OrganizationContext::set($org);
+
+    Integration::factory()->for($org)->create();
+    $deleted = Integration::factory()->for($org)->create();
+    $deleted->delete();
+
+    // Only one live integration remains against a limit of 2 -- adding
+    // one more must not throw, proving the soft-deleted row is not
+    // counted.
+    app(PlanLimitService::class)->check($org, PlanLimit::CHANNELS);
+
+    expect(app(PlanLimitService::class)->usage($org)[PlanLimit::CHANNELS->value]['current'])->toBe(1);
+});
+
+it('resets the monthly post counter in a new period', function () {
+    $org = Organization::factory()->create(['plan' => 'free']); // 30 posts/month
+    OrganizationContext::set($org);
+
+    PlanUsage::factory()->create([
+        'organization_id' => $org->id,
+        'metric' => PlanLimit::POSTS_PER_MONTH->value,
+        'period' => '2020-01',
+        'count' => 30,
+    ]);
+
+    // A stale period at the limit must not affect the current period.
+    app(PlanLimitService::class)->check($org, PlanLimit::POSTS_PER_MONTH);
+
+    expect(app(PlanLimitService::class)->usage($org)[PlanLimit::POSTS_PER_MONTH->value]['current'])->toBe(1);
+});
+
+it('changes the plan through the console command', function () {
+    $org = Organization::factory()->create(['plan' => 'free']);
+
+    $this->artisan("org:plan {$org->id} pro")->assertSuccessful();
+
+    expect($org->fresh()->plan)->toBe(Plan::PRO);
+});
+
+it('sums media storage from size_bytes only, in whole megabytes', function () {
+    $org = Organization::factory()->create(['plan' => 'free']); // 200 MB
+    OrganizationContext::set($org);
+
+    Media::factory()->for($org)->create(['size_bytes' => 150 * 1024 * 1024]);
+
+    app(PlanLimitService::class)->check($org, PlanLimit::MEDIA_STORAGE_MB, 50); // 150 + 50 = 200, exactly at the limit
+
+    expect(fn () => app(PlanLimitService::class)->check($org, PlanLimit::MEDIA_STORAGE_MB, 51))
+        ->toThrow(PlanLimitExceededException::class);
+});
+
+it('never lets two concurrent post creations both pass a limit of one', function () {
+    // Sequential Pest/HTTP calls can never reproduce this race -- each
+    // call's transaction fully commits before the next one starts. See
+    // raceConcurrently() in tests/Pest.php and SignaturesTest's identical
+    // rationale for its own default-signature race.
+    config(['database.connections.race' => config('database.connections.pgsql')]);
+    DB::purge('race');
+
+    $owner = raceCreate(User::class, ['name' => 'Plan Race Owner', 'email' => 'plan-race-owner-'.Str::random(10).'@example.com', 'password' => 'irrelevant-hash']);
+    $organization = raceCreate(Organization::class, ['name' => 'Plan Race Co', 'slug' => 'plan-race-co-'.Str::lower(Str::random(10)), 'owner_id' => $owner->id, 'plan' => 'free']);
+    raceCreate(OrganizationUser::class, ['organization_id' => $organization->id, 'user_id' => $owner->id, 'role' => OrganizationRole::ADMIN]);
+
+    $originalLimits = config('plans.free.limits');
+    config(['plans.free.limits' => array_merge($originalLimits, ['posts_per_month' => 1])]);
+
+    $organizationId = $organization->id;
+    $racerCount = 5;
+
+    try {
+        $racers = array_map(
+            fn () => function () use ($organizationId) {
+                $organization = Organization::findOrFail($organizationId);
+
+                app(PlanLimitService::class)->check($organization, PlanLimit::POSTS_PER_MONTH);
+            },
+            range(1, $racerCount),
+        );
+
+        $results = raceConcurrently($racers);
+
+        $succeeded = array_filter($results, fn ($r) => $r === 'ok');
+        $failed = array_filter($results, fn ($r) => $r !== 'ok');
+
+        expect($succeeded)->toHaveCount(1);
+        foreach ($failed as $result) {
+            expect($result)->toBe('fail:App\Services\Billing\Exceptions\PlanLimitExceededException');
+        }
+
+        $count = DB::connection('race')->table('plan_usages')
+            ->where('organization_id', $organizationId)
+            ->where('metric', PlanLimit::POSTS_PER_MONTH->value)
+            ->value('count');
+
+        expect((int) $count)->toBe(1);
+    } finally {
+        config(['plans.free.limits' => $originalLimits]);
+        DB::connection('race')->table('plan_usages')->where('organization_id', $organizationId)->delete();
+        DB::connection('race')->table('organization_user')->where('organization_id', $organizationId)->delete();
+        DB::connection('race')->table('organizations')->where('id', $organizationId)->delete();
+        DB::connection('race')->table('users')->where('id', $owner->id)->delete();
+    }
+});

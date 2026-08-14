@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Casts\PlanCast;
 use App\Enums\OrganizationRole;
+use App\Enums\Plan;
 use Database\Factories\OrganizationFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -15,6 +17,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  * @property string $name
  * @property string $slug
  * @property string $owner_id
+ * @property Plan|null $plan
  */
 class Organization extends Model
 {
@@ -22,7 +25,17 @@ class Organization extends Model
     use HasFactory, HasUlids;
 
     /** @var list<string> */
-    protected $fillable = ['name', 'slug', 'owner_id'];
+    protected $fillable = ['name', 'slug', 'owner_id', 'plan'];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'plan' => PlanCast::class,
+        ];
+    }
 
     /**
      * @return BelongsTo<User, $this>
