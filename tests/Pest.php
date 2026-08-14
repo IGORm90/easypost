@@ -1,11 +1,17 @@
 <?php
 
 use App\Enums\OrganizationRole;
+use App\Enums\PostState;
+use App\Models\Integration;
 use App\Models\Organization;
+use App\Models\Post;
+use App\Models\PostGroup;
 use App\Models\User;
+use App\Social\ProviderRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Tests\Support\FakeProvider;
 use Tests\TestCase;
 
 pest()->extend(TestCase::class)->use(RefreshDatabase::class)->in('Feature');
@@ -163,4 +169,76 @@ function raceCreate(string $class, array $attributes)
     $model->setConnection('race')->save();
 
     return $model;
+}
+
+/*
+ * Publishing-pipeline fixtures.
+ *
+ * These three lived in `tests/Unit/Social/FakeProviderTest.php` and
+ * `tests/Feature/Publishing/PublishPostJobTest.php` and were used from
+ * three other test files, which only worked on a FULL-suite run: Pest
+ * preloads every test file then, but running a subset
+ * (`php artisan test tests/Feature/Publishing`) loads only that subset,
+ * so every user of a helper declared elsewhere died with "Call to
+ * undefined function". `tests/Pest.php` is loaded for every run,
+ * whatever subset — which is what makes bisecting this pipeline
+ * possible.
+ */
+
+/**
+ * The 'fake' provider (registered in Tests\TestCase::setUp()), reset to a
+ * clean slate — no queued failures, no recorded calls.
+ */
+function fakeProvider(): FakeProvider
+{
+    /** @var FakeProvider $provider */
+    $provider = app(ProviderRegistry::class)->get('fake');
+
+    return $provider->reset();
+}
+
+/**
+ * Builds one channel: a fake-provider Integration plus an ordered chain
+ * of Post rows (a thread) under $group, all starting in QUEUE with no
+ * release_id.
+ *
+ * @param  list<string>  $contents
+ * @return array{0: Integration, 1: list<Post>}
+ */
+function publishableChannel(Organization $org, PostGroup $group, array $contents = ['hello world']): array
+{
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'fake',
+    ]);
+
+    $parentId = null;
+    $posts = [];
+
+    foreach ($contents as $index => $content) {
+        $post = Post::create([
+            'post_group_id' => $group->id,
+            'organization_id' => $org->id,
+            'integration_id' => $integration->id,
+            'parent_post_id' => $parentId,
+            'order' => $index,
+            'content' => $content,
+            'settings' => [],
+            'state' => PostState::QUEUE,
+        ]);
+
+        $parentId = $post->id;
+        $posts[] = $post;
+    }
+
+    return [$integration, $posts];
+}
+
+function queuedGroup(Organization $org, ?DateTimeInterface $publishDate = null): PostGroup
+{
+    return PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::QUEUE,
+        'publish_date' => $publishDate ?? now(),
+    ]);
 }

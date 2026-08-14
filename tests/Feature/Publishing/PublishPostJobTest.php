@@ -44,51 +44,12 @@ afterEach(function () {
     OrganizationContext::clear();
 });
 
-/**
- * Builds one channel: a fake-provider Integration plus an ordered chain
- * of Post rows (a thread) under $group, all starting in QUEUE with no
- * release_id.
- *
- * @param  list<string>  $contents
- * @return array{0: Integration, 1: list<Post>}
+/*
+ * `publishableChannel()` and `queuedGroup()` used to be declared here;
+ * they now live in `tests/Pest.php` (which is loaded for every run,
+ * unlike a test file, which is only preloaded on a full-suite run) —
+ * see the note there.
  */
-function publishableChannel(Organization $org, PostGroup $group, array $contents = ['hello world']): array
-{
-    $integration = Integration::factory()->create([
-        'organization_id' => $org->id,
-        'provider_identifier' => 'fake',
-    ]);
-
-    $parentId = null;
-    $posts = [];
-
-    foreach ($contents as $index => $content) {
-        $post = Post::create([
-            'post_group_id' => $group->id,
-            'organization_id' => $org->id,
-            'integration_id' => $integration->id,
-            'parent_post_id' => $parentId,
-            'order' => $index,
-            'content' => $content,
-            'settings' => [],
-            'state' => PostState::QUEUE,
-        ]);
-
-        $parentId = $post->id;
-        $posts[] = $post;
-    }
-
-    return [$integration, $posts];
-}
-
-function queuedGroup(Organization $org, ?DateTimeInterface $publishDate = null): PostGroup
-{
-    return PostGroup::factory()->create([
-        'organization_id' => $org->id,
-        'state' => PostState::QUEUE,
-        'publish_date' => $publishDate ?? now(),
-    ]);
-}
 
 it('publishes every channel in the group and marks it published', function () {
     $provider = fakeProvider();

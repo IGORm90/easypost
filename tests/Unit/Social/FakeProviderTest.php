@@ -8,16 +8,16 @@ use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
 use App\Social\Exceptions\ProviderTransientException;
-use App\Social\ProviderRegistry;
-use Tests\Support\FakeProvider;
 
-function fakeProvider(): FakeProvider
-{
-    /** @var FakeProvider $provider */
-    $provider = app(ProviderRegistry::class)->get('fake');
-
-    return $provider->reset();
-}
+/*
+ * `fakeProvider()` used to be declared here; it now lives in
+ * `tests/Pest.php` alongside the other publishing fixtures. Pest only
+ * preloads every test file on a FULL-suite run, so a helper declared in
+ * one test file is undefined the moment anyone runs a single directory
+ * (`php artisan test tests/Feature/Publishing` failed with 25 "Call to
+ * undefined function fakeProvider()" errors) — `tests/Pest.php` is
+ * always loaded, whatever subset is being run.
+ */
 
 it('publishes a chain and records one result per segment, keyed by index', function () {
     $provider = fakeProvider();
