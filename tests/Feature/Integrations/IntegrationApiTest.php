@@ -391,6 +391,46 @@ it('rejects update for a non-admin member with the same 403 shape as any other o
 
 // --- disable / enable / delete --------------------------------------------
 
+// Final review, Critical 2: IntegrationResource::time_slots is
+// whenLoaded('timeSlots'), so an unloaded relation makes the key vanish
+// from the payload entirely rather than come back empty. The SPA store
+// splices that object over the one it holds, ChannelSettingsDrawer seeds
+// its slot grid from `integration.time_slots ?? []`, and the next Save
+// PUTs `time_slots: []` — deleting every slot the channel had. Toggling a
+// channel off and on must never be able to arm that.
+it('keeps time_slots in the payload when disabling and re-enabling a channel', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create(['organization_id' => $org->id]);
+    $integration->timeSlots()->create(['minutes_from_week_start' => 540]);
+    $integration->timeSlots()->create(['minutes_from_week_start' => 1980]);
+    actingAsMember($org, 'ADMIN');
+
+    $disabled = $this->postJson("/api/integrations/{$integration->id}/disable")->assertOk();
+    expect($disabled->json('time_slots'))->toEqualCanonicalizing([540, 1980]);
+
+    $enabled = $this->postJson("/api/integrations/{$integration->id}/enable")->assertOk();
+    expect($enabled->json('time_slots'))->toEqualCanonicalizing([540, 1980]);
+});
+
+it('keeps time_slots in the payload when a channel is reconnected through the callback', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'fake',
+        'internal_id' => 'acct-1',
+    ]);
+    $integration->timeSlots()->create(['minutes_from_week_start' => 540]);
+    $flow = startFakeConnectFlow($org);
+
+    $response = $this->postJson('/api/integrations/fake/callback', [
+        'state' => $flow['state'],
+        'internal_id' => 'acct-1',
+    ])->assertSuccessful();
+
+    expect($response->json('id'))->toBe($integration->id)
+        ->and($response->json('time_slots'))->toEqualCanonicalizing([540]);
+});
+
 it('disables and re-enables a channel', function () {
     $org = Organization::factory()->create();
     $integration = Integration::factory()->create(['organization_id' => $org->id]);

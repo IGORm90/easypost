@@ -110,13 +110,10 @@ export const useIntegrationsStore = defineStore('integrations', {
          */
         async completeCallback(provider: string, payload: Record<string, unknown>): Promise<Integration> {
             const { data } = await api.post<Integration>(`/integrations/${provider}/callback`, payload);
-            const index = this.list.findIndex((integration) => integration.id === data.id);
-
-            if (index === -1) {
-                this.list.push(data);
-            } else {
-                this.list.splice(index, 1, data);
-            }
+            // Through replace(), not an inline splice: the reconnect case
+            // must keep an already-held schedule when the payload omits
+            // `time_slots` — see replace()'s docblock.
+            this.replace(data);
 
             return data;
         },
@@ -168,14 +165,33 @@ export const useIntegrationsStore = defineStore('integrations', {
             }
         },
 
+        /**
+         * Upserts `integration` into `list`. `time_slots` is merged, not
+         * clobbered: the server renders it with whenLoaded(), so an
+         * endpoint that returns a channel without eager-loading the
+         * relation omits the key entirely rather than sending an empty
+         * array. Overwriting the held schedule with `undefined` makes the
+         * settings drawer render an empty slot grid, and the next Save
+         * PUTs `time_slots: []` and deletes every slot — silently. An
+         * explicitly empty array still applies: clearing a schedule is a
+         * real outcome, "the key is absent" is not.
+         */
         replace(integration: Integration): void {
             const index = this.list.findIndex((item) => item.id === integration.id);
 
             if (index === -1) {
                 this.list.push(integration);
-            } else {
-                this.list.splice(index, 1, integration);
+
+                return;
             }
+
+            const held = this.list[index];
+            const merged: Integration =
+                integration.time_slots === undefined && held.time_slots !== undefined
+                    ? { ...integration, time_slots: held.time_slots }
+                    : integration;
+
+            this.list.splice(index, 1, merged);
         },
     },
 });

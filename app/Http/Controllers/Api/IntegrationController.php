@@ -162,7 +162,14 @@ class IntegrationController extends Controller
 
         $integration = $this->integrations->connect($organization, $providerInstance->identifier(), $auth);
 
-        return response()->json(new IntegrationResource($integration), Response::HTTP_CREATED);
+        // fresh('timeSlots'), not fresh(): IntegrationResource::time_slots
+        // is whenLoaded(), so an unloaded relation drops the key from the
+        // payload entirely instead of returning it empty. The SPA store
+        // splices this object over the one it holds, and the settings
+        // drawer then seeds its slot grid from a missing key — arming the
+        // next Save to PUT an empty time_slots and delete every slot the
+        // channel had. Reconnecting a channel must never do that.
+        return response()->json(new IntegrationResource($integration->fresh('timeSlots') ?? $integration), Response::HTTP_CREATED);
     }
 
     public function update(UpdateIntegrationRequest $request, string $id): JsonResponse
@@ -178,7 +185,9 @@ class IntegrationController extends Controller
         $integration = $this->findAuthorized($id, 'manage');
         $this->integrations->disable($integration);
 
-        return response()->json(new IntegrationResource($integration->fresh() ?? $integration));
+        // fresh('timeSlots') — see connect()'s note above: a bare fresh()
+        // omits the key and silently arms a schedule wipe.
+        return response()->json(new IntegrationResource($integration->fresh('timeSlots') ?? $integration));
     }
 
     public function enable(string $id): JsonResponse
@@ -186,7 +195,8 @@ class IntegrationController extends Controller
         $integration = $this->findAuthorized($id, 'manage');
         $this->integrations->enable($integration);
 
-        return response()->json(new IntegrationResource($integration->fresh() ?? $integration));
+        // fresh('timeSlots') — see connect()'s note above.
+        return response()->json(new IntegrationResource($integration->fresh('timeSlots') ?? $integration));
     }
 
     public function destroy(string $id): Response

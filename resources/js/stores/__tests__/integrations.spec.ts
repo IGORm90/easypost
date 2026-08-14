@@ -161,6 +161,36 @@ it('update() sends a PUT and replaces the channel in list with the response', as
   expect(store.list).toEqual([updated])
 })
 
+// Final review, Critical 2: `time_slots` is whenLoaded() server-side, so
+// any endpoint that forgets to load the relation returns an object with
+// the key missing rather than empty. Clobbering the held channel with
+// that object makes the settings drawer render an empty slot grid, and
+// the next Save wipes the real schedule. The server side is fixed, but
+// the store must not be the single point of failure for it either.
+it('replace() keeps the time_slots it already holds when the incoming payload omits the key', async () => {
+  const { useIntegrationsStore } = await import('../integrations')
+  const store = useIntegrationsStore()
+  store.$patch({ list: [{ ...channelA, time_slots: [540, 1980] }] })
+
+  const withoutSlots: Record<string, unknown> = { ...channelA, disabled: true }
+  delete withoutSlots.time_slots
+
+  store.replace(withoutSlots as never)
+
+  expect(store.list[0].disabled).toBe(true)
+  expect(store.list[0].time_slots).toEqual([540, 1980])
+})
+
+it('replace() still applies an explicitly empty time_slots — clearing a schedule is a real outcome', async () => {
+  const { useIntegrationsStore } = await import('../integrations')
+  const store = useIntegrationsStore()
+  store.$patch({ list: [{ ...channelA, time_slots: [540] }] })
+
+  store.replace({ ...channelA, time_slots: [] })
+
+  expect(store.list[0].time_slots).toEqual([])
+})
+
 it('toggle() disables an enabled channel', async () => {
   const { useIntegrationsStore } = await import('../integrations')
   const store = useIntegrationsStore()
