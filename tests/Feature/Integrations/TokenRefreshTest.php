@@ -221,7 +221,17 @@ it('caps a rate-limit release delay at THIS attempt\'s own schedule position, no
 
     /** @var RefreshIntegrationTokenJob&MockInterface $job */
     $job = Mockery::mock(RefreshIntegrationTokenJob::class, [$integration])->makePartial();
-    $expectedDelay = $job->backoff()[0];
+
+    // 30, written out, not `$job->backoff()[0]` (final review, batch 4).
+    // Computing the expectation from the system under test means the
+    // assertion holds for whatever the schedule happens to say — if
+    // RETRY_BACKOFF_SECONDS were reordered or its first gap changed to
+    // an hour, this test would keep passing while the behaviour it
+    // describes ("clamp to THIS attempt's own position", the first) had
+    // silently changed. The literal is checked against the schedule just
+    // below, so a deliberate change fails here and says so.
+    $expectedDelay = 30;
+    expect($job->backoff()[0])->toBe($expectedDelay, 'the first backoff gap changed — update this test deliberately');
     $job->shouldReceive('release')->once()->with($expectedDelay);
 
     $job->handle(app(TokenRefreshService::class));

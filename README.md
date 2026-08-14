@@ -174,10 +174,20 @@ Backend (inside the `php` container):
 ```bash
 make test                          # ./vendor/bin/pest style run via artisan, ensures app_test exists first
 ./vendor/bin/pest                  # same, run directly
-./vendor/bin/phpstan analyse       # static analysis
+php -d memory_limit=1G ./vendor/bin/phpstan analyse   # static analysis
 ./vendor/bin/pint --test           # code style check (add --test to check, drop it to fix)
 composer audit                     # dependency vulnerability check
 ```
+
+`-d memory_limit=1G` is not optional: PHPStan needs more than PHP's 128M
+default to analyse this codebase and dies with an out-of-memory **fatal**
+rather than a finding, which reads like a broken tool rather than a
+too-small limit. CI passes the same flag.
+
+`composer audit` is deliberately **not** wired into CI — it fails on
+whatever advisory happens to be published that morning, including ones
+with no fix available, which turns a green build into a coin toss. Run it
+before a release and read the output.
 
 Frontend (inside the `node` container, or locally with Node 22+):
 

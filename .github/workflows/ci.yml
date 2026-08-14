@@ -71,10 +71,26 @@ jobs:
         run: ./vendor/bin/pint --test
 
       - name: Static analysis (PHPStan)
-        run: ./vendor/bin/phpstan analyse
+        # -d memory_limit: PHPStan needs more than PHP's 128M default to
+        # analyse this codebase and dies with an out-of-memory fatal
+        # rather than a finding. Set here (and documented in README) so a
+        # contributor running it locally hits the same ceiling CI does.
+        run: php -d memory_limit=1G ./vendor/bin/phpstan analyse
 
       - name: Run tests (Pest)
         run: ./vendor/bin/pest
+
+      # Every one of the 25 migrations defines a down(), and until this
+      # step nothing ever ran one: the suite uses RefreshDatabase, which
+      # is migrate:fresh, and no CI job rolled back. A down() that has
+      # never executed is not a rollback path, it is an untested
+      # assertion that one exists — and the first time it matters is the
+      # worst time to find out. Final review, batch 4.
+      - name: Migrations roll back and re-apply
+        run: |
+          php artisan migrate --force
+          php artisan migrate:rollback --step=100 --force
+          php artisan migrate --force
 
       - name: Setup Node
         uses: actions/setup-node@v4

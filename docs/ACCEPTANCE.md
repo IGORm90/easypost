@@ -208,3 +208,51 @@ Tailwind classes — see above):
   never conveyed by color alone — an icon, label, or shape difference must
   also be present, so the status is legible to a colorblind user or in a
   screenshot printed in grayscale.
+
+## Backend built, no UI yet
+
+Recorded at MVP close-out (final review, batch 4) so the next reader does
+not assume these are live. Each is reachable, tested and tenant-scoped;
+what none of them has is anything in the SPA that calls it. They are
+groundwork, not features — do not include them in an acceptance pass, and
+do not treat their absence from the UI as a regression.
+
+| Surface | Routes | State |
+| --- | --- | --- |
+| Comments | `GET`/`POST /api/posts/{group}/comments` | The whole subsystem — controller, service, resource, request, migration and tests — has no SPA caller. Task 22 built the API; the commenting UI was never in the plan. |
+| Duplicate a post | `POST /api/posts/{group}/duplicate` | No caller. |
+| Impersonation | `POST /api/admin/impersonate/{user}`, `.../stop` | No caller. There is no admin screen; a SUPERADMIN would have to call it directly. |
+| Share-link minting | `POST /api/posts/{group}/share` | The *viewer* is built and routed (`/share/:token`, `Public/SharedPost.vue`); the button that mints the link is not. A share link can only be created by calling the API. |
+| Tag / set / signature editing | `POST`/`PUT`/`DELETE` on `/api/tags`, `/api/sets`, `/api/signatures` | `GET` is consumed (the calendar's tag filter, the editor's set and signature pickers); nothing in the SPA creates, renames or deletes any of the three. |
+
+Two related notes, checked rather than carried over:
+
+- `POST /api/media/from-url` **is** wired end to end — `stores/media.ts`'s
+  `uploadFromUrl()` is called by `MediaUploader.vue`. An earlier review
+  round recorded it as having no caller; that is no longer true. It does
+  remain scope that was never in the plan.
+- `PlanLimitService::usage()` and the failed-publish list were on this
+  list and have since been built — see the plan panel on the team screen
+  and the error banner above the calendar (§8).
+
+## What the automated gates do not cover
+
+Checked at MVP close-out (final review, batch 4). These are the seams where
+a green suite genuinely means less than it appears to, so an acceptance
+pass should exercise them by hand.
+
+- **Calendar drag-and-drop, through FullCalendar itself.** The decision
+  logic *is* gated: `CalendarGrid.spec` pulls the options object off a
+  stubbed `<FullCalendar>` and calls `eventAllow` and `eventDrop` directly,
+  covering the locked/unlocked branches, the 409 publish race, and the
+  no-revert-on-success path. What no test covers is FullCalendar actually
+  invoking those callbacks — the library is stubbed out, so a wrong option
+  name or a version bump that renames a hook would pass. Drag a post in a
+  browser (§3) rather than trusting the suite here.
+- **`MvpFlowTest` is not end to end**, and its own docblock says so: it
+  runs against the `fake` provider with `Queue::fake()`, so it proves the
+  application's own wiring, never a real provider call or a real worker.
+- **The real object-storage write path.** CI never provisions MinIO, so no
+  CI job uploads a file to S3-compatible storage; the media tests use
+  `Storage::fake('media')`. Uploading through the UI locally (§5) is the
+  only thing that exercises it.
