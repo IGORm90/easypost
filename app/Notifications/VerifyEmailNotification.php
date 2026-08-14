@@ -22,6 +22,14 @@ class VerifyEmailNotification extends Notification implements ShouldQueue
 
     private const EXPIRE_MINUTES = 60;
 
+    public function __construct()
+    {
+        // Task 34: routes to the `mail` queue — see
+        // `PostFailedNotification`'s constructor for why this is
+        // assigned here rather than as a property default.
+        $this->queue = 'mail';
+    }
+
     /**
      * @return array<int, string>
      */

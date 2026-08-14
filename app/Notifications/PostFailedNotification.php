@@ -37,7 +37,33 @@ class PostFailedNotification extends Notification implements ShouldQueue
 
     public function __construct(
         public readonly PostGroup $group,
-    ) {}
+    ) {
+        // Task 34: routes to the `mail` queue (two dedicated workers —
+        // see config/horizon.php) without touching any dispatch call
+        // site. Assigned here, not as a property default: `Queueable`
+        // (used above) already declares `$queue` untyped with no
+        // default, and PHP treats a class-level redeclaration with a
+        // *different* default as an incompatible trait composition — a
+        // hard fatal at class-load time (verified directly against
+        // `PublishPostJob`'s identical case; see that class's
+        // constructor for the full explanation).
+        $this->queue = 'mail';
+    }
+
+    /**
+     * Task 34: Horizon tags. `$group` is already an in-memory model (see
+     * the class docblock), so this costs no extra query. Ids only — see
+     * `PublishPostJob::tags()`'s docblock for why.
+     *
+     * @return list<string>
+     */
+    public function tags(): array
+    {
+        return [
+            "organization:{$this->group->organization_id}",
+            "group:{$this->group->id}",
+        ];
+    }
 
     /**
      * @return array<int, string>

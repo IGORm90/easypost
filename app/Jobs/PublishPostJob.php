@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
 use App\Services\Posts\PublishService;
 use Illuminate\Bus\Queueable;
@@ -122,11 +123,60 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
     public function __construct(
         public readonly string $postGroupId,
         public readonly int $queueVersion,
-    ) {}
+    ) {
+        // Task 34: routes every dispatch to the `publish` queue without
+        // touching any call site (`PostGroupService::dispatchPublishIfQueued()`,
+        // `MissedPostsService::redispatchIfOrphaned()`) — neither sets
+        // `->onQueue()`, so this assignment is the only place that
+        // decides. Assigned in the constructor, not as a property
+        // default: `Queueable::$queue` is already declared (untyped, no
+        // default) by the trait this class uses, and PHP treats a
+        // class-level property redeclaration with a *different* default
+        // as an incompatible trait composition (a hard fatal error at
+        // class-load time, verified directly) — not merely an
+        // "override", despite that being allowed for e.g. visibility.
+        // See `config/horizon.php` for the ten dedicated workers behind
+        // this queue name.
+        $this->queue = 'publish';
+    }
 
     public function uniqueId(): string
     {
         return $this->postGroupId;
+    }
+
+    /**
+     * Task 34: Horizon tags, so a failed publish is findable in the UI
+     * by the group or the organization it belongs to. This job carries
+     * only `$postGroupId` (a bare string — see the class docblock's
+     * reasoning for why it is deliberately thin), so the organization id
+     * is not already in memory the way it is for
+     * `RefreshIntegrationTokenJob`'s `Integration`; deriving it costs one
+     * extra query, run once per dispatch (Horizon computes tags when the
+     * job is pushed onto the queue, not on every worker attempt — see
+     * `Laravel\Horizon\JobPayload::prepare()`), a single indexed lookup
+     * by primary key on `post_groups`. `withoutGlobalScopes()` — not a
+     * plain `PostGroup::find()` — for the same reason every other
+     * no-`OrganizationContext` read in this codebase uses it (see
+     * `BelongsToOrganization`'s docblock): a job dispatch has no tenant
+     * context set, and the scope fails closed to zero rows without it.
+     * Tags carry ids only, never names, emails, or tokens — see
+     * `config/horizon.php`'s docblock and Task 14's token-leak finding
+     * this rule exists to not repeat, since tags render in a web UI.
+     *
+     * @return list<string>
+     */
+    public function tags(): array
+    {
+        /** @var string|null $organizationId */
+        $organizationId = PostGroup::withoutGlobalScopes()
+            ->whereKey($this->postGroupId)
+            ->value('organization_id');
+
+        return array_values(array_filter([
+            $organizationId !== null ? "organization:{$organizationId}" : null,
+            "group:{$this->postGroupId}",
+        ]));
     }
 
     public function handle(PublishService $service): void

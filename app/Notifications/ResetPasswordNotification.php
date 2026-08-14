@@ -21,7 +21,13 @@ class ResetPasswordNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(public readonly string $token) {}
+    public function __construct(public readonly string $token)
+    {
+        // Task 34: routes to the `mail` queue — see
+        // `PostFailedNotification`'s constructor for why this is
+        // assigned here rather than as a property default.
+        $this->queue = 'mail';
+    }
 
     /**
      * @return array<int, string>

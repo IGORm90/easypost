@@ -34,7 +34,28 @@ class IntegrationBrokenNotification extends Notification implements ShouldQueue
 
     public function __construct(
         public readonly Integration $integration,
-    ) {}
+    ) {
+        // Task 34: routes to the `mail` queue — see
+        // `PostFailedNotification`'s constructor for why this is
+        // assigned here rather than as a property default.
+        $this->queue = 'mail';
+    }
+
+    /**
+     * Task 34: Horizon tags. `$integration` is already an in-memory
+     * model (see the class docblock), so this costs no extra query. Ids
+     * only — never `$integration->name`/`->token`/`->refresh_token` —
+     * see `PublishPostJob::tags()`'s docblock for why.
+     *
+     * @return list<string>
+     */
+    public function tags(): array
+    {
+        return [
+            "organization:{$this->integration->organization_id}",
+            "integration:{$this->integration->id}",
+        ];
+    }
 
     /**
      * @return array<int, string>

@@ -202,6 +202,25 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
     }
 
     /**
+     * Task 34: Horizon tags. Unlike `PublishPostJob`, no extra query —
+     * this job carries the `Integration` model itself (see the class
+     * docblock's "Carries the Integration model" paragraph), so
+     * `organization_id` is already an in-memory attribute. Ids only,
+     * never `$integration->name` or any token field — see
+     * `config/horizon.php`'s docblock on why tags never carry anything
+     * that could leak through the Horizon UI.
+     *
+     * @return list<string>
+     */
+    public function tags(): array
+    {
+        return [
+            "organization:{$this->integration->organization_id}",
+            "integration:{$this->integration->id}",
+        ];
+    }
+
+    /**
      * Derived from RETRY_BACKOFF_SECONDS (see maxInFlightSeconds()), NOT
      * a hand-written constant — see the class docblock's "uniqueFor()
      * MUST cover..." section for the race this guards against. A lock
