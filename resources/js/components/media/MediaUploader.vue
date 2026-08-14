@@ -152,7 +152,21 @@ async function submitUrl(): Promise<void> {
         </div>
 
         <form class="flex gap-2" @submit.prevent="submitUrl">
-            <Input :model-value="urlValue" type="url" :placeholder="t('media.uploader.urlPlaceholder')" class="flex-1" @update:model-value="urlValue = $event" />
+            <!--
+                The `flex-1` sits on this wrapper, not on the field: Input sets
+                `inheritAttrs: false` and binds $attrs to the inner <input>,
+                so a class passed to it lands there and never stretches the
+                component's own wrapping <div> in this flex row.
+            -->
+            <div class="flex-1">
+                <Input
+                    :model-value="urlValue"
+                    type="url"
+                    :aria-label="t('media.uploader.urlPlaceholder')"
+                    :placeholder="t('media.uploader.urlPlaceholder')"
+                    @update:model-value="urlValue = $event"
+                />
+            </div>
             <Button variant="secondary" type="submit" :loading="urlSubmitting" :disabled="!urlValue.trim()">
                 {{ t('media.uploader.importUrl') }}
             </Button>

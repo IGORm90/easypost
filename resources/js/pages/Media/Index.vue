@@ -94,7 +94,13 @@ async function remove(id: string): Promise<void> {
 
             <MediaUploader />
 
-            <Input :model-value="searchInput" type="search" :placeholder="t('media.search')" @update:model-value="onSearchInput" />
+            <Input
+                :model-value="searchInput"
+                type="search"
+                :aria-label="t('media.search')"
+                :placeholder="t('media.search')"
+                @update:model-value="onSearchInput"
+            />
 
             <p v-if="loading" class="text-sm text-muted">{{ t('ui.loading') }}</p>
             <MediaGrid v-else :items="store.items" deletable :empty-message="t('media.empty')" @delete="remove" />

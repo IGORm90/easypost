@@ -194,7 +194,13 @@ function cancel(): void {
         <div class="flex max-h-[70vh] flex-col gap-3 overflow-y-auto">
             <MediaUploader @uploaded="onUploaded" />
 
-            <Input :model-value="searchInput" type="search" :placeholder="t('media.search')" @update:model-value="onSearchInput" />
+            <Input
+                :model-value="searchInput"
+                type="search"
+                :aria-label="t('media.search')"
+                :placeholder="t('media.search')"
+                @update:model-value="onSearchInput"
+            />
 
             <Toast v-if="loadError" variant="danger" @dismiss="loadError = false">{{ t('media.loadError') }}</Toast>
 
