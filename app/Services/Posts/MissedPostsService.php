@@ -298,43 +298,78 @@ class MissedPostsService
      * time with a fixed TTL (`$uniqueFor`), independent of `->delay()`
      * (see `PostGroupService::dispatchPublishIfQueued()`'s docblock) —
      * so the absolute latest moment a lock belonging to a dispatch for
-     * THIS group's current `publish_date` could still be alive is
-     * `publish_date + $job->uniqueFor` (the best case: the dispatch call
-     * happened AT `publish_date`, i.e. an immediate/near-term
-     * dispatch — every other case, including the common "scheduled well
-     * ahead of time and never touched again" one, only expires EARLIER
-     * than that, never later). Once `now()` passes that point, a
-     * currently-held lock cannot belong to a still-legitimately-running
-     * attempt for this schedule generation, full stop.
+     * THIS group's current schedule generation could still be alive is
+     * (the moment that dispatch actually happened) + `$job->uniqueFor`.
+     *
+     * Post-review correction, round 2: an earlier revision anchored this
+     * bound on `publish_date` alone, reasoning "the best case is a
+     * dispatch call made AT `publish_date`, every other case expires
+     * earlier". That reasoning is false the moment a dispatch happens
+     * AFTER `publish_date` — which every `forceRedispatch: true` caller
+     * in `PostGroupService` does by construction (a reschedule to "now",
+     * a manual retry both dispatch well after the group's OLD
+     * `publish_date`), and which THIS CLASS's own `dispatchRedispatch()`
+     * does on every single call (dispatched at `now()`, no `->delay()`
+     * at all). The consequence the review traced: once `now() -
+     * publish_date` exceeds `$uniqueFor`, a `publish_date`-only bound
+     * declares a leak on EVERY tick forever, even for a lock this exact
+     * class's OWN previous tick just legitimately (re)acquired —
+     * force-releasing a live retry's lock and redispatching a redundant
+     * job every 10 minutes, `ShouldBeUnique` effectively disabled for
+     * that group, amplifying a backlog instead of draining it.
+     *
+     * Fixed by anchoring on `max(publish_date, last_dispatched_at)`
+     * instead — `last_dispatched_at` is written at the ONE moment that
+     * actually matters (dispatch time), by the ONLY two call sites that
+     * ever call `PublishPostJob::dispatch()` in this codebase
+     * (`PostGroupService::dispatchPublishIfQueued()` and this class's
+     * own `dispatchRedispatch()` below) — so a group this method itself
+     * redispatched last tick reads as freshly-dispatched THIS tick, not
+     * as perpetually stuck at its original `publish_date`.
      *
      * This bound is deliberately conservative in the OTHER direction: it
      * can still read "could be legitimate" for a lock that has, in
      * fact, already naturally expired well before `publish_date` (true
      * for any post originally scheduled more than `$uniqueFor` ahead of
-     * its own due date, which never gets a fresh dispatch/lock unless
-     * it is rescheduled or retried) — in that case this class's PROBE
-     * itself would already have found the lock absent and taken the
-     * "genuinely orphaned" branch above, so this method is never even
-     * consulted for it. This method only runs at all once the probe
-     * finds a lock PRESENT, so it only ever needs to decide "is this
-     * presence still plausible", never "should a lock exist here".
+     * its own due date and never touched again) — in that case this
+     * class's PROBE itself would already have found the lock absent and
+     * taken the "genuinely orphaned" branch above, so this method is
+     * never even consulted for it. This method only runs at all once
+     * the probe finds a lock PRESENT, so it only ever needs to decide
+     * "is this presence still plausible", never "should a lock exist
+     * here".
      */
     private function lockCouldStillBeLegitimate(PostGroup $group, PublishPostJob $job): bool
     {
-        if ($group->publish_date === null) {
+        $anchor = $group->last_dispatched_at !== null
+            && ($group->publish_date === null || $group->last_dispatched_at->isAfter($group->publish_date))
+            ? $group->last_dispatched_at
+            : $group->publish_date;
+
+        if ($anchor === null) {
             // Defensive only: redispatchOrphaned()'s own query already
             // requires publish_date < now() - OVERDUE_MINUTES, which a
-            // null column can never satisfy, so this branch is
-            // unreachable via that caller. Treated as "could still be
-            // legitimate" (never force-release) rather than guessing.
+            // null publish_date can never satisfy, so this branch is
+            // unreachable via that caller unless last_dispatched_at is
+            // ALSO null. Treated as "could still be legitimate" (never
+            // force-release) rather than guessing.
             return true;
         }
 
-        return $group->publish_date->isAfter(now()->subSeconds($job->uniqueFor));
+        return $anchor->isAfter(now()->subSeconds($job->uniqueFor));
     }
 
+    /**
+     * `last_dispatched_at` is stamped here BEFORE the dispatch call —
+     * see `lockCouldStillBeLegitimate()`'s docblock for why this is one
+     * of only two places in the codebase that ever needs to write it.
+     */
     private function dispatchRedispatch(PostGroup $group, string $logMessage): void
     {
+        PostGroup::withoutGlobalScope('organization')
+            ->whereKey($group->id)
+            ->update(['last_dispatched_at' => now()]);
+
         PublishPostJob::dispatch($group->id, $group->queue_version);
 
         Log::warning($logMessage, [
@@ -382,22 +417,40 @@ class MissedPostsService
      * writes is a short customer-facing sentence, not a raw exception
      * message.
      *
-     * The claim step is a single conditional `UPDATE ... WHERE
-     * notified_at IS NULL`, not a read-then-`save()` — post-review fix
-     * (finding 2). `ScanMissedPostsJob implements ShouldBeUnique` now
-     * makes two full scan EXECUTIONS overlapping unlikely, but that lock
-     * is a second layer, not the only one this method should lean on
-     * (see that job's and routes/console.php's docblocks for why
-     * `withoutOverlapping()`/`onOneServer()` alone do not cover a
-     * `Schedule::job()` push the way they cover a `Schedule::command()`
-     * run). A plain `UPDATE`'s `WHERE` clause is re-evaluated by
-     * Postgres against the row's current, post-lock-wait value before
-     * the write applies — the standard guarantee every `UPDATE`
-     * statement gives against a concurrent writer, independent of any
-     * scheduler-level mutex — so of two overlapping calls racing on the
-     * SAME group, only the one that is still first to see `notified_at
-     * IS NULL` at the moment its `UPDATE` actually executes affects a
-     * row; the other affects zero rows and must not send anything.
+     * The claim step is a single conditional `UPDATE ... WHERE state =
+     * 'ERROR' AND notified_at IS NULL`, not a read-then-`save()` —
+     * post-review fix (finding 2). `ScanMissedPostsJob implements
+     * ShouldBeUnique` now makes two full scan EXECUTIONS overlapping
+     * unlikely, but that lock is a second layer, not the only one this
+     * method should lean on (see that job's and routes/console.php's
+     * docblocks for why `withoutOverlapping()`/`onOneServer()` alone do
+     * not cover a `Schedule::job()` push the way they cover a
+     * `Schedule::command()` run). A plain `UPDATE`'s `WHERE` clause is
+     * re-evaluated by Postgres against the row's current, post-lock-wait
+     * value before the write applies — the standard guarantee every
+     * `UPDATE` statement gives against a concurrent writer, independent
+     * of any scheduler-level mutex — so of two overlapping calls racing
+     * on the SAME group, only the one that is still first to see
+     * `notified_at IS NULL` at the moment its `UPDATE` actually executes
+     * affects a row; the other affects zero rows and must not send
+     * anything.
+     *
+     * `state = 'ERROR'` in that same `WHERE` — post-review fix, round 2
+     * (folded into finding 2's original claim, since leaving it out
+     * reintroduces finding 1's Critical): `notifyFailed()`'s own SELECT
+     * and this claim's UPDATE are two separate statements, not one
+     * transaction, so a retry can land in between — the same
+     * `bumpQueueVersionIfQueuing()` call that clears `notified_at` also
+     * moves `state` back to `QUEUE`. Without this predicate, a claim
+     * landing in exactly that gap would stamp `notified_at` onto a row
+     * that is no longer `ERROR` at all, immediately after the reset that
+     * was supposed to make this group notifiable again — silently
+     * consuming the "notify once" slot for a retry that has not even
+     * failed yet, so the NEXT genuine failure never gets an email or an
+     * `error` message either. Re-asserting `state = 'ERROR'` here makes
+     * the claim a no-op in that window instead (0 rows affected,
+     * `$claimed !== 1`, nothing sent) — exactly like losing the race to
+     * another scan.
      */
     private function notifyOne(PostGroup $group): void
     {
@@ -405,6 +458,7 @@ class MissedPostsService
 
         $claimed = PostGroup::withoutGlobalScope('organization')
             ->whereKey($group->id)
+            ->where('state', PostState::ERROR->value)
             ->whereNull('notified_at')
             ->update(['error' => $error, 'notified_at' => now()]);
 

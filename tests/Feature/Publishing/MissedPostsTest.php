@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Notifications\PostFailedNotification;
 use App\Services\Posts\MissedPostsService;
 use App\Services\Posts\PostGroupService;
+use App\Services\Posts\PublishService;
 use App\Support\OrganizationContext;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Support\Facades\Cache;
@@ -49,6 +50,74 @@ function overdueGroup(Organization $org, ?DateTimeInterface $publishDate = null)
         'state' => PostState::QUEUE,
         'publish_date' => $publishDate ?? now()->subMinutes(20),
     ]);
+}
+
+/**
+ * Forks one child process per closure, each on its own fresh DB
+ * connection (see tests/Pest.php's raceConcurrently() docblock for why
+ * a forked child cannot safely reuse the parent's live PDO socket).
+ * Each closure's return value is cast to a string and prefixed 'ok:',
+ * written to a results file; a thrown Throwable is captured as
+ * 'fail:<message>' instead. Returns the raw per-closure strings, in
+ * order.
+ *
+ * A richer, purpose-built sibling of raceConcurrently()'s bare
+ * 'ok'/'fail' contract: these tests need to observe a NUMBER each racer
+ * produced (an affected-row count, a provider-call count) to prove
+ * their claim, not just whether the racer survived.
+ *
+ * @param  array<int, Closure(): mixed>  $closures
+ * @return array<int, string>
+ */
+function forkAndCollect(array $closures): array
+{
+    $resultDir = sys_get_temp_dir().'/missed-posts-fork-'.bin2hex(random_bytes(6));
+    mkdir($resultDir);
+
+    $pids = [];
+
+    foreach ($closures as $i => $closure) {
+        $pid = pcntl_fork();
+
+        if ($pid === -1) {
+            throw new RuntimeException('pcntl_fork() failed — cannot simulate concurrency.');
+        }
+
+        if ($pid === 0) {
+            $childConnection = 'race_fork_child_'.$i.'_'.getmypid();
+            config(['database.connections.'.$childConnection => config('database.connections.pgsql')]);
+            config(['database.default' => $childConnection]);
+
+            try {
+                $result = 'ok:'.$closure();
+            } catch (Throwable $e) {
+                $result = 'fail:'.$e->getMessage();
+            }
+
+            file_put_contents("{$resultDir}/{$i}", $result);
+
+            posix_kill(posix_getpid(), SIGKILL);
+        }
+
+        $pids[$i] = $pid;
+    }
+
+    foreach ($pids as $pid) {
+        pcntl_waitpid($pid, $status);
+    }
+
+    $results = [];
+
+    foreach (array_keys($closures) as $i) {
+        $results[$i] = trim((string) file_get_contents("{$resultDir}/{$i}"));
+    }
+
+    foreach (glob("{$resultDir}/*") ?: [] as $file) {
+        unlink($file);
+    }
+    rmdir($resultDir);
+
+    return $results;
 }
 
 // --- Redispatch: orphaned vs. fresh ----------------------------------------
@@ -216,24 +285,77 @@ it('does not treat a lock as leaked while it could still legitimately belong to 
     }
 });
 
+it('does not treat the scanner\'s own previous redispatch as a leak on the next tick', function () {
+    // Review finding (round 2, CRITICAL regression from round 1's fix):
+    // an earlier revision of lockCouldStillBeLegitimate() anchored the
+    // leak bound on publish_date alone. Since dispatchRedispatch() (and
+    // every forceRedispatch: true caller in PostGroupService) dispatches
+    // at now(), not at publish_date, that bound was wrong the moment a
+    // dispatch happens after publish_date — which is exactly what THIS
+    // CLASS's own redispatch does on every call. The traced consequence:
+    // once now() - publish_date exceeds uniqueFor, EVERY subsequent
+    // tick would declare a leak, force-release a lock a live retry
+    // chain (started by this class's own previous redispatch) still
+    // legitimately holds, and redispatch again — amplifying a backlog
+    // instead of draining it. publish_date here is deliberately set far
+    // enough in the past that the OLD bound would already have failed;
+    // last_dispatched_at (what a real prior redispatch would have
+    // stamped) is recent, which is what must save it now.
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
+    $group = overdueGroup($org, now()->subSeconds($uniqueFor + 600));
+    $group->update(['last_dispatched_at' => now()->subMinutes(5)]);
+
+    Log::shouldReceive('error')->never();
+    Log::shouldReceive('warning')->never();
+
+    $stillRetrying = new PublishPostJob($group->id, $group->queue_version);
+    $lock = Cache::lock(UniqueLock::getKey($stillRetrying), $uniqueFor);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        app(MissedPostsService::class)->scan();
+
+        Queue::assertNotPushed(PublishPostJob::class);
+    } finally {
+        $lock->release();
+    }
+});
+
 // --- Never double-publishes, proven with real OS-level concurrency ---------
 
-it('a scanner redispatch racing a genuinely in-flight publish never double-publishes', function () {
-    // Review finding 4: the previous version of this test returned at
-    // the lock probe before dispatch() was ever reached, so it proved
-    // nothing beyond the "mid-retry" test above it. This uses the
-    // project's real pcntl_fork() harness (tests/Pest.php) to force a
-    // genuine interleaving between an in-flight publish (racer 1,
-    // holding the exact per-row lock PublishService::publishChannel()
-    // takes) and the scanner's own redispatch path (racer 2) — proving
-    // the guarantee documented on MissedPostsService::redispatchIfOrphaned()
-    // holds under real concurrency, not just sequentially. Racer 1
-    // deliberately does NOT hold the ShouldBeUnique cache lock at all
-    // (simulating exactly the "lock already gone" state a leaked or
-    // naturally-expired lock leaves behind — see that method's
-    // docblock on far-scheduled posts), so the scanner's probe finds it
-    // free and dispatches for real: the per-row lock alone must be
-    // what prevents the double publish here, not the cache lock.
+it('a scanner redispatch racing a genuinely in-flight publish calls the provider exactly once, never double-publishing', function () {
+    // Review finding (round 2): the previous version of this test only
+    // asserted release_id was not overwritten via a racer that
+    // simulated "already published" through a raw DB write rather than
+    // an actual provider call — it would have passed vacuously even if
+    // the scanner's own dispatch had started no-oping for an unrelated
+    // reason (nothing would have called the provider at all, and the
+    // test would not have noticed). This version routes BOTH racers
+    // through the REAL publish path — PublishService::publishGroup(),
+    // the exact method PublishPostJob and the scanner's own redispatch
+    // both call — and asserts the fake provider was invoked exactly
+    // once in TOTAL, summed from each forked child's own count.
+    // fakeProvider() state does not cross the fork boundary (each child
+    // is an independent process from the moment it forks), so each
+    // child reports its own count back via forkAndCollect()'s results
+    // file, the same technique the notify-concurrency test below uses.
+    //
+    // Racer 1 stands in for "the ORIGINAL PublishPostJob attempt,
+    // already running" — it calls PublishService::publishGroup()
+    // directly, WITHOUT ever going through PublishPostJob::dispatch(),
+    // so it never acquires the ShouldBeUnique cache lock at all. This
+    // is deliberate: it proves the no-duplicate-publish guarantee holds
+    // even in the state this class's own docblock calls out as the
+    // genuinely dangerous one — the cache lock already gone (a leaked
+    // lock, or simply a far-scheduled post — see
+    // lockCouldStillBeLegitimate()'s docblock) while a real attempt is
+    // still in flight via Postgres's own per-row lock alone. Racer 2 is
+    // the scanner's redispatch path, exactly as production dispatches
+    // it (sync queue in tests runs the dispatched PublishPostJob
+    // inline).
     config(['database.connections.race' => config('database.connections.pgsql')]);
     DB::purge('race');
 
@@ -263,51 +385,45 @@ it('a scanner redispatch racing a genuinely in-flight publish never double-publi
     ]);
 
     try {
-        $racers = [
-            // "in-flight publish": locks the pending row exactly like
-            // PublishService::publishChannel()'s re-lock, holds it open
-            // briefly to widen the window, then commits release_id —
-            // WITHOUT ever touching PublishPostJob's ShouldBeUnique
-            // cache lock, so the scanner's probe genuinely finds
-            // nothing held.
-            function () use ($post, $organization) {
-                OrganizationContext::set(Organization::query()->findOrFail($organization->id));
-                DB::transaction(function () use ($post) {
-                    Post::query()->whereKey($post->id)->lockForUpdate()->firstOrFail();
-                    usleep(150_000);
-                    Post::query()->whereKey($post->id)->update([
-                        'release_id' => 'in-flight-release',
-                        'release_url' => 'https://fake.test/in-flight',
-                        'published_at' => now(),
-                        'state' => PostState::PUBLISHED->value,
-                    ]);
-                });
-            },
-            // "scanner redispatch": starts shortly after the in-flight
-            // racer has acquired its row lock but before it commits —
-            // exactly MissedPostsService's own redispatch path. Sync
-            // queue in tests means the dispatched PublishPostJob runs
-            // inline, synchronously, inside this same racer call.
-            function () {
-                usleep(40_000);
+        $results = forkAndCollect([
+            // fakeProvider() calls FakeProvider::reset() every time it
+            // is invoked (see tests/Unit/Social/FakeProviderTest.php) —
+            // deliberately called exactly ONCE per racer, before the
+            // action, and that SAME reference read afterward, never a
+            // second `fakeProvider()` call, which would silently wipe
+            // the very count this test needs to observe.
+            function () use ($group) {
                 OrganizationContext::clear();
-                app(MissedPostsService::class)->scan();
+                $provider = fakeProvider();
+
+                app(PublishService::class)->publishGroup($group->id, $group->queue_version);
+
+                return count($provider->publishedChains());
             },
-        ];
+            function () {
+                OrganizationContext::clear();
+                $provider = fakeProvider();
 
-        $results = raceConcurrently($racers);
+                app(MissedPostsService::class)->scan();
 
-        expect($results[0])->toBe('ok')
-            ->and($results[1])->toBe('ok');
+                return count($provider->publishedChains());
+            },
+        ]);
+
+        expect($results[0])->toStartWith('ok:')
+            ->and($results[1])->toStartWith('ok:');
+
+        $providerCallCounts = array_map(fn (string $r): int => (int) substr($r, 3), $results);
+
+        // The direct proof: however the two racers actually interleaved,
+        // the real fake provider was invoked exactly once in total —
+        // not zero (which would mean the test caught nothing), not two
+        // (a genuine double publish).
+        expect(array_sum($providerCallCounts))->toBe(1);
 
         $freshPost = Post::query()->withoutGlobalScope('organization')->whereKey($post->id)->first();
 
-        // If the redispatched job had attempted to publish this
-        // already-published row a second time, either the
-        // posts_release_id_immutable trigger would have raised (making
-        // racer 2 fail above) or release_id would have been overwritten
-        // — neither happened.
-        expect($freshPost->release_id)->toBe('in-flight-release')
+        expect($freshPost->release_id)->not->toBeNull()
             ->and($freshPost->state)->toBe(PostState::PUBLISHED);
     } finally {
         DB::connection('race')->table('posts')->where('post_group_id', $group->id)->delete();
@@ -502,18 +618,26 @@ it('resets notified_at on retry, so a group that fails again after being retried
 
 // --- Notify-once claim survives real concurrency (review finding 4) --------
 
-it('two genuinely concurrent scans claim a failed group\'s notification exactly once', function () {
-    // Real, OS-level concurrency (see tests/Pest.php's raceConcurrently()
-    // docblock) — proves MissedPostsService::notifyOne()'s conditional
-    // `UPDATE ... WHERE notified_at IS NULL` claim (review finding 2's
-    // fix) is actually exclusive under a genuine race, not merely
-    // "looks right reading the code". Each forked child issues the
-    // EXACT same statement notifyOne() does (duplicated here, not
-    // called through the private method, purely so each child can
-    // report its own affected-row count back to the parent) and writes
-    // that count to a results file. Sending is gated 1:1 on that count
-    // in production code, so the sum of both counts being exactly 1 is
-    // the direct proof at most one notification is ever sent.
+it('two genuinely concurrent scans notify a failed group exactly once', function () {
+    // Review finding (round 2): the previous version of this test
+    // duplicated notifyOne()'s UPDATE statement by hand and raced THAT
+    // — which proves Postgres's own semantics, not this codebase's
+    // implementation. Revert notifyOne() back to read-then-save() and
+    // that version would have stayed green. This version calls
+    // MissedPostsService::scan() itself — the real, unmodified
+    // production path — in both forked children, and asserts against
+    // Notification::fake()'s recorded sends, not a hand-rolled query.
+    //
+    // Notification::fake() is set up BEFORE forking: fork() duplicates
+    // the whole process, including the fake's (empty) in-memory
+    // recorder, into each child — from that point on each child's own
+    // scan() call mutates only ITS OWN independent copy, so
+    // Notification::sent() read back inside each child accurately
+    // reflects what THAT child's own execution actually sent, with no
+    // cross-process interference. Same forkAndCollect() results-file
+    // technique as the redispatch race test above, needed here because
+    // Notification::fake()'s state — like fakeProvider()'s — does not
+    // cross the fork boundary back to the parent process either.
     config(['database.connections.race' => config('database.connections.pgsql')]);
     DB::purge('race');
 
@@ -528,52 +652,32 @@ it('two genuinely concurrent scans claim a failed group\'s notification exactly 
         'notified_at' => null,
     ]);
 
-    $resultDir = sys_get_temp_dir().'/missed-posts-notify-race-'.bin2hex(random_bytes(6));
-    mkdir($resultDir);
-
     try {
-        $pids = [];
+        Notification::fake();
 
-        foreach (range(0, 1) as $i) {
-            $pid = pcntl_fork();
+        $results = forkAndCollect([
+            function () use ($owner) {
+                app(MissedPostsService::class)->scan();
 
-            if ($pid === -1) {
-                throw new RuntimeException('pcntl_fork() failed — cannot simulate concurrency.');
-            }
+                return Notification::sent($owner, PostFailedNotification::class)->count();
+            },
+            function () use ($owner) {
+                app(MissedPostsService::class)->scan();
 
-            if ($pid === 0) {
-                $childConnection = 'race_notify_child_'.$i.'_'.getmypid();
-                config(['database.connections.'.$childConnection => config('database.connections.pgsql')]);
-                config(['database.default' => $childConnection]);
+                return Notification::sent($owner, PostFailedNotification::class)->count();
+            },
+        ]);
 
-                $claimed = PostGroup::withoutGlobalScope('organization')
-                    ->whereKey($group->id)
-                    ->whereNull('notified_at')
-                    ->update(['error' => 'seed', 'notified_at' => now()]);
+        expect($results[0])->toStartWith('ok:')
+            ->and($results[1])->toStartWith('ok:');
 
-                file_put_contents("{$resultDir}/{$i}", (string) $claimed);
+        $sentCounts = array_map(fn (string $r): int => (int) substr($r, 3), $results);
 
-                posix_kill(posix_getpid(), SIGKILL);
-            }
+        expect(array_sum($sentCounts))->toBe(1);
 
-            $pids[$i] = $pid;
-        }
-
-        foreach ($pids as $pid) {
-            pcntl_waitpid($pid, $status);
-        }
-
-        $claims = array_map(
-            fn (int $i): int => (int) trim((string) file_get_contents("{$resultDir}/{$i}")),
-            range(0, 1),
-        );
-
-        expect(array_sum($claims))->toBe(1);
+        $freshGroup = PostGroup::withoutGlobalScope('organization')->whereKey($group->id)->first();
+        expect($freshGroup->notified_at)->not->toBeNull();
     } finally {
-        foreach (glob("{$resultDir}/*") ?: [] as $file) {
-            unlink($file);
-        }
-        @rmdir($resultDir);
         DB::connection('race')->table('post_groups')->where('id', $group->id)->delete();
         DB::connection('race')->table('organization_user')->where('organization_id', $organization->id)->delete();
         DB::connection('race')->table('organizations')->where('id', $organization->id)->delete();

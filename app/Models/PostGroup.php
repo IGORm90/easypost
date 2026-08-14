@@ -29,6 +29,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property PostState $state
  * @property CarbonInterface|null $publish_date
  * @property int $queue_version
+ * @property CarbonInterface|null $last_dispatched_at
  * @property string|null $created_by
  * @property string|null $error
  * @property CarbonInterface|null $notified_at
@@ -49,6 +50,7 @@ class PostGroup extends Model
         'notified_at',
         'share_token',
         'queue_version',
+        'last_dispatched_at',
     ];
 
     /**
@@ -61,6 +63,7 @@ class PostGroup extends Model
             'publish_date' => 'datetime',
             'queue_version' => 'integer',
             'notified_at' => 'datetime',
+            'last_dispatched_at' => 'datetime',
         ];
     }
 

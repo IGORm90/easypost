@@ -534,6 +534,23 @@ class PostGroupService
      * idempotency point 4). Force-releasing without either of those
      * would have been unsafe; with both, the worst case is a stale job
      * that does nothing.
+     *
+     * `last_dispatched_at` (Task 32 review, round 2): stamped here, the
+     * ONE place in this class that actually calls
+     * `PublishPostJob::dispatch()`, immediately before that call —
+     * `MissedPostsService::lockCouldStillBeLegitimate()` needs to know
+     * WHEN a dispatch's `ShouldBeUnique` lock was actually acquired
+     * (dispatch time, independent of `->delay()`) to bound whether a
+     * still-held lock could legitimately belong to it; `publish_date`
+     * alone is the wrong anchor whenever a dispatch happens well after
+     * it, which every `forceRedispatch: true` caller here does by
+     * construction (a reschedule to "now", a manual retry). A plain
+     * column write, not folded into the caller's own transaction: this
+     * method already runs deliberately AFTER that transaction commits
+     * (see the class docblock), and the dispatch call immediately below
+     * is about to succeed or no-op for reasons entirely independent of
+     * this column, so there is nothing here worth an extra `lockForUpdate()`
+     * round-trip over.
      */
     private function dispatchPublishIfQueued(PostGroup $group, bool $forceRedispatch = false): void
     {
@@ -544,6 +561,8 @@ class PostGroupService
         if ($forceRedispatch) {
             app(UniqueLock::class)->release(new PublishPostJob($group->id, $group->queue_version));
         }
+
+        PostGroup::query()->whereKey($group->id)->update(['last_dispatched_at' => now()]);
 
         PublishPostJob::dispatch($group->id, $group->queue_version)->delay($group->publish_date);
     }
