@@ -125,6 +125,32 @@ it('pins the validated instance address on every mastodon publish request', func
     assertEveryRequestPinned($captured, 'mastodon.social:443:198.51.100.20');
 });
 
+it('pins the validated instance address on every mastodon CONNECT request', function () {
+    // Re-review round 2, finding 3: the publish legs were covered, the
+    // connect legs were not — `->withOptions($pin)` could be deleted from
+    // /api/v1/apps, /oauth/token or verify_credentials with the whole
+    // suite green. These are the requests an admin's own typed host
+    // reaches first, so they are exactly the ones that must be pinned.
+    Http::fake([
+        'mastodon.social/api/v1/apps' => Http::response(['client_id' => 'cid', 'client_secret' => 'csecret']),
+        'mastodon.social/oauth/token' => Http::response(['access_token' => 'token']),
+        'mastodon.social/api/v1/accounts/verify_credentials' => Http::response([
+            'id' => '1', 'username' => 'a', 'display_name' => 'A', 'avatar_static' => null,
+        ]),
+    ]);
+
+    $captured = captureRequestOptions(function (): void {
+        $provider = app(ProviderRegistry::class)->get('mastodon');
+        // /api/v1/apps
+        $provider->generateAuthUrl('state', 'https://app.test/callback', ['instance' => 'mastodon.social']);
+        // /oauth/token, then verify_credentials
+        $provider->authenticate(['instance' => 'mastodon.social', 'code' => 'c'], 'https://app.test/callback');
+    });
+
+    expect($captured)->toHaveCount(3);
+    assertEveryRequestPinned($captured, 'mastodon.social:443:198.51.100.20');
+});
+
 it('pins the validated address on the discord webhook call', function () {
     Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
 
@@ -137,6 +163,32 @@ it('pins the validated address on the discord webhook call', function () {
         app(ProviderRegistry::class)->get('discord')
             ->post($integration, [new PostPayloadDto(content: 'hi')]);
     });
+
+    assertEveryRequestPinned($captured, 'discord.com:443:198.51.100.30');
+});
+
+it('pins the validated address on the discord MEDIA call, not just the text one', function () {
+    // The multipart branch is a separate request builder from the text
+    // branch — same finding 3: it could lose its pin alone.
+    Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
+
+    $integration = Integration::factory()->create([
+        'provider_identifier' => 'discord',
+        'token' => 'https://discord.com/api/webhooks/1/secret',
+    ]);
+
+    $file = tempnam(sys_get_temp_dir(), 'pin-test-');
+    file_put_contents($file, 'IMAGEBYTES');
+
+    $captured = captureRequestOptions(function () use ($integration, $file): void {
+        app(ProviderRegistry::class)->get('discord')->post($integration, [
+            new PostPayloadDto(content: 'hi', media: [
+                new MediaDto(path: $file, mimeType: 'image/png', sizeBytes: 10, originalFilename: 'a.png'),
+            ]),
+        ]);
+    });
+
+    @unlink($file);
 
     assertEveryRequestPinned($captured, 'discord.com:443:198.51.100.30');
 });

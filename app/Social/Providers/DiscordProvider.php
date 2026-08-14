@@ -215,7 +215,7 @@ class DiscordProvider implements SocialProviderInterface
         $request = $this->uploadHttp()->withOptions($pin)->asMultipart();
 
         foreach ($payload->media as $index => $media) {
-            $request = $request->attach("files[{$index}]", $this->fileStream($media), $media->filename());
+            $request = $request->attach("files[{$index}]", $this->fileStream($media), $media->filename(), $this->fileHeaders($media));
         }
 
         $body = $this->call(

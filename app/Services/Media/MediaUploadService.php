@@ -719,18 +719,32 @@ final class MediaUploadService
     /**
      * Filenames are user input (the client-supplied upload name, or the
      * last path segment of an imported URL) that MediaResource echoes
-     * back and that could reach a `Content-Disposition` header down the
-     * line (e.g. a future signed-download endpoint) — sanitized once,
-     * here, before it's ever persisted: `basename()` strips any
-     * directory component (so it can never smuggle a path), control
-     * characters (including CR/LF, which is what would let a filename
-     * inject an extra header line) are stripped outright, and the
-     * result is capped at 255 characters.
+     * back and that DOES reach a `Content-Disposition` header — no longer
+     * "down the line": since batch 2 made publishing send the customer's
+     * own filename, every provider puts this value into a multipart part
+     * header. Sanitized once, here, before it is ever persisted:
+     * `basename()` strips any directory component (so it can never
+     * smuggle a path), control characters (including CR/LF, which is what
+     * would let a filename inject an extra header line) are stripped
+     * outright, and the result is capped at 255 characters.
+     *
+     * Double quotes and backslashes are stripped too (re-review round 2,
+     * finding 1 — demonstrated on the wire): Guzzle's
+     * `MultipartStream::createElement()` builds
+     * `form-data; name="%s"; filename="%s"` with `sprintf` and NO
+     * escaping, so a filename containing `"` closes the quoted string and
+     * appends attacker-chosen parameters to that header — e.g.
+     * `a.png"; name="payload_json` produced a part with two `name`
+     * parameters. Stripped rather than backslash-escaped because RFC 6266
+     * quoted-string escaping is not what every multipart parser on the
+     * other end implements, and no legitimate filename needs either
+     * character. `MediaDto::filename()` repeats this for rows stored
+     * before this fix.
      */
     private function sanitizeFilename(string $name): string
     {
         $name = basename($name);
-        $name = preg_replace('/[\x00-\x1F\x7F]/', '', $name) ?? '';
+        $name = preg_replace('/[\x00-\x1F\x7F"\\\\]/', '', $name) ?? '';
         $name = trim($name);
 
         return $name === '' ? 'file' : mb_substr($name, 0, 255);

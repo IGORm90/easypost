@@ -50,6 +50,17 @@ final readonly class MediaDto
     {
         $name = $this->originalFilename !== null ? basename($this->originalFilename) : '';
 
+        // Re-review round 2, finding 1: this value goes straight into a
+        // multipart `Content-Disposition` header that Guzzle builds with
+        // sprintf() and does not escape, so a `"` in it appends
+        // attacker-chosen parameters to that header. MediaUploadService
+        // now strips these at upload time, but rows stored BEFORE that
+        // fix are still in the database and this is the single point every
+        // provider reads — so the guarantee is enforced here too rather
+        // than assumed to have happened earlier.
+        $name = (string) preg_replace('/[\x00-\x1F\x7F"\\\\]/', '', $name);
+        $name = trim($name);
+
         return $name !== '' ? $name : basename($this->path);
     }
 

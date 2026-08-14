@@ -31,6 +31,31 @@ use App\Social\Exceptions\ProviderPermanentException;
 trait ReadsMediaFiles
 {
     /**
+     * The multipart part headers an attachment must carry.
+     *
+     * `Content-Type` is set EXPLICITLY from the stored, sniffed mime type
+     * — re-review round 2, finding 2. Guzzle only infers a part's content
+     * type when the caller supplies none, and it infers it from the
+     * FILENAME (`MimeType::fromFilename()`). Since batch 2 started sending
+     * the customer's own filename, that inference became
+     * customer-controlled: a genuine PNG uploaded as `photo` or
+     * `photo.txt` would have gone out as `application/octet-stream` or
+     * `text/plain`, which a network that dispatches on part type can
+     * reject. Before that change the temp copy's extension happened to
+     * guarantee the right answer — an accident, not a design. `mime_type`
+     * on the media row is `finfo`-sniffed from the file's actual bytes at
+     * upload time (MediaUploadService::sniffMime()), so it is both more
+     * trustworthy than any filename and the one this application already
+     * validated against its allow-list.
+     *
+     * @return array<string, string>
+     */
+    protected function fileHeaders(MediaDto $media): array
+    {
+        return ['Content-Type' => $media->mimeType];
+    }
+
+    /**
      * @return resource
      */
     protected function fileStream(MediaDto $media)

@@ -101,7 +101,7 @@ function publishMediaBytes(): string
  * @param  array<string, mixed>  $settings
  * @return array{0: PostGroup, 1: Post}
  */
-function publishableMediaPost(string $provider, array $settings = [], string $token = 'provider-token'): array
+function publishableMediaPost(string $provider, array $settings = [], string $token = 'provider-token', string $originalFilename = 'attachment.png'): array
 {
     $org = Organization::factory()->create();
 
@@ -130,7 +130,7 @@ function publishableMediaPost(string $provider, array $settings = [], string $to
         'path' => $key,
         'mime_type' => 'image/png',
         'size_bytes' => strlen($bytes),
-        'original_filename' => 'attachment.png',
+        'original_filename' => $originalFilename,
     ]);
 
     $post = Post::create([
@@ -274,6 +274,78 @@ it('sends the customer\'s own filename, not the temp copy\'s name', function () 
         ->toBeGreaterThan(0, 'the original filename never reached the wire')
         ->and($bodies->filter(fn (string $body): bool => str_contains($body, 'publish-media-'))->count())
         ->toBe(0, 'the temp copy\'s name leaked to the network');
+});
+
+it('sends the customer\'s own filename on every provider that attaches files', function (string $provider, array $settings, string $token) {
+    // Re-review round 2: only Telegram was asserted, so the same mutation
+    // in the other three broke nothing.
+    Http::fake([
+        'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]]),
+        'discord.com/*' => Http::response(['id' => '1']),
+        'mastodon.social/api/v2/media' => Http::response(['id' => '42']),
+        'mastodon.social/api/v1/statuses' => Http::response(['id' => '7']),
+        'slack.com/api/files.getUploadURLExternal' => Http::response(['ok' => true, 'upload_url' => 'https://files.slack.com/upload/v1', 'file_id' => 'F1']),
+        'files.slack.com/*' => Http::response('OK'),
+        'slack.com/api/chat.postMessage' => Http::response(['ok' => true, 'ts' => '1.1']),
+        'slack.com/api/files.completeUploadExternal' => Http::response(['ok' => true]),
+    ]);
+
+    [$group] = publishableMediaPost($provider, $settings, $token);
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    $bodies = collect(Http::recorded())->map(fn (array $pair): string => (string) $pair[0]->body());
+
+    expect($bodies->filter(fn (string $b): bool => str_contains($b, 'filename="attachment.png"'))->count())
+        ->toBeGreaterThan(0, "[{$provider}] never sent the original filename")
+        ->and($bodies->filter(fn (string $b): bool => str_contains($b, 'publish-media-'))->count())
+        ->toBe(0, "[{$provider}] leaked the temp copy's name");
+})->with([
+    ['telegram', ['chat_id' => '-100'], 'bot-token'],
+    ['discord', [], 'https://discord.com/api/webhooks/1/secret'],
+    ['mastodon', ['instance' => 'mastodon.social'], 'access-token'],
+    ['slack', ['channel_id' => 'C1'], 'xoxb-token'],
+]);
+
+it('cannot be made to inject extra parameters into the multipart header via the filename', function () {
+    // Re-review round 2, finding 1, demonstrated on the wire by the
+    // reviewer: Guzzle builds `form-data; name="%s"; filename="%s"` with
+    // sprintf and no escaping, so a quote in a customer-supplied filename
+    // appends attacker-chosen parameters to that header.
+    Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
+
+    [$group] = publishableMediaPost(
+        'discord',
+        [],
+        'https://discord.com/api/webhooks/1/secret',
+        'a.png"; name="payload_json"; x="',
+    );
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    $body = (string) collect(Http::recorded())->first()[0]->body();
+
+    // Exactly one `name=` parameter per part, and the file part is still
+    // the one Discord expects.
+    expect(substr_count($body, 'name="payload_json"'))->toBe(1)
+        ->and($body)->toContain('name="files[0]"; filename="a.png; name=payload_json; x="')
+        ->and(substr_count($body, 'name="files[0]"'))->toBe(1);
+});
+
+it('sends the part content type from the stored mime, not from the customer\'s filename', function () {
+    // Re-review round 2, finding 2: Guzzle infers a part's Content-Type
+    // from the FILENAME when the caller supplies none, so a genuine PNG
+    // uploaded as `photo.txt` used to go out as text/plain.
+    Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
+
+    [$group] = publishableMediaPost('discord', [], 'https://discord.com/api/webhooks/1/secret', 'photo.txt');
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    $body = (string) collect(Http::recorded())->first()[0]->body();
+
+    expect($body)->toContain('Content-Type: image/png')
+        ->and($body)->not->toContain('Content-Type: text/plain');
 });
 
 it('leaves no temp files behind after publishing', function () {

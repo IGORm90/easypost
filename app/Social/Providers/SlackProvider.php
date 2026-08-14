@@ -266,7 +266,7 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
         $pin = $this->assertUploadUrlIsSlackHosted($uploadUrl);
 
         $this->call(
-            fn (): Response => $this->uploadHttp()->withOptions($pin)->attach('file', $this->fileStream($media), $filename)
+            fn (): Response => $this->uploadHttp()->withOptions($pin)->attach('file', $this->fileStream($media), $filename, $this->fileHeaders($media))
                 ->post($uploadUrl),
             'uploading the file',
             expectsEnvelope: false,

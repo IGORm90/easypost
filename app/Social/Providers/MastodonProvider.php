@@ -195,7 +195,7 @@ class MastodonProvider implements SocialProviderInterface, SupportsMedia
 
         $body = $this->call(
             fn (): Response => $this->uploadHttp()->withOptions($pin)->withToken($token)
-                ->attach('file', $this->fileStream($media), $media->filename())
+                ->attach('file', $this->fileStream($media), $media->filename(), $this->fileHeaders($media))
                 ->post("https://{$host}/api/v2/media", array_filter([
                     'description' => $media->altText,
                 ], static fn (mixed $value): bool => $value !== null)),

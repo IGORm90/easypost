@@ -214,7 +214,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
         $field = $isVideo ? 'video' : 'photo';
 
         $body = $this->call(
-            fn (): Response => $this->uploadHttp()->attach($field, $this->fileStream($media), $media->filename())
+            fn (): Response => $this->uploadHttp()->attach($field, $this->fileStream($media), $media->filename(), $this->fileHeaders($media))
                 ->post($this->apiUrl($token, $method), array_filter([
                     'chat_id' => $chatId,
                     'caption' => $caption !== '' ? $caption : null,
@@ -236,7 +236,7 @@ class TelegramProvider implements ManualTokenAuth, SocialProviderInterface
 
         foreach ($mediaList as $index => $media) {
             $field = "media{$index}";
-            $request = $request->attach($field, $this->fileStream($media), $media->filename());
+            $request = $request->attach($field, $this->fileStream($media), $media->filename(), $this->fileHeaders($media));
 
             $item = [
                 'type' => str_starts_with($media->mimeType, 'video/') ? 'video' : 'photo',

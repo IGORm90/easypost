@@ -246,7 +246,7 @@ final class SafeRemoteHost
      */
     public static function pinOptions(string $host, array $ips, int $port = 443): array
     {
-        if ($ips === [] || filter_var($host, FILTER_VALIDATE_IP) !== false) {
+        if ($ips === [] || self::literalIp($host) !== null) {
             return [];
         }
 
@@ -330,13 +330,39 @@ final class SafeRemoteHost
      *
      * So: percent escapes are refused outright (no caller needs them in a
      * host), and a non-ASCII host is converted to its A-label via UTS-46
-     * before ANY check runs. Where `intl` is unavailable — which is the
-     * case in this project's PHP image today — a non-ASCII host is
-     * refused rather than guessed at: failing closed costs an IDN
-     * Mastodon instance a connect (already impossible anyway, since
-     * `MastodonProvider::normalizeHost()`'s own `^[a-z0-9.-]+$` check
-     * rejects it) and costs an IDN media URL an import, which is a
-     * feature gap, not a bypass. Guessing costs a bypass.
+     * before ANY check runs.
+     *
+     * On `idn_to_ascii` availability, corrected (re-review round 2,
+     * finding 4 — an earlier revision of this docblock and of the batch
+     * report both said `intl` was absent here and that the non-ASCII
+     * branch therefore always failed closed): the `intl` EXTENSION is
+     * indeed not loaded in this image, but `symfony/polyfill-intl-idn` is
+     * a committed dependency and defines `idn_to_ascii` under the
+     * application autoloader. So the conversion branch is the one that
+     * actually runs in production, and it runs correctly — `０１７７.0.0.1`
+     * normalises to `0177.0.0.1` and is then refused as an ambiguous
+     * literal, and an ordinary IDN host resolves and is validated under
+     * its A-label. The `function_exists()` fallback is kept for an
+     * installation that somehow has neither, where refusing a host this
+     * code cannot canonicalise is the only safe answer.
+     *
+     * The charset allow-list after conversion (re-review round 2, finding
+     * 5) is what keeps this method's output an actual hostname. Printable
+     * ASCII alone admitted `evil.com/x`, `evil.com#a.internal`,
+     * `evil.com:8080`, and — the one that reaches further — `0177.0.0.1 `
+     * with a trailing space, which defeats assertNotAmbiguousLiteral()
+     * because `"1 "` is not a numeric label. None of those resolve today,
+     * but "the resolver happens not to answer" is exactly the accident
+     * this batch exists to stop relying on.
+     *
+     * Bracketed IPv6 literals (`[::1]`) are handled explicitly rather than
+     * left to fall through the allow-list: before this, `[::1]` was
+     * accepted by every check here and refused only because
+     * `dns_get_record('[::1]')` answers nothing — fail-closed by luck, and
+     * it also meant no IPv6-literal URL could ever be fetched at all. The
+     * brackets are kept in the returned host (a URL rebuilt from it must
+     * stay valid) while literalIp() unwraps them for the checks that care
+     * about the address itself.
      */
     private static function normalizeHost(string $host): string
     {
@@ -359,7 +385,41 @@ final class SafeRemoteHost
             $host = $ascii;
         }
 
-        return strtolower($host);
+        $host = strtolower($host);
+
+        if (preg_match('/^\[(.+)]$/', $host, $matches) === 1) {
+            if (filter_var($matches[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+                throw UnsafeRemoteHostException::forHost($host, 'is not a well-formed IPv6 literal');
+            }
+
+            return $host;
+        }
+
+        if (preg_match('/^[a-z0-9.-]+$/', $host) !== 1) {
+            throw UnsafeRemoteHostException::forHost($host, 'is not a well-formed hostname');
+        }
+
+        return $host;
+    }
+
+    /**
+     * The bare IP address $host denotes, or null if it is a name. Handles
+     * the bracketed IPv6 URL form (`[::1]`) as well as a plain literal, so
+     * every check that asks "is this already an address?" gets the same
+     * answer for both spellings — re-review round 2. Before this, the
+     * bracketed form was not recognised anywhere: it skipped the literal
+     * short-circuit, was handed to DNS, and survived on the resolver
+     * answering nothing.
+     */
+    private static function literalIp(string $host): ?string
+    {
+        if (preg_match('/^\[(.+)]$/', $host, $matches) === 1) {
+            return filter_var($matches[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
+                ? $matches[1]
+                : null;
+        }
+
+        return filter_var($host, FILTER_VALIDATE_IP) !== false ? $host : null;
     }
 
     /**
@@ -384,7 +444,7 @@ final class SafeRemoteHost
      */
     private static function assertNotAmbiguousLiteral(string $host): void
     {
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+        if (self::literalIp($host) !== null) {
             return;
         }
 
@@ -468,8 +528,10 @@ final class SafeRemoteHost
         // A literal IP needs no resolution regardless of whether DNS is
         // faked for this test -- checked first so fake()'s map only ever
         // has to cover hostnames, never literal-IP edge cases.
-        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return [$host];
+        $literal = self::literalIp($host);
+
+        if ($literal !== null) {
+            return [$literal];
         }
 
         if (self::$fakeResolutions !== null) {

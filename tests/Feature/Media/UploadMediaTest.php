@@ -214,6 +214,28 @@ it('sanitizes a directory-traversal / control-character filename before storing 
         ->and($stored)->not->toContain("\n");
 });
 
+it('strips quotes and backslashes from a stored filename, since providers put it in a header', function () {
+    // Re-review round 2, finding 1: this value is now sent as the
+    // multipart filename by every provider, and Guzzle writes it into
+    // `Content-Disposition` with sprintf and no escaping — so a `"` in it
+    // appends attacker-chosen parameters to that header. Stripped at the
+    // point of storage as well as at the point of use (MediaDto::filename()),
+    // because "some later layer will handle it" is what made this
+    // reachable in the first place.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $file = UploadedFile::fake()->image('a".png', 10, 10);
+
+    $this->postJson('/api/media', ['file' => $file])->assertCreated();
+
+    $stored = Media::sole()->original_filename;
+
+    expect($stored)->not->toContain('"')
+        ->and($stored)->not->toContain('\\');
+});
+
 it('does not report success or persist a row when the storage write fails (review finding 1)', function () {
     // Storage::fake('media') always succeeds -- it cannot distinguish
     // "the service checked the write" from "the write happened to

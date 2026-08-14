@@ -285,10 +285,83 @@ it('refuses a non-ASCII host rather than letting a byte-wise check run on it', f
     expect(fn () => SafeRemoteHost::assertSafeHost($host))
         ->toThrow(UnsafeRemoteHostException::class);
 })->with([
-    '０１７７.0.0.1',   // fullwidth digits, UTS-46 maps to 0177.0.0.1
+    '０１７７.0.0.1',   // fullwidth digits, UTS-46 maps to 0177.0.0.1 — then refused as ambiguous
     '１２７.0.0.1',
-    'exämple.test',     // refused only because this image has no intl — see normalizeHost()
 ]);
+
+it('converts an ordinary IDN host to its A-label and validates THAT', function () {
+    // Re-review round 2, finding 4: `intl` the extension is absent, but
+    // symfony/polyfill-intl-idn is a committed dependency and defines
+    // idn_to_ascii under the app autoloader — so this branch really
+    // converts in production, and an earlier claim that it always failed
+    // closed was wrong. The A-label is what gets resolved, returned and
+    // pinned; the U-label form is never handed to anything downstream.
+    SafeRemoteHost::fake(['xn--exmple-cua.test' => ['198.51.100.10']]);
+
+    [$host, $options] = SafeRemoteHost::assertSafeHostPinned('exämple.test');
+
+    expect($host)->toBe('xn--exmple-cua.test')
+        ->and($options)->toBe(['198.51.100.10'])
+        ->and(SafeRemoteHost::pinOptions($host, $options)['curl'][CURLOPT_RESOLVE])
+        ->toBe(['xn--exmple-cua.test:443:198.51.100.10']);
+});
+
+/*
+ * Re-review round 2, finding 5: printable-ASCII was not a hostname
+ * charset. Each of these was ACCEPTED by the guard and stopped only by
+ * the resolver declining to answer — the exact accident this batch was
+ * told not to rely on. `0177.0.0.1 ` is the one that reaches furthest:
+ * the trailing space makes `"1 "` a non-numeric label, so the
+ * ambiguous-literal check passes it.
+ */
+it('refuses anything that is not a hostname, whatever DNS would say', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with([
+    'evil.com/x',
+    'evil.com#a.internal',
+    'evil.com:8080',
+    'evil.com?a=b',
+    '0177.0.0.1 ',
+    ' 0177.0.0.1',
+    "127.0.0.1\t",
+    'evil.com/../internal',
+    'under_score.example.com',
+]);
+
+/*
+ * Bracketed IPv6 literals had no branch at all: `[::1]` passed every
+ * check here and was refused only because dns_get_record() answers
+ * nothing for it. Now it is recognised as the literal it is — which both
+ * closes the fail-by-luck and makes an IPv6-literal URL fetchable when
+ * the address is genuinely public.
+ */
+it('unwraps a bracketed IPv6 literal and judges the address itself', function () {
+    SafeRemoteHost::fake([]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost('[::1]'))
+        ->toThrow(UnsafeRemoteHostException::class, 'non-public address [::1]');
+});
+
+it('accepts a bracketed public IPv6 literal, keeping the URL-safe form', function () {
+    SafeRemoteHost::fake([]);
+
+    [$host, $ips] = SafeRemoteHost::assertSafeHostPinned('[2001:4860:4860::8888]');
+
+    expect($host)->toBe('[2001:4860:4860::8888]')
+        ->and($ips)->toBe(['2001:4860:4860::8888'])
+        // A literal needs no pin: there was never a lookup to disagree with.
+        ->and(SafeRemoteHost::pinOptions($host, $ips))->toBe([]);
+});
+
+it('refuses a malformed bracketed host', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with(['[not-an-address]', '[127.0.0.1]', '[]']);
 
 it('refuses a percent-encoded host outright, whatever the resolver would make of it', function (string $host) {
     SafeRemoteHost::fake([$host => ['198.51.100.10']]);
