@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Notifications\ResetPasswordNotification;
 use App\Notifications\VerifyEmailNotification;
+use Carbon\CarbonInterface;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Contracts\Translation\HasLocalePreference;
@@ -15,6 +16,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
+/**
+ * @property CarbonInterface|null $digest_sent_at Task 33's digest claim —
+ *                                                see DigestService::claim()'s docblock. Only this property gets an
+ *                                                explicit annotation (rather than documenting the whole model, which
+ *                                                predates this task): Larastan infers plain scalar-cast columns
+ *                                                (timezone, locale, email_notifications) fine from casts() alone, but
+ *                                                needs a `datetime`-cast column's real return type (CarbonInterface,
+ *                                                not the raw column string) spelled out explicitly to type-check
+ *                                                `$row->digest_sent_at->isAfter(...)` — the same reason PostGroup's
+ *                                                class docblock already annotates its own `notified_at`/`publish_date`.
+ */
 #[Fillable(['name', 'email', 'password', 'timezone', 'locale', 'email_notifications'])]
 #[Hidden(['password', 'remember_token', 'api_key'])]
 class User extends Authenticatable implements HasLocalePreference, MustVerifyEmail

@@ -10,10 +10,13 @@ use App\Models\PostGroup;
 use App\Models\User;
 use App\Services\Mail\DigestService;
 use App\Support\OrganizationContext;
+use Illuminate\Mail\Mailable;
+use Illuminate\Mail\MailManager;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Illuminate\Support\Testing\Fakes\MailFake;
 
 /*
  * Task 33: the weekly digest — see DigestService's class docblock for the
@@ -142,6 +145,46 @@ function digestForkAndCollect(array $closures): array
 function mondayNineUtc(): Carbon
 {
     return Carbon::parse('2026-08-17 09:15:00', 'UTC');
+}
+
+/**
+ * `Mail::fake()`'s own `send()` never actually renders or attempts
+ * delivery — it just records the mailable — so there is no way to make
+ * it throw the way a bad recipient address or a transient SMTP error
+ * would for real. This subclass throws for one specific address and
+ * otherwise behaves exactly like the real fake (recording, `Mail::sent()`,
+ * `assertSent()`, all still work for every other recipient), so
+ * `DigestTest`'s failure-isolation case can exercise the ACTUAL
+ * catch/release path in `DigestService::sendIfDue()` rather than merely
+ * asserting it exists by reading the code.
+ */
+class ThrowingMailFake extends MailFake
+{
+    /**
+     * @param  array<int, string>  $throwForAddresses
+     */
+    public function __construct(MailManager $manager, private readonly array $throwForAddresses)
+    {
+        parent::__construct($manager);
+    }
+
+    /**
+     * @param  mixed  $view
+     * @param  array<string, mixed>  $data
+     * @param  Closure|string|null  $callback
+     */
+    public function send($view, array $data = [], $callback = null): mixed
+    {
+        if ($view instanceof Mailable) {
+            foreach ($this->throwForAddresses as $address) {
+                if ($view->hasTo($address)) {
+                    throw new RuntimeException("Simulated send failure for {$address}");
+                }
+            }
+        }
+
+        return parent::send($view, $data, $callback);
+    }
 }
 
 // --- Preference check --------------------------------------------------
@@ -416,7 +459,19 @@ it('sends only once when the sweep runs twice in the same due hour', function ()
     expect(digestSentCountTo($user))->toBe(1);
 });
 
-it('does not re-send the following hour of the same due day, only the digest already claimed', function () {
+it('does not re-send several hours later the same due day, only the digest already claimed', function () {
+    // With isDueNow()'s hour >= 9 predicate (post-review: self-correcting
+    // against a slow sweep -- see DigestService's docblock), EVERY hourly
+    // tick for the rest of Monday still matches this user, not just the
+    // 09:00 hour -- so this test must genuinely cross into a later hour
+    // to prove anything. An earlier revision only advanced 40 minutes,
+    // still inside the 09:00 hour, which the strict `hour === 9`
+    // predicate it was written against would have made a trivial,
+    // same-hour check; it stayed a same-hour check even after the
+    // predicate changed, silently testing nothing new. This now jumps
+    // three hours ahead (still Monday) specifically to exercise the
+    // WIDENED predicate matching again, with only claim()'s cooldown
+    // stopping a second send.
     Mail::fake();
     Carbon::setTestNow(mondayNineUtc());
 
@@ -427,10 +482,8 @@ it('does not re-send the following hour of the same due day, only the digest alr
     app(DigestService::class)->sendDueDigests();
     expect(digestSentCountTo($user))->toBe(1);
 
-    // Still Monday, but the hour has rolled over to 09->10 boundary and
-    // back due to a hypothetical extra scheduler tick within the same
-    // local hour window.
-    Carbon::setTestNow(mondayNineUtc()->addMinutes(40));
+    Carbon::setTestNow(mondayNineUtc()->addHours(3));
+    expect(Carbon::getTestNow()->dayOfWeekIso)->toBe(Carbon::MONDAY);
     app(DigestService::class)->sendDueDigests();
 
     expect(digestSentCountTo($user))->toBe(1);
@@ -517,6 +570,118 @@ it('lets only one of two genuinely concurrent claims win, proven against real Po
         DB::connection('race')->table('organizations')->where('id', $organization->id)->delete();
         DB::connection('race')->table('users')->where('id', $owner->id)->delete();
     }
+});
+
+// --- Failure isolation: one bad send must not cost every user after it -
+
+it('does not abort the sweep, and releases the claim instead of burning it, when one user\'s send throws', function () {
+    Carbon::setTestNow(mondayNineUtc());
+
+    $org = Organization::factory()->create();
+    // Created first, so chunkById() -- which walks users in ULID order --
+    // reaches this one BEFORE $okUser, proving a failure here does not
+    // stop the sweep from reaching users after it.
+    $failingUser = User::factory()->create(['timezone' => 'UTC', 'email_notifications' => true]);
+    $okUser = User::factory()->create(['timezone' => 'UTC', 'email_notifications' => true]);
+    memberOf($org, $failingUser);
+    memberOf($org, $okUser);
+
+    Mail::swap(new ThrowingMailFake(app('mail.manager'), [$failingUser->email]));
+
+    app(DigestService::class)->sendDueDigests();
+
+    // The user after the failing one still got their digest -- the sweep
+    // did not abort partway through chunkById()'s callback.
+    expect(digestSentCountTo($okUser))->toBe(1);
+
+    // The failing user's claim was released, not burned: digest_sent_at
+    // is back to its pre-claim value (null -- this was their first-ever
+    // digest), not left stamped with the claim that never actually sent
+    // anything.
+    expect($failingUser->fresh()->digest_sent_at)->toBeNull();
+
+    // And the release actually works: a later tick the same Monday, once
+    // the underlying failure is gone, successfully retries and sends --
+    // the failure did not cost this user their whole week.
+    Mail::fake();
+    Carbon::setTestNow(mondayNineUtc()->addHours(2));
+    app(DigestService::class)->sendDueDigests();
+
+    expect(digestSentCountTo($failingUser))->toBe(1);
+});
+
+// --- Content window must chain across DST, not just the send predicate -
+
+it('windows past content off the previous actual send, so nothing is dropped or repeated across a DST transition week', function () {
+    // Post-review fix: DigestService::isDueNow() already avoided a fixed
+    // send-time offset (see its docblock), but buildDigest() had
+    // reintroduced the identical class of bug ONE LAYER DOWN, in the
+    // CONTENT window: it recomputed "now() - 7 days" at EVERY send,
+    // rather than anchoring on the previous ACTUAL send. Consecutive
+    // "Monday 09:00-or-later local" sends are not exactly 7*24h apart --
+    // Europe/Berlin's 2026-10-25 fall-back makes the 2026-10-19 -> 10-26
+    // gap 7 days + 1 HOUR in UTC (verified directly, not assumed). A
+    // window computed fresh each time from "now() - 7 days" would
+    // therefore silently DROP content published in that one-hour seam
+    // (it falls before both the old and new digest's windows) -- exactly
+    // the class of bug that bit Tasks 21 and 25.
+    //
+    // Fixed by anchoring the window's start on DigestClaim::
+    // $previousDigestSentAt (the user's digest_sent_at as it stood
+    // immediately before THIS claim) instead of recomputing -- this
+    // makes consecutive windows chain EXACTLY, [previous_send,
+    // this_send), with no dependency on how many real hours separated
+    // them. That same chaining is also why duplication (the
+    // spring-forward direction) is structurally impossible, not just
+    // untested: window N always starts exactly where window N-1 ended,
+    // so two consecutive windows can never overlap either.
+    $berlinNineOct19 = Carbon::parse('2026-10-19 07:10:00', 'UTC'); // 09:10 Europe/Berlin, CEST (pre-transition)
+    $berlinNineOct26 = Carbon::parse('2026-10-26 08:10:00', 'UTC'); // 09:10 Europe/Berlin, CET (post fall-back) -- 7 days + 1 hour later
+
+    $org = Organization::factory()->create();
+    $user = User::factory()->create(['timezone' => 'Europe/Berlin', 'email_notifications' => true]);
+    memberOf($org, $user);
+
+    // Squarely inside the FIRST digest's window ([now - 7 days, now) --
+    // this is the user's first-ever digest, no previous claim to anchor
+    // on yet).
+    $groupBeforeFirstSend = PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::PUBLISHED,
+        'publish_date' => $berlinNineOct19->clone()->subMinutes(30),
+    ]);
+
+    Mail::fake();
+    Carbon::setTestNow($berlinNineOct19);
+    app(DigestService::class)->sendDueDigests();
+
+    $firstMail = Mail::sent(WeeklyDigestMail::class)->first();
+    expect($firstMail->summary->published->items->pluck('id'))
+        ->toContain($groupBeforeFirstSend->id);
+
+    // Published exactly inside the one-hour DST seam: BEFORE the second
+    // send's naive "now() - 7 days" would have started its window
+    // (2026-10-19 08:10 UTC), but AFTER the first send's actual instant
+    // (2026-10-19 07:10 UTC) -- the old, flat computation drops this
+    // silently; the fix must not.
+    $groupInTheSeam = PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::PUBLISHED,
+        'publish_date' => $berlinNineOct19->clone()->addMinutes(30),
+    ]);
+
+    Mail::fake();
+    Carbon::setTestNow($berlinNineOct26);
+    app(DigestService::class)->sendDueDigests();
+
+    $secondMail = Mail::sent(WeeklyDigestMail::class)->first();
+    $secondPublishedIds = $secondMail->summary->published->items->pluck('id');
+
+    // Not dropped...
+    expect($secondPublishedIds)->toContain($groupInTheSeam->id);
+    // ...and not repeated: the first send's own content, which falls
+    // BEFORE the second window's start, must not reappear.
+    expect($secondPublishedIds)->not->toContain($groupBeforeFirstSend->id);
 });
 
 // --- The actual scheduled entry point -----------------------------------
