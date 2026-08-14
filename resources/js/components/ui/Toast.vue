@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // A single toast notification. Status is conveyed through the icon and the
 // message text — never colour alone (color.md §3.3 / §4).
-type Variant = 'success' | 'warning' | 'danger' | 'neutral';
+type Variant = 'success' | 'warning' | 'danger' | 'neutral' | 'muted';
 
 withDefaults(defineProps<{ variant?: Variant }>(), { variant: 'neutral' });
 
@@ -12,6 +12,13 @@ const variantClasses: Record<Variant, string> = {
     warning: 'border-warning/40 bg-warning-soft text-warning',
     danger: 'border-danger/40 bg-danger-soft text-danger',
     neutral: 'border-border bg-surface text-text',
+    // color.md §3.8 (final review, Important 9): a notice that is neither
+    // a failure nor a limit — "this is locked", "confirm this" — must not
+    // borrow --warning, which on the editor screen already means "plan
+    // limit reached" and sits beside PreviewPane's accent-tinted avatars.
+    // Recessed rather than coloured, on the sidebar surface so it still
+    // reads as a distinct block against the modal's own --surface.
+    muted: 'border-border bg-surface-2 text-muted',
 };
 </script>
 

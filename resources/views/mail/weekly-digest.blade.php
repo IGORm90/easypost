@@ -1,6 +1,14 @@
 {{--
     Task 33's weekly digest body — see App\Mail\WeeklyDigestMail and
     App\Services\Mail\DigestService for how $summary is built and scoped.
+    Colours are literal hex on purpose and every one of them is a
+    color.md token from the LIGHT theme: an HTML email has no stylesheet
+    to resolve a CSS custom property against, and no reliable way to
+    follow the reader's theme either. The palette guard
+    (resources/js/__tests__/palette.spec.ts) reads color.md and rejects
+    any literal that is not in it — before that guard covered Blade at
+    all, this file used five colours that appear nowhere in the palette.
+
     Plain HTML, no markdown mail component: this project has none of
     Laravel's published markdown mail views, and a hand-rolled table is
     all three sections need. Every date is rendered in $recipientTimezone
@@ -12,8 +20,8 @@
 <head>
     <meta charset="utf-8">
 </head>
-<body style="font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1f2933; background: #f4f5f7; margin: 0; padding: 24px;">
-    <table role="presentation" width="100%" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; padding: 24px;">
+<body style="font-family: -apple-system, Helvetica, Arial, sans-serif; color: #0B1F17; background: #F1F5F2; margin: 0; padding: 24px;">
+    <table role="presentation" width="100%" style="max-width: 600px; margin: 0 auto; background: #FFFFFF; border-radius: 8px; padding: 24px;">
         <tr>
             <td>
                 <p>{{ __('mail.weekly_digest.greeting', ['name' => $recipientName]) }}</p>
@@ -21,7 +29,7 @@
 
                 <h3>{{ __('mail.weekly_digest.published_heading') }}</h3>
                 @if ($summary->published->isEmpty())
-                    <p style="color: #6b7280;">{{ __('mail.weekly_digest.published_empty') }}</p>
+                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.published_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->published->items as $group)
@@ -33,13 +41,13 @@
                         @endforeach
                     </ul>
                     @if ($summary->published->hasMore())
-                        <p style="color: #6b7280;">{{ __('mail.weekly_digest.more', ['count' => $summary->published->moreCount()]) }}</p>
+                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->published->moreCount()]) }}</p>
                     @endif
                 @endif
 
                 <h3>{{ __('mail.weekly_digest.failed_heading') }}</h3>
                 @if ($summary->failed->isEmpty())
-                    <p style="color: #6b7280;">{{ __('mail.weekly_digest.failed_empty') }}</p>
+                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.failed_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->failed->items as $group)
@@ -53,18 +61,18 @@
                                      outside the "this week" framing the heading promises. --}}
                                 {{ $group->notified_at?->clone()->setTimezone($recipientTimezone)->locale(app()->getLocale())->translatedFormat('D, d M Y H:i') }}
                                 <br>
-                                <span style="color: #b91c1c;">{{ $group->error }}</span>
+                                <span style="color: #B91C1C;">{{ $group->error }}</span>
                             </li>
                         @endforeach
                     </ul>
                     @if ($summary->failed->hasMore())
-                        <p style="color: #6b7280;">{{ __('mail.weekly_digest.more', ['count' => $summary->failed->moreCount()]) }}</p>
+                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->failed->moreCount()]) }}</p>
                     @endif
                 @endif
 
                 <h3>{{ __('mail.weekly_digest.scheduled_heading') }}</h3>
                 @if ($summary->scheduled->isEmpty())
-                    <p style="color: #6b7280;">{{ __('mail.weekly_digest.scheduled_empty') }}</p>
+                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.scheduled_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->scheduled->items as $group)
@@ -76,12 +84,12 @@
                         @endforeach
                     </ul>
                     @if ($summary->scheduled->hasMore())
-                        <p style="color: #6b7280;">{{ __('mail.weekly_digest.more', ['count' => $summary->scheduled->moreCount()]) }}</p>
+                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->scheduled->moreCount()]) }}</p>
                     @endif
                 @endif
 
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
-                <p style="color: #9ca3af; font-size: 12px;">{{ __('mail.weekly_digest.footer') }}</p>
+                <hr style="border: none; border-top: 1px solid #DBE5DD; margin: 24px 0;">
+                <p style="color: #5A7267; font-size: 12px;">{{ __('mail.weekly_digest.footer') }}</p>
             </td>
         </tr>
     </table>

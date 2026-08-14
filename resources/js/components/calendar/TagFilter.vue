@@ -31,6 +31,9 @@ function toggle(id: string): void {
 </script>
 
 <template>
+    <!-- color.md §3.1 (final review, Important 9): a selected chip is
+     marked by a --text border and the check icon it already carried, not
+     by primary — filtering is a state, not the screen's action. -->
     <div class="flex flex-wrap items-center gap-1.5" role="group" :aria-label="t('calendar.filters.tags')">
         <p v-if="tags.length === 0" class="text-sm text-muted">{{ t('calendar.filters.noTags') }}</p>
         <button
@@ -38,13 +41,13 @@ function toggle(id: string): void {
             :key="tag.id"
             type="button"
             class="inline-flex items-center gap-1.5 rounded-xl border px-2 py-1 text-xs transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            :class="modelValue.includes(tag.id) ? 'border-primary text-text' : 'border-border text-muted hover:text-text'"
+            :class="modelValue.includes(tag.id) ? 'border-text text-text' : 'border-border text-muted hover:text-text'"
             :aria-pressed="modelValue.includes(tag.id)"
             @click="toggle(tag.id)"
         >
             <span class="h-2 w-2 shrink-0 rounded-full" :style="{ backgroundColor: tag.color }" aria-hidden="true" />
             {{ tag.name }}
-            <svg v-if="modelValue.includes(tag.id)" class="h-3 w-3 shrink-0 text-primary" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <svg v-if="modelValue.includes(tag.id)" class="h-3 w-3 shrink-0 text-text" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path
                     fill-rule="evenodd"
                     d="M16.704 5.29a1 1 0 010 1.42l-7.5 7.5a1 1 0 01-1.42 0l-3.5-3.5a1 1 0 111.42-1.42L8.5 12.08l6.79-6.79a1 1 0 011.42 0z"

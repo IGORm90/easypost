@@ -467,3 +467,33 @@ it("the publish-date picker converts through the profile timezone, not the test 
     // test runner's own timezone (which this suite otherwise runs in).
     expect((w.get('#publish-date').element as HTMLInputElement).value).toBe('2026-08-20T12:00');
 });
+
+// Final review, Important 9 (color.md §3.8: never put accent and warning
+// in one component, and §3.3: one colour, one meaning). The editor shows
+// PreviewPane's accent-tinted channel avatars, and on the very same
+// screen --warning meant four unrelated things at once: "this group is
+// locked", "confirm creating a new post", "schedule notice" and "plan
+// limit reached". CalendarEvent.vue already downgrades DRAFT to neutral
+// for exactly this rule; the editor did not. Only the plan-limit toast
+// keeps --warning.
+it('renders no --warning anywhere in the editor, leaving that colour to the plan-limit toast', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'hello world');
+
+    post.mockRejectedValueOnce(axiosError(409));
+    let publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    // The locked Toast and the schedule notice are both on screen now.
+    expect(w.text()).toContain('saving now will create it as a new post');
+    expect(w.html()).not.toMatch(/(?:bg|text|border)-warning/);
+
+    publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    // ...and now the confirmation Toast as well.
+    expect(w.text()).toContain('This will publish a second, separate post');
+    expect(w.html()).not.toMatch(/(?:bg|text|border)-warning/);
+});

@@ -560,7 +560,12 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
         <div v-if="loading" class="py-8 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
 
         <div v-else class="flex max-h-[75vh] flex-col gap-4 overflow-y-auto">
-            <Toast v-if="groupLocked" variant="warning">{{ t('editor.locked') }}</Toast>
+            <!-- variant="muted", not "warning" (color.md §3.8, final review
+                 Important 9): this screen renders accent-tinted channel
+                 avatars, and --warning here would be the third unrelated
+                 meaning that colour carried on one screen. It is reserved
+                 for the plan-limit toast. -->
+            <Toast v-if="groupLocked" variant="muted">{{ t('editor.locked') }}</Toast>
             <Toast v-if="networkError" variant="danger" @dismiss="networkError = false">{{ t('editor.networkError') }}</Toast>
             <Toast v-if="generalErrors.length" variant="danger" @dismiss="generalErrors = []">
                 <p v-for="(message, index) in generalErrors" :key="index">{{ message }}</p>
@@ -668,7 +673,7 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                 the primary action stops being one click away from a
                 duplicate publish.
             -->
-            <Toast v-if="pendingSaveType" variant="warning">
+            <Toast v-if="pendingSaveType" variant="muted">
                 <p>{{ t('editor.confirmNewPost') }}</p>
                 <div class="mt-2 flex gap-2">
                     <!--

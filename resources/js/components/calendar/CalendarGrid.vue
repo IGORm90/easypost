@@ -235,13 +235,13 @@ function goToday(): void {
        cannot see (it greps .vue files for hex; these literals live in
        node_modules).
 
-       The one that mattered: --fc-more-link-bg-color defaults to #d0d0d0
-       and --fc-more-link-text-color to `inherit`, which resolves to
-       --text (#E4EFE9) in the dark theme — 1.31:1 on the "+N more" chip,
-       and `dayMaxEvents` above means any busy day renders it as the only
-       way to reach the posts it hides. The rest were merely off-palette:
-       a pure #FF0000 now-indicator reading as a sixth colour next to
-       --danger, and a pale blue drag highlight. */
+       The one that mattered: the "+N more" chip defaulted to a light
+       grey background with an `inherit` text colour, which resolves to
+       --text in the dark theme — a contrast ratio of 1.31:1, on the
+       affordance `dayMaxEvents` above makes the only way to reach the
+       posts a busy day hides. The rest were merely off-palette: a pure
+       red now-indicator reading as a sixth colour next to --danger, and
+       a pale blue drag highlight. */
     --fc-more-link-bg-color: var(--primary-soft);
     --fc-more-link-text-color: var(--primary);
     --fc-now-indicator-color: var(--danger);

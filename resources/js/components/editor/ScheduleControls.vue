@@ -108,7 +108,10 @@ async function findSlot(): Promise<void> {
             <p class="text-xs text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
         </div>
 
-        <p v-if="notice" class="text-sm text-warning">{{ notice }}</p>
+        <!-- --muted, not --warning (color.md §3.8, final review Important
+             9): this notice shares a screen with accent-tinted avatars,
+             and --warning is reserved there for the plan-limit toast. -->
+        <p v-if="notice" class="text-sm text-muted">{{ notice }}</p>
 
         <div class="flex flex-wrap gap-2">
             <Button variant="secondary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-draft')">
