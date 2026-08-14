@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
+import { i18n } from '../../i18n'
 
 const push = vi.fn()
 
@@ -18,6 +19,41 @@ beforeEach(() => {
   push.mockClear()
   post.mockClear()
   get.mockClear()
+  i18n.global.locale.value = 'en'
+})
+
+// Final review, Important 7: detectLocale() reads navigator.language and
+// nothing else, and the stored profile locale was applied only at the
+// moment the profile form was saved. A user on an English-locale browser
+// who chose Russian got English back on the very next page load, forever.
+it('applies the user\'s stored locale on login', async () => {
+  const { useAuthStore } = await import('../auth')
+  const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'ru', email_verified_at: null, created_at: '', updated_at: '' }
+  post.mockResolvedValueOnce({ data: { user, organizations: [] } })
+
+  await useAuthStore().login('ann@example.com', 'secret1234')
+
+  expect(i18n.global.locale.value).toBe('ru')
+})
+
+it('applies the user\'s stored locale on fetchMe', async () => {
+  const { useAuthStore } = await import('../auth')
+  const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'ru', email_verified_at: null, created_at: '', updated_at: '' }
+  get.mockResolvedValueOnce({ data: { user, organizations: [] } })
+
+  await useAuthStore().fetchMe()
+
+  expect(i18n.global.locale.value).toBe('ru')
+})
+
+it('ignores a locale this build has no messages for, rather than blanking the UI', async () => {
+  const { useAuthStore } = await import('../auth')
+  const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'de', email_verified_at: null, created_at: '', updated_at: '' }
+  get.mockResolvedValueOnce({ data: { user, organizations: [] } })
+
+  await useAuthStore().fetchMe()
+
+  expect(i18n.global.locale.value).toBe('en')
 })
 
 it('login() populates user AND organizations from the response', async () => {

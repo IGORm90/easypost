@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api/client';
+import { applyUserLocale } from '../i18n';
 import router from '../router';
 
 export interface AuthUser {
@@ -57,6 +58,7 @@ export const useAuthStore = defineStore('auth', {
             this.organizations = data.organizations;
             this.ready = true;
             this.sessionExpired = false;
+            applyUserLocale(data.user.locale);
         },
 
         /**
@@ -108,6 +110,7 @@ export const useAuthStore = defineStore('auth', {
                 const { data } = await api.get<{ user: AuthUser; organizations: AuthOrganization[] }>('/auth/me');
                 this.user = data.user;
                 this.organizations = data.organizations;
+                applyUserLocale(data.user.locale);
             } catch {
                 this.user = null;
                 this.organizations = [];
