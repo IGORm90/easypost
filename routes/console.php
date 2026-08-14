@@ -51,13 +51,24 @@ Schedule::command(ScheduleTokenRefresh::class)
  * scheduled tick rather than running it inline in the scheduler
  * process, so a slow scan pass never blocks the scheduler itself.
  *
- * withoutOverlapping()/onOneServer(): identical reasoning to
- * ScheduleTokenRefresh above — a second enumeration pass starting while
- * the previous one is still running would needlessly re-probe the same
- * candidate rows (harmless per MissedPostsService's own lock-probe
- * guarantee, but pure waste), and onOneServer() keeps that true
- * regardless of how many app/php containers this project ever scales
- * to.
+ * withoutOverlapping()/onOneServer() here are WEAKER than they look, and
+ * weaker than ScheduleTokenRefresh's use of the same two methods above —
+ * post-review correction (finding 2). `Schedule::command()` registers an
+ * `Event` whose mutex spans the ENTIRE command run, start to finish.
+ * `Schedule::job()` registers a `CallbackEvent` whose callback only
+ * PUSHES the job onto the queue — the mutex (and onOneServer()'s
+ * cross-server lock) is released the instant that push returns, not
+ * when ScanMissedPostsJob::handle() finishes. So two scheduler ticks 10
+ * minutes apart are still prevented from double-pushing, but nothing
+ * here stops a genuinely slow scan from still being mid-run on a worker
+ * when the NEXT push lands, or from two independently-pushed executions
+ * overlapping after a worker restart re-delivers one. The actual overlap
+ * guard for the scan's own execution is `ScanMissedPostsJob implements
+ * ShouldBeUnique` (see that class) — a real `Cache` lock held for the
+ * job's execution window, not merely its dispatch. `withoutOverlapping()`/
+ * `onOneServer()` are kept here as a second, cheap layer against
+ * needlessly re-pushing while a push is already in flight, not as the
+ * thing that makes concurrent scans safe.
  */
 Schedule::job(new ScanMissedPostsJob)
     ->everyTenMinutes()

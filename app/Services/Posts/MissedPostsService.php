@@ -72,14 +72,18 @@ use Illuminate\Support\Facades\Log;
  * still legitimately inside that window — not merely redundant, but
  * fighting the retry/backoff mechanism Task 30 built.
  *
- * `PublishPostJob implements ShouldBeUnique`, keyed on the group id, for
- * the ENTIRE time it can be in flight: `CallQueuedHandler` only releases
- * that lock once the job finishes for good (success, or `failed()` after
- * `$tries` is exhausted) — never merely on a `release()`/redelivery
- * cycle (see that job's docblock, "Retry semantics" section, and
- * `Illuminate\Queue\CallQueuedHandler::call()`, verified directly against
- * the framework source). So for as long as a job is genuinely retrying,
- * the exact same `Cache` lock `Illuminate\Bus\UniqueLock`/
+ * `PublishPostJob implements ShouldBeUnique`, keyed on the group id.
+ * `CallQueuedHandler` releases that lock on a successful `handle()`
+ * return, or the instant the worker detects the FINAL attempt has been
+ * exceeded — `CallQueuedHandler::failed()` calls
+ * `ensureUniqueJobLockIsReleased()` as its very FIRST step, strictly
+ * BEFORE it ever invokes `$command->failed()` (verified directly
+ * against the framework source: `Illuminate\Queue\CallQueuedHandler::
+ * failed()`, not assumed) — never merely on a `release()`/redelivery
+ * cycle in between (see `PublishPostJob`'s docblock, "Retry semantics"
+ * section). So for as long as a job is genuinely between attempts
+ * (released, waiting out its backoff, about to be redelivered), the
+ * exact same `Cache` lock `Illuminate\Bus\UniqueLock`/
  * `PendingDispatch::shouldDispatch()` would check before pushing a new
  * dispatch is ALSO held. `redispatchIfOrphaned()` below probes that
  * SAME lock key (`UniqueLock::getKey()`) directly, before ever calling
@@ -98,6 +102,11 @@ use Illuminate\Support\Facades\Log;
  *    immediately (never held past this one check), and the real
  *    dispatch below acquires its own, independently.
  *
+ * Post-review correction: an earlier revision of this docblock claimed
+ * the lock was held "for the entire time the job can be in flight,
+ * success or `failed()`" — wrong. It is released BEFORE `failed()`
+ * runs, which opens exactly the window described next.
+ *
  * What this GUARANTEES, precisely: this method can never be the cause
  * of two `PublishPostJob` instances running `publishGroup()`
  * concurrently for the same group, because the actual decision of
@@ -107,22 +116,47 @@ use Illuminate\Support\Facades\Log;
  * BOTHERS to call `dispatch()` at all, purely to avoid noise (a redundant
  * dispatch attempt that would be silently skipped and logged by
  * `LogUniqueJobSkipped` anyway) and to honour the retry/backoff window.
- * There IS a narrow race between this probe's release and the real
- * `dispatch()` call (e.g. a customer clicking "retry" in between) where
- * `dispatch()` could still be silently skipped, or — in the reverse
- * case, a reschedule force-releasing the lock right after this method's
- * own dispatch acquired it — briefly put TWO `PublishPostJob` instances
- * on the queue for the same group. Neither ever produces a duplicate
- * PUBLISH: `PublishService::lockGroupIfQueued()`'s `queue_version` check
- * (Task 31) — compared under the group's own row lock — makes any job
- * carrying a superseded version a pure no-op the instant it runs, and
- * `publishChannel()`'s per-row `lockForUpdate()`/`release_id` re-check
- * (Task 30) is the independent, lower layer that stops a duplicate
- * provider call even if two same-version jobs somehow both got that
- * far. This class relies on those two layers for CORRECTNESS and uses
- * the lock probe purely for QUALITY (no needless redispatch, no log
+ * Three windows can still let this class's own `dispatch()` reach the
+ * queue while something else is concurrently touching the group, none
+ * of which ever produces a duplicate PUBLISH, for two DIFFERENT reasons
+ * depending on which window:
+ *
+ *  1. A narrow race between this probe's release and the real
+ *     `dispatch()` call (e.g. a customer clicking "retry" in between),
+ *     or a reschedule force-releasing the lock right after this
+ *     method's own dispatch acquired it — briefly two `PublishPostJob`
+ *     instances on the queue, POSSIBLY carrying two DIFFERENT
+ *     `queue_version` values (this method's own stale one, and the
+ *     reschedule/retry's freshly-bumped one). Here
+ *     `PublishService::lockGroupIfQueued()`'s `queue_version` check
+ *     (Task 31) — compared under the group's own row lock — is what
+ *     saves it: the job carrying the SUPERSEDED version is a pure no-op
+ *     the instant it runs.
+ *  2. The `failed()` window itself: the lock is gone (see above) but
+ *     `abandonGroup()` has not yet run/committed, so this method's
+ *     probe can find the lock free and dispatch a fresh job carrying
+ *     the group's CURRENT (unbumped, still-matching) `queue_version` —
+ *     racing the ORIGINAL job's own `failed()`→`abandonGroup()` call,
+ *     which carries the IDENTICAL version. `queue_version` contributes
+ *     NOTHING here — both sides match it. What actually saves this
+ *     window is `PublishService::lockGroupIfQueued()`'s and
+ *     `abandonGroup()`'s shared group-row `lockForUpdate()` PLUS Task
+ *     30's `state = QUEUE` predicate on the re-lock: whichever
+ *     transaction commits first (a fresh publish attempt succeeding, or
+ *     `abandonGroup()` marking the group `ERROR`) is the one that
+ *     sticks, and the other — reading the row fresh after waiting on
+ *     the same lock — finds `state` no longer `QUEUE` (either
+ *     `PUBLISHED` or `ERROR`) and no-ops. Neither path ever lets both
+ *     sides act.
+ *  3. Two same-version jobs somehow both reaching `publishChannel()` —
+ *     `publishChannel()`'s per-row `lockForUpdate()`/`release_id`
+ *     re-check (Task 30) is the independent, lowest layer that stops a
+ *     duplicate provider call even then.
+ *
+ * This class relies on those layers for CORRECTNESS and uses the lock
+ * probe purely for QUALITY (no needless redispatch, no log
  * noise) — see `PublishService`'s class docblock for the full
- * idempotency accounting those two layers are part of.
+ * idempotency accounting those layers are part of.
  *
  * `redispatchIfOrphaned()` deliberately does NOT bump `queue_version`:
  * this is not a reschedule, and the group's schedule generation has not
@@ -186,8 +220,35 @@ class MissedPostsService
     /**
      * See this class's docblock for the full reasoning — probes
      * `PublishPostJob`'s own `ShouldBeUnique` lock before ever calling
-     * `dispatch()`, and returns silently (no dispatch, no log) if a live
-     * job already holds it.
+     * `dispatch()`.
+     *
+     * Two outcomes once the probe finds the lock held (post-review
+     * addition, finding 3):
+     *
+     *  - `lockCouldStillBeLegitimate()` says yes -> genuinely mid-retry,
+     *    left alone entirely: no dispatch, no log, nothing.
+     *  - It says no -> the lock has OUTLIVED every window in which a
+     *    legitimate attempt for this exact schedule generation could
+     *    still hold it. This is a LEAK — a hard-killed worker (SIGKILL
+     *    mid-`handle()` never runs `CallQueuedHandler`'s release path),
+     *    or a swallowed dispatch that never got as far as running at
+     *    all — not evidence of health. Left alone, this group would sit
+     *    behind that leaked lock, silently re-skipped on every 10-minute
+     *    scan, for up to the job's own `$uniqueFor` (3600s = up to an
+     *    hour) — the "declines to act on precisely the state it exists
+     *    to fix" gap the review flagged. Logged at `error` (not
+     *    `warning`) specifically so this is distinguishable from an
+     *    ordinary recovery, and the lock is force-released (matching
+     *    `PostGroupService::dispatchPublishIfQueued(forceRedispatch:
+     *    true)`'s own `UniqueLock::release()` call) before dispatching,
+     *    rather than merely logging and leaving the leak for the NEXT
+     *    scan to rediscover.
+     *
+     * Logging happens AFTER `dispatch()`, not before (review finding 5,
+     * minor) — logging first left a log line asserting a redispatch had
+     * happened in the one case it could NOT be trusted to have (the
+     * dispatch itself being silently swallowed by `LogUniqueJobSkipped`'s
+     * own race window — see this class's docblock).
      */
     private function redispatchIfOrphaned(PostGroup $group): void
     {
@@ -201,22 +262,86 @@ class MissedPostsService
         // release() below gives it straight back).
         $probe = Cache::lock($lockKey, 10);
 
-        if (! $probe->get()) {
+        if ($probe->get()) {
+            $probe->release();
+            $this->dispatchRedispatch($group, 'missed_posts.redispatched');
+
+            return;
+        }
+
+        if ($this->lockCouldStillBeLegitimate($group, $job)) {
             // Something else — a still-retrying PublishPostJob attempt —
-            // already holds this lock. Genuinely mid-retry, not
+            // plausibly holds this lock. Genuinely mid-retry, not
             // orphaned: leave it alone entirely.
             return;
         }
 
-        $probe->release();
+        Log::error('missed_posts.leaked_lock', [
+            'post_group_id' => $group->id,
+            'queue_version' => $group->queue_version,
+            'publish_date' => $group->publish_date?->toIso8601String(),
+            'unique_for' => $job->uniqueFor,
+        ]);
 
-        Log::warning('missed_posts.redispatched', [
+        app(UniqueLock::class)->release($job);
+
+        $this->dispatchRedispatch($group, 'missed_posts.leaked_lock_redispatched');
+    }
+
+    /**
+     * True iff a lock still held for `$group`'s `PublishPostJob` could
+     * plausibly belong to a LEGITIMATE attempt for the group's CURRENT
+     * schedule generation, rather than a leak — see
+     * `redispatchIfOrphaned()`'s docblock.
+     *
+     * `PublishPostJob`'s `ShouldBeUnique` lock is acquired at DISPATCH
+     * time with a fixed TTL (`$uniqueFor`), independent of `->delay()`
+     * (see `PostGroupService::dispatchPublishIfQueued()`'s docblock) —
+     * so the absolute latest moment a lock belonging to a dispatch for
+     * THIS group's current `publish_date` could still be alive is
+     * `publish_date + $job->uniqueFor` (the best case: the dispatch call
+     * happened AT `publish_date`, i.e. an immediate/near-term
+     * dispatch — every other case, including the common "scheduled well
+     * ahead of time and never touched again" one, only expires EARLIER
+     * than that, never later). Once `now()` passes that point, a
+     * currently-held lock cannot belong to a still-legitimately-running
+     * attempt for this schedule generation, full stop.
+     *
+     * This bound is deliberately conservative in the OTHER direction: it
+     * can still read "could be legitimate" for a lock that has, in
+     * fact, already naturally expired well before `publish_date` (true
+     * for any post originally scheduled more than `$uniqueFor` ahead of
+     * its own due date, which never gets a fresh dispatch/lock unless
+     * it is rescheduled or retried) — in that case this class's PROBE
+     * itself would already have found the lock absent and taken the
+     * "genuinely orphaned" branch above, so this method is never even
+     * consulted for it. This method only runs at all once the probe
+     * finds a lock PRESENT, so it only ever needs to decide "is this
+     * presence still plausible", never "should a lock exist here".
+     */
+    private function lockCouldStillBeLegitimate(PostGroup $group, PublishPostJob $job): bool
+    {
+        if ($group->publish_date === null) {
+            // Defensive only: redispatchOrphaned()'s own query already
+            // requires publish_date < now() - OVERDUE_MINUTES, which a
+            // null column can never satisfy, so this branch is
+            // unreachable via that caller. Treated as "could still be
+            // legitimate" (never force-release) rather than guessing.
+            return true;
+        }
+
+        return $group->publish_date->isAfter(now()->subSeconds($job->uniqueFor));
+    }
+
+    private function dispatchRedispatch(PostGroup $group, string $logMessage): void
+    {
+        PublishPostJob::dispatch($group->id, $group->queue_version);
+
+        Log::warning($logMessage, [
             'post_group_id' => $group->id,
             'queue_version' => $group->queue_version,
             'publish_date' => $group->publish_date?->toIso8601String(),
         ]);
-
-        PublishPostJob::dispatch($group->id, $group->queue_version);
     }
 
     /**
@@ -256,14 +381,44 @@ class MissedPostsService
      * docblock and `buildErrorSummary()` below for why the value it
      * writes is a short customer-facing sentence, not a raw exception
      * message.
+     *
+     * The claim step is a single conditional `UPDATE ... WHERE
+     * notified_at IS NULL`, not a read-then-`save()` — post-review fix
+     * (finding 2). `ScanMissedPostsJob implements ShouldBeUnique` now
+     * makes two full scan EXECUTIONS overlapping unlikely, but that lock
+     * is a second layer, not the only one this method should lean on
+     * (see that job's and routes/console.php's docblocks for why
+     * `withoutOverlapping()`/`onOneServer()` alone do not cover a
+     * `Schedule::job()` push the way they cover a `Schedule::command()`
+     * run). A plain `UPDATE`'s `WHERE` clause is re-evaluated by
+     * Postgres against the row's current, post-lock-wait value before
+     * the write applies — the standard guarantee every `UPDATE`
+     * statement gives against a concurrent writer, independent of any
+     * scheduler-level mutex — so of two overlapping calls racing on the
+     * SAME group, only the one that is still first to see `notified_at
+     * IS NULL` at the moment its `UPDATE` actually executes affects a
+     * row; the other affects zero rows and must not send anything.
      */
     private function notifyOne(PostGroup $group): void
     {
-        $group->error ??= $this->buildErrorSummary($group);
-        $group->notified_at = now();
-        $group->save();
+        $error = $group->error ?? $this->buildErrorSummary($group);
+
+        $claimed = PostGroup::withoutGlobalScope('organization')
+            ->whereKey($group->id)
+            ->whereNull('notified_at')
+            ->update(['error' => $error, 'notified_at' => now()]);
+
+        if ($claimed !== 1) {
+            // Lost the race to another overlapping scan (or the group
+            // was already notified by the time this UPDATE ran) — that
+            // other execution already sent (or is sending) the one
+            // notification this group gets. Sending here too would be
+            // exactly the double-email this fix exists to prevent.
+            return;
+        }
 
         if ($group->creator !== null) {
+            $group->error = $error;
             $group->creator->notify(new PostFailedNotification($group));
         }
     }

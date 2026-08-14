@@ -624,11 +624,28 @@ class PostGroupService
      * A no-op unless `$resultingState` is `QUEUE`: nothing about a
      * `DRAFT` write needs a fresh dispatch generation, since nothing is
      * about to be dispatched for it.
+     *
+     * Task 32 review finding 1 (CRITICAL): also clears `notified_at`
+     * here, in the SAME place `queue_version` is bumped — every path
+     * that re-enters `QUEUE` (a fresh dispatch generation) goes through
+     * this one method, `retry()` included. Without this, a group
+     * `MissedPostsService::notifyFailed()` already emailed once stays
+     * permanently un-notifiable: the customer retries, it fails again,
+     * `notifyFailed()`'s `whereNull('notified_at')` filter skips it
+     * forever, and — because `retry()` also clears `error` on the way
+     * back into `QUEUE` — `post_groups.error` never gets rewritten
+     * either (`buildErrorSummary()` is gated on the exact same
+     * never-reached notify pass), leaving `GET /api/posts/errors` and
+     * the calendar rendering a genuinely re-failed post with no reason
+     * at all. Resetting it here, alongside the version bump, is what
+     * makes "this is a fresh generation" apply to the notify flag too,
+     * not just to `PublishPostJob`'s own staleness check.
      */
     private function bumpQueueVersionIfQueuing(PostGroup $group, PostState $resultingState): void
     {
         if ($resultingState === PostState::QUEUE) {
             $group->queue_version = $group->queue_version + 1;
+            $group->notified_at = null;
         }
     }
 
