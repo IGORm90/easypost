@@ -283,7 +283,17 @@ final class MediaUploadService
 
         for ($hop = 0; $hop <= $this->importMaxRedirects(); $hop++) {
             try {
-                SafeRemoteHost::assertSafeUrl($currentUrl, ['http', 'https']);
+                // Pinned, not merely validated -- final-review batch 2,
+                // Critical 1 (proven live: `http://0177.0.0.1:PORT/`
+                // passed this check, because the resolver normalises the
+                // octal literal to a public 177.0.0.1, and cURL then
+                // parsed the SAME string its own way and fetched a
+                // loopback server's body). $pin hands cURL the exact
+                // address this call validated, so the two parsers can no
+                // longer disagree, and the rebinding window between this
+                // check and the request below (Important 6) is closed
+                // with it.
+                [, $pin] = SafeRemoteHost::assertSafeUrlPinned($currentUrl, ['http', 'https']);
             } catch (UnsafeRemoteHostException) {
                 throw MediaImportException::forUnsafeUrl();
             }
@@ -356,7 +366,7 @@ final class MediaUploadService
                     ->withOptions([
                         'sink' => $sink,
                         'allow_redirects' => false,
-                    ])
+                    ] + $pin)
                     ->get($currentUrl);
             } catch (\Throwable $e) {
                 if (is_resource($sink)) {

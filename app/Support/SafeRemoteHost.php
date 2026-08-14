@@ -36,18 +36,50 @@ use App\Support\Exceptions\UnsafeRemoteHostException;
  * check that only runs once, at connect time, is a speed bump, not a
  * guard.
  *
- * Residual risk (stated plainly, not implied away): this validates the
- * DNS answer at the moment of the check, then a SEPARATE later HTTP
- * request resolves the same hostname again to actually connect -- a
- * classic TOCTOU/DNS-rebinding window if the attacker controls
- * authoritative DNS for the hostname and can flip the answer between
- * those two lookups. Fully closing that requires resolving once and
- * pinning the validated IP into the actual outbound connection (e.g. a
- * Guzzle `curl.resolve`/custom DNS resolver), which this class does not
- * do. What it DOES close: an admin directly typing a private/loopback/
- * metadata address or hostname, and a previously-safe host whose DNS
- * record was updated to point somewhere unsafe since the channel was
- * connected (caught on next use, not just at connect time).
+ * ## Two parsers, one host: why assertNotAmbiguousLiteral() exists
+ *
+ * Final-review batch 2, Critical 1 -- proven live, not inferred: an
+ * octal-dotted host such as `0177.0.0.1` is REJECTED by
+ * `filter_var($host, FILTER_VALIDATE_IP)` (a leading zero is not a valid
+ * decimal quad), so it used to fall through to `dns_get_record()`, which
+ * this project's resolver answers with `177.0.0.1` -- a public address
+ * the guard then happily approved. cURL, meanwhile, parses the ORIGINAL
+ * host string with its own inet_aton logic and connects to `127.0.0.1`.
+ * The reviewer retrieved a loopback server's response body through
+ * `MediaUploadService::download()` this way; so did this batch, before
+ * the fix (see the report). Every relative of that trick -- `0x7f.0.0.1`,
+ * `127.1`, `017700000001`, `2130706433` -- is the same bug; they were
+ * only "blocked" on the reviewer's machine because that resolver
+ * happened to answer NXDOMAIN, which is a property of a resolver, not of
+ * this guard.
+ *
+ * Two independent closures, because either alone leaves a gap:
+ *
+ *  1. assertNotAmbiguousLiteral() refuses, BEFORE DNS is consulted, any
+ *     host whose labels are ALL numeric/hex/octal -- i.e. anything cURL
+ *     (or any other inet_aton-style parser) could still read as an IP
+ *     literal even though FILTER_VALIDATE_IP would not. Such a string is
+ *     never a legitimate hostname anyway: no public TLD is all-digits.
+ *  2. pinning (assertSafeUrlPinned()/pinOptions()) removes the second
+ *     parser from the picture entirely: the caller hands cURL the exact
+ *     IP this class validated, via CURLOPT_RESOLVE, so the address that
+ *     was checked IS the address connected to. This also closes the
+ *     TOCTOU/DNS-rebinding window described below and the "redirect to a
+ *     host nobody validated" hop, since a pinned request cannot be
+ *     re-pointed by a second lookup.
+ *
+ * Residual risk (stated plainly, not implied away): assertSafeHost() on
+ * its own still validates the DNS answer at the moment of the check,
+ * and a caller that then issues an ordinary HTTP request by hostname
+ * resolves it a SECOND time to actually connect -- a classic
+ * TOCTOU/DNS-rebinding window if the attacker controls authoritative DNS
+ * for the hostname and can flip the answer between those two lookups.
+ * That is exactly what pinning closes, and every caller in this codebase
+ * that fetches a user- or remote-influenced host now pins
+ * (MediaUploadService::download(), MastodonProvider, DiscordProvider,
+ * SlackProvider's upload url). A caller that only calls assertSafeHost()
+ * and does not pin still carries the window; that is a property of the
+ * CALL SITE now, not of this class.
  */
 final class SafeRemoteHost
 {
@@ -115,6 +147,27 @@ final class SafeRemoteHost
      */
     public static function assertSafeUrl(string $url, array $allowedSchemes = ['https']): string
     {
+        return self::assertSafeUrlPinned($url, $allowedSchemes)[0];
+    }
+
+    /**
+     * assertSafeUrl(), plus the Guzzle options that PIN the connection to
+     * the addresses this call just validated -- final-review batch 2,
+     * Critical 1/Important 6. Returns `[host, options]`; the caller must
+     * pass those options to the request it is about to make
+     * (`->withOptions($options)`), which is what makes the address that
+     * was checked the address actually connected to.
+     *
+     * Resolution happens exactly ONCE, inside the assertSafeHost() call
+     * below, and the very same list is what gets pinned -- a second
+     * lookup here would reintroduce precisely the TOCTOU window pinning
+     * exists to close (validate answer A, connect to answer B).
+     *
+     * @param  list<string>  $allowedSchemes
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    public static function assertSafeUrlPinned(string $url, array $allowedSchemes = ['https']): array
+    {
         $parts = parse_url($url);
 
         // Deliberately does NOT embed $url in the exception (review
@@ -143,9 +196,40 @@ final class SafeRemoteHost
         }
 
         $host = strtolower($parts['host']);
-        self::assertSafeHost($host);
+        $ips = self::assertSafeHost($host);
+        $port = isset($parts['port']) ? (int) $parts['port'] : ($scheme === 'http' ? 80 : 443);
 
-        return $host;
+        return [$host, self::pinOptions($host, $ips, $port)];
+    }
+
+    /**
+     * Guzzle/cURL options pinning $host:$port to exactly $ips, so the
+     * outbound connection cannot land anywhere other than the addresses
+     * assertSafeHost() approved. `CURLOPT_RESOLVE` is a pre-populated
+     * DNS cache entry for that host/port pair: cURL uses it instead of
+     * resolving, so there is no second lookup for a rebinding attacker to
+     * win and no second parser to disagree about what the host string
+     * means.
+     *
+     * A literal-IP host needs no entry (there was nothing to resolve),
+     * and an empty $ips list cannot happen for a host that passed
+     * assertSafeHost() -- both are returned as "no pinning" rather than
+     * as a malformed option cURL would reject.
+     *
+     * Inert under `Http::fake()` (no cURL handler runs), which is why the
+     * tests that matter for this defect drive real cURL -- see
+     * tests/Feature/Media/ImportFromUrlSsrfTest.php.
+     *
+     * @param  list<string>  $ips
+     * @return array<string, mixed>
+     */
+    public static function pinOptions(string $host, array $ips, int $port = 443): array
+    {
+        if ($ips === [] || filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return [];
+        }
+
+        return ['curl' => [CURLOPT_RESOLVE => ["{$host}:{$port}:".implode(',', $ips)]]];
     }
 
     /**
@@ -155,9 +239,17 @@ final class SafeRemoteHost
      * (fail closed -- an unresolvable host is not "safe by default", it
      * is unusable either way) or if any resolved address falls in a
      * private/loopback/link-local/reserved/multicast range.
+     *
+     * Returns the validated addresses so a caller can PIN them into the
+     * outbound request (see pinOptions()) instead of letting the HTTP
+     * client resolve the name a second time -- final-review batch 2.
+     *
+     * @return list<string>
      */
-    public static function assertSafeHost(string $host): void
+    public static function assertSafeHost(string $host): array
     {
+        self::assertNotAmbiguousLiteral($host);
+
         $ips = self::resolveIps($host);
 
         if ($ips === []) {
@@ -174,6 +266,55 @@ final class SafeRemoteHost
             if ($public === false || self::isMulticast($ip) || self::isCgnat($ip)) {
                 throw UnsafeRemoteHostException::forHost($host, "resolves to a non-public address [{$ip}]");
             }
+        }
+
+        return $ips;
+    }
+
+    /**
+     * Final-review batch 2, Critical 1 -- the pre-DNS half of the fix
+     * (see this class's docblock for the proven bypass this closes).
+     *
+     * Rejects any host that FILTER_VALIDATE_IP does NOT accept but that
+     * an inet_aton-style parser (cURL's, among others) still would: a
+     * dotted string whose every label is decimal, octal (`0177`) or hex
+     * (`0x7f`), including the short forms with fewer than four labels
+     * (`127.1`) and the bare-integer form (`2130706433`). For all of
+     * these, this class's check and cURL's connection would be looking at
+     * two different addresses -- so the string is refused outright rather
+     * than resolved and approved on the strength of whatever the local
+     * resolver happens to make of it. Nothing legitimate is lost: no
+     * public hostname's rightmost label is all-numeric, and a genuine IP
+     * literal (which FILTER_VALIDATE_IP accepts) never reaches here.
+     *
+     * Also rejects a trailing dot (`example.com.`) and any empty label:
+     * a second, smaller place where this class's notion of a host and a
+     * resolver's differ, with no legitimate caller behind it.
+     */
+    private static function assertNotAmbiguousLiteral(string $host): void
+    {
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return;
+        }
+
+        $labels = explode('.', $host);
+
+        foreach ($labels as $label) {
+            if ($label === '') {
+                throw UnsafeRemoteHostException::forHost($host, 'is not a well-formed hostname');
+            }
+        }
+
+        $numericLabels = array_filter(
+            $labels,
+            static fn (string $label): bool => preg_match('/^(0[xX][0-9a-fA-F]+|[0-9]+)$/', $label) === 1,
+        );
+
+        if (count($numericLabels) === count($labels)) {
+            throw UnsafeRemoteHostException::forHost(
+                $host,
+                'is an ambiguous numeric host that an HTTP client could read as an IP literal',
+            );
         }
     }
 

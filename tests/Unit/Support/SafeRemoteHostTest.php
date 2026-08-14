@@ -177,3 +177,91 @@ it('still rejects a non-http(s) scheme even when http/https are both allowed', f
     expect(fn () => SafeRemoteHost::assertSafeUrl('ftp://example.com/file.jpg', ['http', 'https']))
         ->toThrow(UnsafeRemoteHostException::class);
 });
+
+/*
+ * Final-review batch 2, Critical 1 — the octal/hex/short-form IP literal
+ * family, proven live against a loopback server through the real
+ * MediaUploadService::download() before the fix.
+ *
+ * Every case below fakes DNS so the host resolves to a PUBLIC address.
+ * That is the whole point: on the reviewer's machine (and in this
+ * project's container) some of these were "blocked" only because the
+ * local resolver answered NXDOMAIN, and `0177.0.0.1` was NOT — it
+ * resolved to 177.0.0.1, a public address the guard approved, while cURL
+ * connected to 127.0.0.1. A test that let the resolver decide would pass
+ * against the broken code on one machine and fail on another. These
+ * assert the guard refuses the STRING, whatever DNS says about it.
+ */
+it('rejects a numeric host an HTTP client could read as an IP literal, even when DNS says it is public', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost($host))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with([
+    '0177.0.0.1',        // octal-dotted: resolves to 177.0.0.1, connects to 127.0.0.1
+    '0x7f.0.0.1',        // hex label
+    '127.1',             // short form
+    '017700000001',      // single octal integer
+    '2130706433',        // single decimal integer
+    '0x7f000001',        // single hex integer
+    '192.168.001.001',   // zero-padded private address
+]);
+
+it('rejects the same family through a full URL', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeUrl("http://{$host}/x.png", ['http', 'https']))
+        ->toThrow(UnsafeRemoteHostException::class);
+})->with(['0177.0.0.1', '0x7f.0.0.1', '127.1', '017700000001', '2130706433']);
+
+it('still accepts an ordinary hostname whose labels are only partly numeric', function (string $host) {
+    SafeRemoteHost::fake([$host => ['198.51.100.10']]);
+
+    SafeRemoteHost::assertSafeHost($host);
+})->with(['123.example.com', 'mastodon.social', '0x7f.example.com', 'a1.b2.test'])->throwsNoExceptions();
+
+it('rejects a trailing-dot host, where this guard and a resolver disagree about the name', function () {
+    SafeRemoteHost::fake(['example.com.' => ['198.51.100.10'], 'example.com' => ['198.51.100.10']]);
+
+    expect(fn () => SafeRemoteHost::assertSafeHost('example.com.'))
+        ->toThrow(UnsafeRemoteHostException::class);
+});
+
+/*
+ * Pinning (Critical 1's real closure, and Important 6's): the caller is
+ * handed the exact addresses this class validated, in the form cURL uses
+ * INSTEAD of resolving — so there is no second lookup and no second
+ * parser. tests/Feature/Media/ImportFromUrlPinningTest.php proves the
+ * option actually governs where real cURL connects; these prove the
+ * value's shape and that it comes from the validated answer.
+ */
+it('returns pinning options carrying exactly the validated addresses', function () {
+    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10', '198.51.100.11']]);
+
+    [$host, $options] = SafeRemoteHost::assertSafeUrlPinned('https://mastodon.social/api/v1/apps');
+
+    expect($host)->toBe('mastodon.social')
+        ->and($options['curl'][CURLOPT_RESOLVE])->toBe(['mastodon.social:443:198.51.100.10,198.51.100.11']);
+});
+
+it('pins the URL\'s own port, not a default', function () {
+    SafeRemoteHost::fake(['files.example.com' => ['198.51.100.10']]);
+
+    [, $options] = SafeRemoteHost::assertSafeUrlPinned('http://files.example.com:8080/a.png', ['http', 'https']);
+
+    expect($options['curl'][CURLOPT_RESOLVE])->toBe(['files.example.com:8080:198.51.100.10']);
+});
+
+it('pins nothing for a literal IP host (there was no resolution to pin)', function () {
+    SafeRemoteHost::fake([]);
+
+    [, $options] = SafeRemoteHost::assertSafeUrlPinned('https://203.0.113.5/x');
+
+    expect($options)->toBe([]);
+});
+
+it('returns the validated addresses from assertSafeHost so a caller can pin them', function () {
+    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10']]);
+
+    expect(SafeRemoteHost::assertSafeHost('mastodon.social'))->toBe(['198.51.100.10']);
+});
