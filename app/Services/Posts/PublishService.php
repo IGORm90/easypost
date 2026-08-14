@@ -223,6 +223,7 @@ class PublishService
                 $group->id,
                 (string) $integrationId,
                 $posts,
+                $queueVersion,
             );
 
             if (! $channelNeedsRetry) {
@@ -242,7 +243,7 @@ class PublishService
             throw new PublishRetryNeededException($retryAfterSeconds);
         }
 
-        $this->finalizeGroupState($group);
+        $this->finalizeGroupState($group->id, $queueVersion);
     }
 
     /**
@@ -321,7 +322,10 @@ class PublishService
 
             $this->markAllError($stillPending, $reason);
 
-            $this->finalizeGroupState($group);
+            // Already inside this transaction's group lock — finalizeGroupState()
+            // re-takes it (a no-op for a lock this transaction already holds)
+            // and re-checks the same two predicates this method just checked.
+            $this->finalizeGroupState($group->id, $queueVersion);
         });
     }
 
@@ -455,9 +459,10 @@ class PublishService
      * group's other channels from being attempted (brief point 7).
      *
      * @param  Collection<int, Post>  $posts  This channel's full chain, in order (published and unpublished) — a snapshot taken BEFORE the transaction below, used only to derive which ids are candidates; never trusted for anything that decides what gets sent to the provider (see the anchor note below).
+     * @param  int|null  $queueVersion  The schedule generation this run belongs to, threaded down from `publishGroup()` — re-checked inside the transaction below, immediately before the provider call. See that check's own comment (final-review Critical 2).
      * @return array{0: bool, 1: ?int}
      */
-    private function publishChannel(string $postGroupId, string $integrationId, Collection $posts): array
+    private function publishChannel(string $postGroupId, string $integrationId, Collection $posts, ?int $queueVersion = null): array
     {
         $pending = $posts
             ->filter(fn (Post $post): bool => $post->release_id === null && $post->state === PostState::QUEUE)
@@ -471,7 +476,7 @@ class PublishService
             return [false, null];
         }
 
-        return DB::transaction(function () use ($postGroupId, $integrationId, $pending): array {
+        return DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion): array {
             // Re-lock exactly the rows about to be published, inside the
             // SAME transaction as the provider call and its persistence
             // — see the class docblock's idempotency section, point 4.
@@ -490,6 +495,58 @@ class PublishService
             }
 
             $pending = $pending->filter(fn (Post $post): bool => $lockedIds->contains($post->id))->values();
+
+            // Re-read the GROUP, inside this transaction, after the row
+            // locks above have resolved — final-review fix, Critical 2,
+            // reproduced with two forked processes against real Postgres
+            // (`PublishRaceTest`). Before this, `queue_version` and
+            // `publish_date` were read exactly ONCE per run, in
+            // `lockGroupIfQueued()`, whose lock is committed immediately;
+            // nothing between that transaction and each channel's
+            // provider call looked at them again. A calendar drag
+            // (`PostGroupService::updateDate()`) landing while an earlier
+            // channel's provider call was in flight therefore changed
+            // nothing this channel checks: it touches `post_groups` only,
+            // so this channel's rows still satisfy
+            // `release_id IS NULL AND state = QUEUE`, and the run went on
+            // to publish them AT THE OLD TIME — observed in the review's
+            // run as a group dragged from 07:22 to 08:22 whose channel B
+            // still went out at 07:22. Irrevocable: the message is live,
+            // and `guardEditable()` 409s every later edit.
+            //
+            // A plain read, deliberately NOT `lockForUpdate()`: this
+            // transaction already holds POST row locks, so locking the
+            // group here would take the two locks in the opposite order
+            // to `PostGroupService::lockGroup()` -> `guardEditable()` and
+            // `abandonGroup()` (group first, posts second) and create a
+            // deadlock cycle where there is currently none. Under READ
+            // COMMITTED a fresh statement sees every transaction
+            // committed before it starts — and any writer that could have
+            // changed this row was, by construction, blocked behind the
+            // post-row lock this transaction is holding, so it has either
+            // committed (and is visible to this SELECT) or not started.
+            //
+            // Aborting is "no retry, no error": the superseding
+            // generation has its own job, and this run has no standing to
+            // mark anything failed on its behalf. `finalizeGroupState()`
+            // applies the same two predicates and will likewise decline
+            // to settle the group.
+            /** @var PostGroup|null $group */
+            $group = PostGroup::withoutGlobalScope('organization')
+                ->whereKey($postGroupId)
+                ->first();
+
+            if ($group === null || $group->state !== PostState::QUEUE) {
+                return [false, null];
+            }
+
+            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+                return [false, null];
+            }
+
+            if (! $this->isDueNow($group)) {
+                return [false, null];
+            }
 
             /** @var Integration|null $integration */
             $integration = Integration::withoutGlobalScope('organization')->find($integrationId);
@@ -633,14 +690,74 @@ class PublishService
      * group has settled into either `PUBLISHED` or `ERROR` for this run.
      * PUBLISHED iff every single one of them is; otherwise ERROR (brief
      * point 9).
+     *
+     * Takes an ID and re-reads the row under `lockForUpdate()` rather
+     * than accepting the caller's in-memory `PostGroup` — final-review
+     * fix, Critical 1, reproduced with two forked processes against real
+     * Postgres (`PublishRaceTest`). `publishGroup()` locks the group in
+     * `lockGroupIfQueued()` and COMMITS that lock immediately (the
+     * per-channel commit boundary — see the class docblock), so by the
+     * time this runs, at the very end of a run that spans several
+     * provider calls, the caller's instance can be arbitrarily stale.
+     * `PostStateMachine::transition()` validates only the IN-MEMORY
+     * `$from` and then issues a blind `save()` (UPDATE by primary key),
+     * so this method used to overwrite whatever a concurrent writer had
+     * committed in between. The observed outcome: an edit landing
+     * mid-run (`PostGroupService::update()`, allowed through because no
+     * channel had committed a `release_id` yet) recreated the group's
+     * posts as `QUEUE` at `queue_version` 2 — and then THIS method,
+     * still holding the version-1 instance, stamped the group `ERROR`.
+     * The version-2 job then found `ERROR != QUEUE` and no-opped, and
+     * nothing recovers that: `MissedPostsService::redispatchOrphaned()`
+     * scans `state = QUEUE` only. The customer's edited post is lost,
+     * permanently and silently.
+     *
+     * Both predicates are load-bearing and both are re-checked HERE,
+     * under the lock, not by the caller beforehand:
+     *
+     *  - `state === QUEUE`: another run (or `abandonGroup()`) may already
+     *    have settled this group. Nothing may transition it out of a
+     *    terminal state, and `PostStateMachine` would throw on
+     *    `PUBLISHED -> *` anyway — after this run's own writes, from
+     *    inside the caller's transaction in `abandonGroup()`'s case.
+     *  - `queue_version === $queueVersion`: the group has since been
+     *    superseded by a NEW schedule generation, which owns the group's
+     *    final state now. This run's verdict is about rows that generation
+     *    has already replaced or rescheduled, and must be discarded
+     *    entirely. `null` means "no opinion" (see `publishGroup()`), and
+     *    then only the state check applies.
+     *
+     * Lock ORDER is preserved: group first, posts second — the same order
+     * `PostGroupService::lockGroup()` -> `guardEditable()` and
+     * `abandonGroup()` take, so this introduces no new deadlock cycle.
+     * `abandonGroup()` calls this from INSIDE its own transaction, which
+     * already holds this exact row lock; re-taking a lock the same
+     * transaction holds is free, and the nested `DB::transaction()` is a
+     * savepoint, not a second top-level transaction.
      */
-    private function finalizeGroupState(PostGroup $group): void
+    private function finalizeGroupState(string $postGroupId, ?int $queueVersion): void
     {
-        $hasUnpublished = Post::withoutGlobalScope('organization')
-            ->where('post_group_id', $group->id)
-            ->where('state', '!=', PostState::PUBLISHED->value)
-            ->exists();
+        DB::transaction(function () use ($postGroupId, $queueVersion): void {
+            /** @var PostGroup|null $group */
+            $group = PostGroup::withoutGlobalScope('organization')
+                ->whereKey($postGroupId)
+                ->lockForUpdate()
+                ->first();
 
-        $this->stateMachine->transition($group, $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED);
+            if ($group === null || $group->state !== PostState::QUEUE) {
+                return;
+            }
+
+            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+                return;
+            }
+
+            $hasUnpublished = Post::withoutGlobalScope('organization')
+                ->where('post_group_id', $group->id)
+                ->where('state', '!=', PostState::PUBLISHED->value)
+                ->exists();
+
+            $this->stateMachine->transition($group, $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED);
+        });
     }
 }

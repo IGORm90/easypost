@@ -76,6 +76,19 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     private array $publishedChains = [];
 
     /**
+     * Content-keyed, NON-one-shot behaviours applied by post() — see
+     * onPostContaining(). Unlike $nextPostException (which fires on
+     * whichever call happens to come first), these select by what is
+     * actually being sent, so a test driving a multi-channel group
+     * through the real PublishService can say "channel A fails, channel
+     * B is slow" without depending on the order publishChannel() happens
+     * to visit channels in.
+     *
+     * @var array<string, array{sleepMicroseconds: int, exception: ?Throwable}>
+     */
+    private array $contentBehaviours = [];
+
+    /**
      * Every segment ever successfully published by post(), across all
      * calls (including segments published just before a partial
      * failure), in publish order. Each entry records whether it was
@@ -278,11 +291,36 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     }
 
     /**
+     * Applies, on EVERY post() call whose chain contains a segment whose
+     * content contains $needle: first a real `usleep($sleepMicroseconds)`
+     * INSIDE post() — i.e. while `PublishService::publishChannel()`'s
+     * transaction is open and its row locks are held, which is exactly
+     * the window every concurrency race in this pipeline lives in — then
+     * $exception, if one was given.
+     *
+     * Selecting by content rather than by call order is what lets a
+     * fork-based test drive a genuinely multi-channel group through the
+     * real production path: `PublishService::loadChains()` decides which
+     * channel is attempted first, and a test must not have to guess.
+     */
+    public function onPostContaining(string $needle, ?Throwable $exception = null, int $sleepMicroseconds = 0): self
+    {
+        $this->contentBehaviours[$needle] = [
+            'sleepMicroseconds' => $sleepMicroseconds,
+            'exception' => $exception,
+        ];
+
+        return $this;
+    }
+
+    /**
      * @param  PostPayloadDto[]  $chain
      * @return array<int, PostResultDto>
      */
     public function post(Integration $integration, array $chain): array
     {
+        $this->applyContentBehaviour($chain);
+
         if ($this->nextPostException !== null) {
             $exception = $this->nextPostException;
             $this->nextPostException = null;
@@ -325,6 +363,30 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
         $this->publishedChains[] = $chain;
 
         return $results;
+    }
+
+    /**
+     * @param  PostPayloadDto[]  $chain
+     */
+    private function applyContentBehaviour(array $chain): void
+    {
+        foreach ($this->contentBehaviours as $needle => $behaviour) {
+            foreach ($chain as $payload) {
+                if (! str_contains($payload->content, $needle)) {
+                    continue;
+                }
+
+                if ($behaviour['sleepMicroseconds'] > 0) {
+                    usleep($behaviour['sleepMicroseconds']);
+                }
+
+                if ($behaviour['exception'] !== null) {
+                    throw $behaviour['exception'];
+                }
+
+                return;
+            }
+        }
     }
 
     private function fakeResult(?string $attachedTo): PostResultDto
@@ -411,6 +473,7 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
         $this->nextAuthenticateException = null;
         $this->nextRefreshException = null;
         $this->nextPartialFailure = null;
+        $this->contentBehaviours = [];
         $this->refusesReplyToReleaseId = false;
         $this->publishedChains = [];
         $this->publishedSegments = [];

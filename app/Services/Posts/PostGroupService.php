@@ -299,6 +299,23 @@ class PostGroupService
      * `lockForUpdate()`/`release_id` filter, are what keep this safe
      * against the duplicate-publish risk force-releasing a lock would
      * otherwise reopen — see `dispatchPublishIfQueued()`'s docblock.
+     *
+     * Final-review correction (Critical 2): "wins the race for the lock"
+     * above is about the DISPATCH race only — which job instance gets
+     * enqueued — and an earlier revision of this docblock overstated it
+     * as covering the publish race too. It never did. A run that is
+     * ALREADY in flight when this method commits holds no lock this
+     * method competes for: `PublishService::lockGroupIfQueued()` commits
+     * its group lock immediately (the per-channel commit boundary), and
+     * a drag landing between two of that run's channels used to change
+     * nothing the remaining channels checked — they re-locked their own
+     * rows on `release_id IS NULL AND state = QUEUE`, both still true
+     * after a reschedule, and published at the OLD time. What actually
+     * closes that is `publishChannel()` re-reading `queue_version` and
+     * `publish_date` INSIDE its own transaction, immediately before the
+     * provider call, and aborting the channel when this method's
+     * `bumpQueueVersionIfQueuing()` has moved past it. Proven with two
+     * forked processes in `tests/Feature/Publishing/PublishRaceTest.php`.
      */
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
