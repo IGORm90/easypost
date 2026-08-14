@@ -4,11 +4,11 @@
 
 **Goal:** Собрать минимально жизнеспособный планировщик постов в соцсети: аккаунты и организации → подключение 5 каналов → календарь и редактор постов → медиа-библиотека → фоновая публикация с ретраями → централизованные лимиты тарифов (без приёма оплаты).
 
-**Architecture:** Монолит Laravel 11 (PHP 8.3) отдаёт REST API под `/api` и одностраничное Vue 3 SPA с одного домена. Аутентификация — Sanctum в cookie-режиме (SPA), без JWT. Вся работа с соцсетями изолирована за `SocialProviderInterface` + реестр провайдеров: платформо-специфичной логики вне классов провайдеров нет. Отложенная публикация — Laravel Queue (Redis) + Horizon вместо Temporal: джоба ставится с `delay` до `publish_date`, идемпотентность обеспечивается state-machine поста и уникальностью джобы по `post_group`. Тариф хранится полем `organizations.plan` и проставляется вручную/сидером; проверки лимитов живут в `PlanLimitService` + middleware, а не в контроллерах.
+**Architecture:** Монолит Laravel 13 (PHP 8.3) отдаёт REST API под `/api` и одностраничное Vue 3 SPA с одного домена. Аутентификация — Sanctum в cookie-режиме (SPA), без JWT. Вся работа с соцсетями изолирована за `SocialProviderInterface` + реестр провайдеров: платформо-специфичной логики вне классов провайдеров нет. Отложенная публикация — Laravel Queue (Redis) + Horizon вместо Temporal: джоба ставится с `delay` до `publish_date`, идемпотентность обеспечивается state-machine поста и уникальностью джобы по `post_group`. Тариф хранится полем `organizations.plan` и проставляется вручную/сидером; проверки лимитов живут в `PlanLimitService` + middleware, а не в контроллерах.
 
 **Платежи вне этой итерации.** Cashier, Stripe Checkout, портал, вебхуки, промокоды, trial-биллинг — исключены сознательно. Точка врезки на будущее одна: `PlanRegistry::forOrganization()` (Task 35) — сейчас читает колонку, позже начнёт читать подписку Cashier. Всё остальное кода платежей не касается.
 
-**Tech Stack:** Laravel 11, PHP 8.3, PostgreSQL 17, Redis 7, Horizon, Sanctum, Laravel Socialite, Pest 3, Larastan (PHPStan level 6), Laravel Pint; Vue 3 + Vite + Pinia + Vue Router 4 + Tailwind 3 + FullCalendar 6 + Vitest; Docker Compose (nginx, php-fpm, node, postgres, redis, horizon, scheduler, minio, mailpit).
+**Tech Stack:** Laravel 13, PHP 8.3, PostgreSQL 17, Redis 7, Horizon, Sanctum, Laravel Socialite, Pest 3, Larastan (PHPStan level 6), Laravel Pint; Vue 3 + Vite + Pinia + Vue Router 4 + Tailwind 3 + FullCalendar 6 + Vitest; Docker Compose (nginx, php-fpm, node, postgres, redis, horizon, scheduler, minio, mailpit).
 
 **Spec:** `LARAVEL_REWRITE_PLAN.md` (часть B, этапы 0–5; из этапа 10 берётся только enforcement лимитов). Дизайн-палитра: `color.md` — единственный источник цветовых значений.
 
@@ -18,7 +18,7 @@
 
 Эти требования действуют для **каждой** задачи ниже — считайте их частью списка требований любой задачи.
 
-- **PHP 8.3+**, **Laravel 11.x**, **PostgreSQL 17**, **Redis 7**. Никаких пакетов, требующих PHP < 8.2.
+- **PHP 8.3+**, **Laravel 13.x** (ветки 11.x и ранние 12.x непропатчены: CVE-2026-48019 CRLF в правиле `email` и path confusion в signed URL — фикс только в 12.60+/13.10+; `composer audit` обязан быть чистым, подавлять его запрещено), **PostgreSQL 17**, **Redis 7**. Никаких пакетов, требующих PHP < 8.2.
 - **Первичные ключи — ULID** (`HasUlids`, колонка `char(26)`), не автоинкремент. Внешние ключи — `char(26)`.
 - **Все деньги** — целые копейки/центы (`bigInteger`), никаких `float`.
 - **Все даты в БД — UTC** (`timestamptz`). Пользовательская таймзона хранится в `users.timezone` и применяется только на отображении и в подборе слотов.
@@ -143,7 +143,7 @@ M4 можно вести параллельно с M3 после задачи 20
 
 **Files:**
 - Create: `docker/compose.yaml`, `docker/php/Dockerfile`, `docker/php/php.ini`, `docker/nginx/default.conf`, `Makefile`, `.env.example`
-- Create: скелет Laravel 11 в корне (`composer create-project laravel/laravel:^11.0 .`)
+- Create: скелет Laravel 13 в корне (`composer create-project laravel/laravel:^13.0 .`)
 
 **Interfaces:**
 - Produces: `make up`, `make down`, `make sh`, `make test`, `make migrate` — этими командами пользуются все последующие задачи.
@@ -151,7 +151,7 @@ M4 можно вести параллельно с M3 после задачи 20
 - [ ] **Step 1: Создать скелет Laravel**
 
 ```bash
-composer create-project laravel/laravel:^11.0 app-tmp && rsync -a app-tmp/ ./ && rm -rf app-tmp
+composer create-project laravel/laravel:^13.0 app-tmp && rsync -a app-tmp/ ./ && rm -rf app-tmp
 composer require laravel/sanctum laravel/horizon laravel/socialite predis/predis
 composer require --dev pestphp/pest pestphp/pest-plugin-laravel larastan/larastan laravel/pint
 ```
@@ -765,13 +765,22 @@ interface SocialProviderInterface
     public function identifier(): string;                 // 'telegram'
     public function name(): string;                       // 'Telegram'
     public function capabilities(): ProviderCapabilities;
-    public function generateAuthUrl(string $state, string $redirectUri): AuthUrlDto;
+    /** @param array<string,mixed> $params  НЕДОВЕРЕННЫЙ ввод из запроса; всё, что становится сетевой целью, обязано пройти SafeRemoteHost */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;
     public function authenticate(array $params, string $redirectUri): AuthResultDto;
-    /** @param PostPayloadDto[] $chain  тред: первый элемент — корень */
-    public function post(Integration $integration, array $chain): PostResultDto;
+    /**
+     * @param  PostPayloadDto[] $chain  тред ЛИНЕЙНЫЙ: первый элемент — корень,
+     *                                  каждый следующий отвечает на ПРЕДЫДУЩИЙ, а не на корень
+     *                                  (в БД: posts.parent_post_id указывает на предыдущий сегмент)
+     * @return array<int, PostResultDto>  по одному результату на элемент цепочки, ключ = индекс в $chain
+     */
+    public function post(Integration $integration, array $chain): array;
 }
 
 interface SupportsRefresh { public function refresh(Integration $i): AuthResultDto; }
+
+/** Двухфазная загрузка: сначала uploadMedia(), затем post() ссылается на MediaDto::$remoteId. */
+interface SupportsMedia { public function uploadMedia(Integration $i, MediaDto $media): MediaDto; }
 
 final readonly class ProviderCapabilities {
     public function __construct(
@@ -782,6 +791,9 @@ final readonly class ProviderCapabilities {
         public bool $supportsScheduling,
         public array $allowedMimeTypes,     // ['image/jpeg','image/png','video/mp4']
         public int $maxFileSizeBytes,
+        public bool $allowsMixedMedia,      // можно ли смешивать фото и видео в одном посте
+        public ?int $maxThreadLength,       // null = без ограничения
+        public bool $requiresAltText,
     ) {}
 }
 
@@ -795,15 +807,45 @@ final readonly class AuthResultDto {
 
 final readonly class PostPayloadDto {
     /** @param MediaDto[] $media */
-    public function __construct(public string $content, public array $media = [], public array $settings = []) {}
+    public function __construct(
+        public string $content,
+        public array $media = [],
+        public array $settings = [],
+        /**
+         * Якорь треда: id уже опубликованного поста на стороне провайдера.
+         * Если задан — сегмент должен уйти ОТВЕТОМ на него, а не новым корнем треда.
+         * Пайплайн ставит его только на первый элемент возобновляемой цепочки (после
+         * ProviderPartialFailureException); внутри одного вызова post() провайдер связывает
+         * сегменты сам по своим же результатам. Провайдер, чья сеть не умеет отвечать на
+         * произвольный внешний id, обязан бросить ProviderPermanentException — молчаливая
+         * публикация «отвязанного» поста хуже отказа.
+         */
+        public ?string $replyToReleaseId = null,
+    ) {}
 }
 
 final readonly class PostResultDto {
     public function __construct(public string $releaseId, public ?string $releaseUrl = null) {}
 }
+
+final readonly class MediaDto {
+    public function __construct(
+        public string $path,                // локальный путь до загрузки
+        public string $mimeType,
+        public ?string $altText = null,
+        public ?string $remoteId = null,    // хэндл, выданный провайдером в uploadMedia()
+        public ?int $sizeBytes = null,      // размер, зафиксированный при загрузке; НЕ читать с диска при валидации
+    ) {}
+    public function withRemoteId(string $remoteId): self { /* immutable clone */ }
+}
 ```
 
-- Исключения: `ProviderTransientException` (ретраить), `ProviderPermanentException` (не ретраить, пост → ERROR), `ProviderAuthException` (пометить канал `refresh_needed`), `ProviderRateLimitException` (`retryAfterSeconds`).
+- Исключения (все наследуют базовый `ProviderException`, чтобы у пайплайна был fallback-catch):
+  `ProviderTransientException` (ретраить), `ProviderPermanentException` (не ретраить, пост → ERROR),
+  `ProviderAuthException` (пометить канал `refresh_needed`), `ProviderRateLimitException` (`retryAfterSeconds`),
+  `ProviderPartialFailureException` — часть цепочки опубликовалась: несёт `array<int, PostResultDto>` уже
+  опубликованных сегментов. Пайплайн обязан сохранить их `release_id` и **никогда** не переотправлять сегмент,
+  у которого `release_id` уже есть, иначе ретрай продублирует пост в сети.
 - `ProviderRegistry::get(string $identifier): SocialProviderInterface`, `::all(): array`, `::has(string): bool`. Неизвестный идентификатор → `UnknownProviderException`.
 
 - [ ] **Step 1: Тест реестра**
@@ -1336,13 +1378,20 @@ final class PublishPostJob implements ShouldQueue, ShouldBeUnique
 
 - `PublishService::publishGroup(string $id)`:
   1. Берёт группу `lockForUpdate()` внутри транзакции; если состояние не `QUEUE` — **выходит без действий** (защита от двойной публикации).
-  2. Для каждого канала публикует всю цепочку одним вызовом `provider->post($integration, $chain)`.
-  3. Успех → `posts.state = PUBLISHED`, `release_id`, `release_url`, `published_at`.
-  4. Уже опубликованные посты внутри группы при ретрае **пропускаются** (частичный успех не публикуется повторно).
-  5. `ProviderTransientException` / `ProviderRateLimitException` → `release()` c backoff (для rate-limit — `retryAfterSeconds`).
-  6. `ProviderPermanentException` → пост в `ERROR` с текстом, остальные каналы продолжают публиковаться.
-  7. `ProviderAuthException` → канал `refresh_needed=true`, пост в `ERROR`.
-  8. Группа получает `PUBLISHED`, если все её посты `PUBLISHED`, иначе `ERROR`.
+  2. Для каждого канала публикует всю цепочку одним вызовом `provider->post($integration, $chain)`, который
+     возвращает `array<int, PostResultDto>` — по результату на сегмент цепочки.
+  3. Успех → для **каждого** сегмента свои `posts.state = PUBLISHED`, `release_id`, `release_url`, `published_at`
+     (в схеме на каждый элемент цепочки своя строка `posts`).
+  4. Уже опубликованные посты внутри группы при ретрае **пропускаются** — как на уровне канала, так и на уровне
+     сегмента цепочки: сегмент с непустым `release_id` не отправляется повторно никогда.
+  5. `ProviderPartialFailureException` → сохранить `release_id` опубликованных сегментов из исключения,
+     остальные сегменты оставить неопубликованными. Ретрай продолжает с первого сегмента без `release_id`
+     и **обязан** проставить ему `PostPayloadDto::$replyToReleaseId` = `release_id` последнего успешного
+     сегмента. Без якоря провайдер опубликует продолжение новым корнем и продублирует тред в соцсети.
+  6. `ProviderTransientException` / `ProviderRateLimitException` → `release()` c backoff (для rate-limit — `retryAfterSeconds`).
+  7. `ProviderPermanentException` → пост в `ERROR` с текстом, остальные каналы продолжают публиковаться.
+  8. `ProviderAuthException` → канал `refresh_needed=true`, пост в `ERROR`.
+  9. Группа получает `PUBLISHED`, если все её посты `PUBLISHED`, иначе `ERROR`.
 
 - [ ] **Step 1: Падающие тесты**
 

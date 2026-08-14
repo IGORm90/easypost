@@ -1,0 +1,370 @@
+{
+    "app": {
+        "name": "EasyPost"
+    },
+    "nav": {
+        "toggleTheme": "Toggle theme",
+        "menu": "Menu",
+        "channels": "Channels",
+        "media": "Media",
+        "settingsProfile": "Profile",
+        "settingsTeam": "Team",
+        "logout": "Log out"
+    },
+    "ui": {
+        "close": "Close",
+        "loading": "Loading…",
+        "save": "Save",
+        "cancel": "Cancel",
+        "copy": "Copy",
+        "copied": "Copied"
+    },
+    "shell": {
+        "comingSoon": "This section will arrive in a later task."
+    },
+    "auth": {
+        "login": {
+            "title": "Sign in",
+            "email": "Email",
+            "password": "Password",
+            "submit": "Sign in",
+            "noAccount": "No account yet?",
+            "registerLink": "Create one",
+            "forgotLink": "Forgot your password?",
+            "error": "Incorrect email or password.",
+            "sessionExpired": "Your session has expired. Please sign in again."
+        },
+        "register": {
+            "title": "Create an account",
+            "name": "Name",
+            "email": "Email",
+            "password": "Password",
+            "submit": "Create account",
+            "haveAccount": "Already have an account?",
+            "loginLink": "Sign in",
+            "success": "Account created. Check your inbox to verify your email."
+        },
+        "forgot": {
+            "title": "Reset your password",
+            "email": "Email",
+            "submit": "Send reset link",
+            "success": "If that email is registered, a reset link has been sent.",
+            "backToLogin": "Back to sign in"
+        },
+        "reset": {
+            "title": "Choose a new password",
+            "password": "New password",
+            "submit": "Save password",
+            "success": "Password changed. You can sign in now.",
+            "invalidLink": "This password reset link is invalid or has expired.",
+            "loginLink": "Go to sign in"
+        }
+    },
+    "organization": {
+        "switcher": {
+            "label": "Organization",
+            "empty": "No organizations"
+        }
+    },
+    "settings": {
+        "profile": {
+            "title": "Profile",
+            "name": "Name",
+            "timezone": "Timezone",
+            "locale": "Interface language",
+            "emailNotifications": "Email notifications",
+            "save": "Save changes",
+            "saved": "Profile updated.",
+            "apiKey": {
+                "title": "API key",
+                "description": "Used to authenticate API access. Shown only once, right after it's generated — store it somewhere safe.",
+                "rotate": "Generate new key",
+                "rotateConfirm": "The old key will stop working. Continue?",
+                "generated": "New key generated. Copy it now — it will not be shown again.",
+                "none": "No key generated yet."
+            }
+        },
+        "team": {
+            "title": "Team",
+            "member": "Member",
+            "role": "Role",
+            "joined": "Member since",
+            "actions": "Actions",
+            "remove": "Remove",
+            "removeConfirm": "Remove this member from the organization?",
+            "invite": {
+                "title": "Invite a member",
+                "email": "Email (optional)",
+                "role": "Role",
+                "submit": "Create invite",
+                "success": "Invite link created:",
+                "copy": "Copy link"
+            },
+            "roles": {
+                "SUPERADMIN": "Superadmin",
+                "ADMIN": "Admin",
+                "USER": "Member"
+            }
+        },
+        "plan": {
+            "title": "Plan and usage",
+            "current": "Plan: {plan}",
+            "channels": "Channels",
+            "postsPerMonth": "Posts this month",
+            "mediaStorage": "Media storage (MB)",
+            "ofMax": "{current} of {max}",
+            "unlimited": "Unlimited",
+            "loadError": "Could not load plan usage."
+        }
+    },
+    "invites": {
+        "accept": {
+            "title": "Organization invite",
+            "description": "You've been invited to join an organization.",
+            "submit": "Accept invite",
+            "success": "You've joined the organization.",
+            "error": "Could not accept this invite. The link may be invalid or already used."
+        }
+    },
+    "validation": {
+        "generic": "Please check the form for errors."
+    },
+    "limits": {
+        "channels": "You've reached your plan's channel limit ({current}/{max}). Disconnect a channel you no longer use to free up room.",
+        "postsPerMonth": "You've reached your plan's monthly post limit ({current}/{max}). Wait for next month's reset to schedule more.",
+        "mediaStorageMb": "You've reached your plan's media storage limit ({current}/{max} MB). Delete unused files from the media library to free up room.",
+        "generic": "This organization has reached a plan limit."
+    },
+    "channels": {
+        "title": "Channels",
+        "connect": "Connect channel",
+        "empty": "No channels connected yet.",
+        "status": {
+            "active": "Active",
+            "disabled": "Disabled",
+            "refreshNeeded": "Reconnection required"
+        },
+        "actions": {
+            "settings": "Settings",
+            "enable": "Enable",
+            "disable": "Disable",
+            "remove": "Remove",
+            "removeConfirm": "Remove channel \"{name}\"? Scheduled posts through it will stop going out.",
+            "reconnect": "Reconnect"
+        },
+        "connectModal": {
+            "title": "Connect a channel",
+            "chooseProvider": "Choose a network",
+            "oauthIntro": "You'll be redirected to {name} to authorize.",
+            "connect": "Connect",
+            "back": "Back",
+            "fields": {
+                "instance": "Mastodon server (e.g. mastodon.social)",
+                "botToken": "Bot token",
+                "chatId": "Chat/channel id",
+                "handle": "Handle (e.g. user.bsky.social)",
+                "appPassword": "App password",
+                "token": "Access token"
+            },
+            "manualSubmit": "Connect",
+            "error": "Could not connect the channel. Check the details and try again.",
+            "permissionDenied": "You don't have permission to connect a channel."
+        },
+        "settings": {
+            "title": "\"{name}\" settings",
+            "name": "Name",
+            "groupName": "Group",
+            "customerName": "Customer",
+            "timeSlots": "Posting schedule",
+            "timeSlotsHint": "Times are shown in your timezone ({tz}); stored and synced in UTC.",
+            "addSlot": "Add slot",
+            "removeSlot": "Remove slot",
+            "save": "Save",
+            "saved": "Settings saved.",
+            "weekday": "Weekday",
+            "time": "Time",
+            "chooseOption": "Choose…",
+            "optionsError": "This channel's list of destinations could not be loaded. Try again later — everything else here can still be saved.",
+            "fields": {
+                "channel_id": "Destination channel"
+            }
+        },
+        "weekdays": {
+            "0": "Mon",
+            "1": "Tue",
+            "2": "Wed",
+            "3": "Thu",
+            "4": "Fri",
+            "5": "Sat",
+            "6": "Sun"
+        }
+    },
+    "sharedPost": {
+        "publishDate": "Publish date",
+        "notFound": "This link is invalid or is no longer shared.",
+        "empty": "Nothing to preview yet."
+    },
+    "calendar": {
+        "title": "Calendar",
+        "today": "Today",
+        "loadError": "Could not load the calendar.",
+        "views": {
+            "month": "Month",
+            "week": "Week",
+            "day": "Day"
+        },
+        "filters": {
+            "customer": "Customer",
+            "customerPlaceholder": "Filter by customer",
+            "tags": "Tags",
+            "noTags": "No tags yet."
+        },
+        "state": {
+            "DRAFT": "Draft",
+            "QUEUE": "Scheduled",
+            "PUBLISHED": "Published",
+            "ERROR": "Publishing failed"
+        },
+        "locked": "Published posts can't be moved or deleted.",
+        "remove": "Remove",
+        "removeConfirm": "Remove this post from the calendar?",
+        "toast": {
+            "moveConflict": "This post was already published, so the move was cancelled. The list has been refreshed.",
+            "moveError": "Could not reschedule the post. Please try again.",
+            "removeError": "Could not remove the post. Please try again."
+        },
+        "newPost": "New post",
+        "errors": {
+            "title": "{count} scheduled post(s) failed to publish",
+            "retry": "Retry",
+            "retryError": "Could not retry this post. Please try again.",
+            "retryConflict": "This post is no longer retryable — it may have been retried already, or has since published.",
+            "unknownReason": "No reason was recorded."
+        }
+    },
+    "editor": {
+        "titleNew": "New post",
+        "titleEdit": "Edit post",
+        "locked": "This post has already gone out and can no longer be edited here.",
+        "lockedRetry": "This post has already gone out. Your text is safe — saving now will create it as a new post instead of changing the original.",
+        "confirmNewPost": "This will publish a second, separate post — the original that already went out will not be changed. Continue?",
+        "confirmNewPostYes": "Yes, create a new post",
+        "closeWithoutSaving": "Close without saving",
+        "networkError": "Could not reach the server. Nothing was lost — check your connection and try again.",
+        "commonContent": "Shared text",
+        "commonContentPlaceholder": "Write once, then vary it per channel on its own tab below.",
+        "signature": "Signature",
+        "noSignature": "No signature",
+        "signatureUnknown": "None selected — pick one to append",
+        "signatureEditHint": "This post's text may already include a signature that was appended earlier; picking one here appends another copy.",
+        "tags": "Tags",
+        "picker": {
+            "sets": "Channel sets",
+            "channels": "Channels",
+            "empty": "Connect a channel first to be able to post."
+        },
+        "schedule": {
+            "findSlotFor": "Find a slot for",
+            "chooseChannel": "Choose a channel",
+            "findSlot": "Find free slot",
+            "findSlotError": "Could not find a free slot. Please try again.",
+            "publishDate": "Publish date",
+            "timezoneHint": "Times are shown in your timezone ({tz})."
+        },
+        "actions": {
+            "saveDraft": "Save draft",
+            "schedule": "Schedule",
+            "publishNow": "Publish now"
+        },
+        "thread": {
+            "rootLabel": "Post text",
+            "rootLabelFor": "Post text ({name})",
+            "replyLabel": "Reply {n}",
+            "add": "Add to thread",
+            "remove": "Remove",
+            "attachMedia": "Attach media",
+            "removeMedia": "Remove media"
+        },
+        "counter": {
+            "over": "(over by {n})"
+        },
+        "hints": {
+            "threadUnsupported": "This channel does not support threads — only a single message can be sent.",
+            "threadTooLong": "A thread on this channel can have at most {max} messages.",
+            "mediaLimits": "Up to {images} images and {videos} videos per message.",
+            "altTextRequired": "Images require alt text on this channel."
+        },
+        "tabs": {
+            "hasError": "This channel has a validation problem"
+        }
+    },
+    "preview": {
+        "title": "Preview",
+        "approximation": "An approximation — the real network may render this differently.",
+        "empty": "Nothing to preview yet — start typing above.",
+        "generic": {
+            "notice": "No network-specific preview yet — showing plain text."
+        },
+        "telegram": {
+            "kind": "Telegram channel"
+        },
+        "mastodon": {
+            "kind": "Toot",
+            "replyingToPrevious": "Replying to the previous post"
+        },
+        "bluesky": {
+            "kind": "Post",
+            "reply": "Reply"
+        },
+        "discord": {
+            "kind": "Discord message",
+            "unlinked": "This channel does not support threading — each message below is sent separately, not linked."
+        },
+        "slack": {
+            "thread": "Thread",
+            "replies": "{n} reply in thread | {n} replies in thread"
+        }
+    },
+    "integrations": {
+        "callback": {
+            "title": "Connecting channel",
+            "inProgress": "Finishing the connection…",
+            "success": "Channel \"{name}\" connected.",
+            "backToChannels": "Back to channels",
+            "errors": {
+                "denied": "Access was not granted. Please try connecting the channel again.",
+                "invalidState": "This connection attempt has expired or is invalid. Please try again.",
+                "generic": "Could not connect the channel. Please try again."
+            }
+        }
+    },
+    "media": {
+        "title": "Media library",
+        "empty": "No media yet — upload a file or paste a link above.",
+        "search": "Search by filename",
+        "loadMore": "Load more",
+        "loadError": "Could not load the media library. Please try again.",
+        "video": "Video",
+        "uploading": "Uploading…",
+        "delete": "Delete",
+        "deleteConfirm": "Delete this media? This cannot be undone.",
+        "deleteInUse": "This media is still attached to a post that hasn't been published yet. Remove it from that post first.",
+        "deleteFailed": "Could not delete this media. Please try again.",
+        "uploader": {
+            "dropHint": "Drag files here, or",
+            "browse": "Browse files",
+            "constraints": "Images (JPEG, PNG, GIF, WebP) and MP4 video, up to 100 MB each.",
+            "urlPlaceholder": "Paste an image or video URL",
+            "importUrl": "Import",
+            "unsupportedType": "\"{name}\" is not an image or MP4 video and was skipped.",
+            "tooLarge": "\"{name}\" is larger than 100 MB and was skipped.",
+            "uploadFailed": "\"{name}\" failed to upload. Please try again.",
+            "urlImportFailed": "Could not import that URL. Please check it and try again."
+        },
+        "picker": {
+            "title": "Choose media",
+            "selectedCount": "{count} selected",
+            "confirm": "Add to post"
+        }
+    }
+}

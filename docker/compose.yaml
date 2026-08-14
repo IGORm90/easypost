@@ -1,0 +1,127 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ../:/var/www/html
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on: [php]
+  php:
+    build: ./php
+    volumes: ["../:/var/www/html"]
+    # `minio-init` (below) is a "condition: service_completed_successfully"
+    # dependency, not merely a start-order one -- review finding 2
+    # (CRITICAL): every fresh environment (CI, a new machine) started
+    # MinIO with no bucket ever created, so the `media` disk's every
+    # write failed from the very first upload. php/horizon/scheduler now
+    # cannot start until the `media` bucket demonstrably exists.
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    env_file: ../.env
+  horizon:
+    build: ./php
+    command: php artisan horizon
+    volumes: ["../:/var/www/html"]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    env_file: ../.env
+  scheduler:
+    build: ./php
+    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+    volumes: ["../:/var/www/html"]
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    env_file: ../.env
+  node:
+    image: node:22-alpine
+    working_dir: /var/www/html
+    # `--host` alone binds Vite's dev server to `::` (the IPv6 unspecified
+    # address) and laravel-vite-plugin writes that literal into
+    # `public/hot`. `curl` tolerates `http://[::]:5173`, but browsers
+    # generally refuse to navigate to it, so nothing built on top of the
+    # dev server (HMR client, asset URLs) could ever be checked in a real
+    # browser. `0.0.0.0` still listens on every interface (needed so the
+    # container-external browser can reach it through the mapped port)
+    # but is a literal every browser accepts.
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports: ["5173:5173"]
+    volumes: ["../:/var/www/html"]
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: secret
+    ports: ["5432:5432"]
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      - "./postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro"
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio:/data"]
+  # Review finding 2 (CRITICAL): nothing previously created the `media`
+  # bucket -- MinIO starting with an empty volume (any fresh environment)
+  # meant the feature was 100% broken from the first request, and
+  # (before finding 1's fix) broke invisibly: writes were swallowed and
+  # reported as success. `minio/mc` is used rather than a healthcheck +
+  # curl on the `minio` image itself, since the official minio/minio
+  # image does not bundle a shell-reachable HTTP client to probe with --
+  # `mc`'s own retry loop against `mc alias set` is what actually proves
+  # the server is accepting connections, not merely that its container
+  # started. `--ignore-existing` makes this idempotent across restarts
+  # with an already-populated volume.
+  # `docker/minio/init.sh` + `docker/minio/media-policy.json` (mounted
+  # rather than inlined): bucket creation alone is not sufficient for
+  # config/filesystems.php's `media` disk `'visibility' => 'public'` to
+  # mean anything on MinIO -- MinIO does not honor the per-object ACL
+  # header Flysystem's S3 adapter sends on PutObject by default, so
+  # without an explicit anonymous policy every MediaResource.url/
+  # thumbnail_url this application returns 403s for an unauthenticated
+  # browser request even though the object exists (confirmed by
+  # construction against the real, torn-down-and-rebuilt stack: `curl
+  # -I` against a just-uploaded object returned 403 before a policy
+  # existed at all). The policy file grants ONLY `s3:GetObject` on
+  # `arn:aws:s3:::media/*` -- deliberately not the coarser `mc anonymous
+  # set download`, which grants unauthenticated `s3:ListBucket` on the
+  # whole bucket too (also confirmed by construction: `curl
+  # ".../media/?list-type=2"` returned a full, unauthenticated object
+  # listing spanning every organization's media, unpublished drafts
+  # included, under that shortcut). See media-policy.json's own comment
+  # for the full reasoning.
+  minio-init:
+    image: minio/mc
+    depends_on: [minio]
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - ./minio/init.sh:/init.sh:ro
+      - ./minio/media-policy.json:/minio-policy/media-policy.json:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+  mailpit:
+    image: axllent/mailpit
+    ports: ["8025:8025", "1025:1025"]
+volumes: { pgdata: {}, minio: {} }

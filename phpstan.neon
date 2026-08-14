@@ -1,0 +1,45 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - app
+        - database
+        - tests
+    ignoreErrors:
+        # Larastan cannot statically resolve $this (or the return value of the global test()/it()
+        # functions) inside Pest closures to the underlying Illuminate test case, even though
+        # tests/Pest.php binds it correctly at runtime via pest()->extend()->use()->in().
+        # Known, accepted Larastan limitation (larastan/larastan#2275, closed as not planned;
+        # pestphp/pest#796). Scoped to tests/* only — app and database code is unaffected.
+        # Matches both message shapes PHPStan actually emits (verified by construction,
+        # see task-2-report.md): a plain "...TestCall::method()." when $this is typed as
+        # just Pest\PendingCalls\TestCall, and a union "...TestCall|Pest\Support\
+        # HigherOrderTapProxy::method()." (either order) when the call is on test()'s
+        # HigherOrderTapProxy|TestCall return type. The alternation inside each class-name
+        # group is real PCRE alternation (bare `|`); the pipe *between* class names is a
+        # literal character (escaped as `\|`) because PHPStan renders union types with a
+        # literal "|" in the message text.
+        -
+            message: '#^Call to an undefined method (?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy)(?:\|(?:Pest\\PendingCalls\\TestCall|Pest\\Support\\HigherOrderTapProxy))*::\w+\(\)\.$#'
+            path: tests/*
+
+        # No mockery/phpstan-mockery extension is installed, so PHPStan sees a
+        # partial mock's PHPDoc-annotated intersection type (`Job&Mockery\MockInterface`)
+        # but not shouldReceive()'s dynamic fluent-expectation return, so it cannot
+        # resolve once()/with() on the Mockery\ExpectationInterface|HigherOrderMessage
+        # union that shouldReceive() actually returns at runtime. Same class of known,
+        # accepted static-analysis blind spot as the Pest waiver above — scoped to the
+        # one test file that uses Mockery::mock()->shouldReceive(), not app/tests broadly.
+        -
+            message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
+            path: tests/Feature/Integrations/TokenRefreshTest.php
+
+        # Same known, accepted blind spot as directly above — Task 27
+        # review finding 1's covering test forces a real Flysystem write
+        # failure via Mockery::mock(Filesystem::class)->shouldReceive('writeStream')->andThrow(...).
+        -
+            message: '#^Call to an undefined method Mockery\\ExpectationInterface\|Mockery\\HigherOrderMessage::\w+\(\)\.$#'
+            path: tests/Feature/Media/UploadMediaTest.php
+

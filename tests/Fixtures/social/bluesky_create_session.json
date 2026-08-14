@@ -1,0 +1,7 @@
+{
+    "did": "did:plc:abc123xyz456",
+    "handle": "scheduler.bsky.social",
+    "email": "scheduler@example.com",
+    "accessJwt": "eyJhbGciOiJIUzI1NiJ9.access-token-payload.signature",
+    "refreshJwt": "eyJhbGciOiJIUzI1NiJ9.refresh-token-payload.signature"
+}

@@ -1,0 +1,130 @@
+<?php
+
+namespace App\Social\Contracts;
+
+use App\Models\Integration;
+use App\Social\Dto\AuthResultDto;
+use App\Social\Dto\AuthUrlDto;
+use App\Social\Dto\PostPayloadDto;
+use App\Social\Dto\PostResultDto;
+use App\Social\Dto\ProviderCapabilities;
+
+/**
+ * The one contract every social-network integration implements. This is
+ * the boundary the rest of the application is written against — nothing
+ * outside `app/Social/Providers/` may branch on a specific network's
+ * name or behaviour (see the project's Global Constraints and
+ * tests/Unit/Architecture/ProviderIsolationTest.php, which enforces it).
+ *
+ * Implementations are pure adapters: translate between this contract and
+ * one network's HTTP API. No database access, no framework facades
+ * beyond what's needed to make an HTTP call, no knowledge of
+ * Organizations/Teams/Posts — those belong to the service layer that
+ * calls into this interface.
+ */
+interface SocialProviderInterface
+{
+    /**
+     * Stable machine identifier: a short lowercase slug naming the
+     * network. Matches the key this provider is registered under in
+     * config/social.php and is what ProviderRegistry::get() is called
+     * with.
+     */
+    public function identifier(): string;
+
+    /**
+     * Human-readable display name for the network.
+     */
+    public function name(): string;
+
+    public function capabilities(): ProviderCapabilities;
+
+    /**
+     * Build the URL to send the user's browser to in order to start
+     * connecting an account of this network. $state is an opaque,
+     * caller-generated CSRF token the provider must round-trip
+     * unmodified (either via the OAuth `state` parameter or equivalent)
+     * so the callback can be verified.
+     *
+     * $params carries whatever the frontend supplied on
+     * `POST /api/integrations/{provider}/auth-url` beyond the implicit
+     * state/redirect — e.g. Mastodon's user-chosen instance host, which
+     * must be known before an authorize URL (and, for Mastodon
+     * specifically, a per-instance OAuth app registration) can be built
+     * at all. Added in Task 14 once a real provider needed it: Task 11's
+     * original two-argument signature had no channel for this, and
+     * bending Mastodon around that gap (e.g. smuggling the host through
+     * $state) would have been worse than widening the contract. Optional
+     * and empty by default so providers with nothing to configure ahead
+     * of the redirect (every provider before Task 14, ManualTokenAuth
+     * providers like Telegram) are unaffected. Providers that need a key
+     * $params doesn't have MUST throw rather than guess.
+     *
+     * SECURITY: $params is UNTRUSTED request input — IntegrationController
+     * forwards `$request->all()` verbatim (Task 14 review, Finding 4), the
+     * same way `callback()` forwards `$request->except('state')` to
+     * authenticate() below; neither the controller nor this interface
+     * validates its shape or contents for any given provider. A provider
+     * MUST validate whatever it reads from $params before use, and in
+     * particular MUST NOT build a server-side request target (a host to
+     * connect to, a URL to fetch) from it without first checking that
+     * target through App\Support\SafeRemoteHost — an admin-controlled
+     * value reaching an outbound HTTP call is exactly the shape of an
+     * SSRF primitive (see MastodonProvider's instance-host handling for
+     * the reference implementation: validated both when first accepted
+     * from $params AND again every time a previously-accepted, now-stored
+     * value is reused, since DNS answers change).
+     *
+     * @param  array<string, mixed>  $params
+     */
+    public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto;
+
+    /**
+     * Complete an authorization flow started by generateAuthUrl() and
+     * exchange whatever the network's callback handed back ($params —
+     * e.g. the callback's query string) for a usable access token.
+     *
+     * @param  array<string, mixed>  $params
+     */
+    public function authenticate(array $params, string $redirectUri): AuthResultDto;
+
+    /**
+     * Publish $chain to the given Integration. $chain is a thread: the
+     * first element is the root post, each subsequent element is posted
+     * as a reply to the previous one. A non-threaded post is a
+     * single-element $chain.
+     *
+     * Returns one PostResultDto per chain element, keyed by the same
+     * index as $chain — never a single aggregate result — because the
+     * app persists one row per chain item (each with its own
+     * release_id/release_url) and needs every segment's id to do so.
+     * On full success the returned array has exactly the same length
+     * as $chain.
+     *
+     * Throws one of the App\Social\Exceptions taxonomy on failure —
+     * never a raw HTTP/network exception — since the publishing
+     * pipeline (Task 30) decides how to react (retry, mark the channel
+     * broken, fail the post, persist-partial-and-fail-remainder) purely
+     * from which exception type was thrown. In particular: if one or
+     * more leading segments of $chain already published successfully
+     * before a later segment failed, throw
+     * ProviderPartialFailureException (carrying the results for the
+     * segments that did succeed) instead of any of the other four —
+     * returning early or throwing a plain failure would lose or
+     * duplicate what already went out.
+     *
+     * Resumed chains: after a ProviderPartialFailureException, the
+     * pipeline calls post() again with a NEW $chain holding only the
+     * segments that never published, and $chain[0]->replyToReleaseId
+     * set to the provider-side id of the last segment that did publish.
+     * See PostPayloadDto's docblock for the full contract — in short,
+     * that first segment MUST be attached as a reply to the given id,
+     * never published as a fresh, detached thread root. A provider that
+     * cannot do this must throw ProviderPermanentException rather than
+     * publish a duplicate root.
+     *
+     * @param  PostPayloadDto[]  $chain  Thread: first element is the root.
+     * @return array<int, PostResultDto> Keyed by chain index; same length as $chain on full success.
+     */
+    public function post(Integration $integration, array $chain): array;
+}

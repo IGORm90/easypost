@@ -1,0 +1,90 @@
+export interface LinkifiedPart {
+    type: 'text' | 'link';
+    value: string;
+    /** Present only on `type: 'link'` parts — an `http:`/`https:` URL, never anything else. */
+    href?: string;
+}
+
+// Deliberately requires an explicit `http(s)://` or `www.` prefix — a
+// bare `javascript:alert(1)` (or any other scheme) never matches this
+// pattern, so it is never even considered for linkification; it falls
+// straight through as plain text. The character class excludes
+// whitespace and the characters that would let a match run into
+// surrounding markup-looking text (`<`, `>`, quotes).
+const URL_PATTERN = /(https?:\/\/[^\s<>"' ]+|www\.[^\s<>"' ]+)/gi;
+
+/**
+ * Splits `text` into plain-text and link segments for rendering WITHOUT
+ * `v-html` — callers render `type: 'link'` parts as `<a :href>` and
+ * everything else as plain interpolated text, so a caller never needs to
+ * (and must never) inject raw HTML for post content a customer typed.
+ *
+ * Safety is enforced twice, independently:
+ *  1. the regex itself only matches candidates that already start with
+ *     `http(s)://` or `www.` — a scheme like `javascript:` or `data:`
+ *     can never be the START of a match, so it is never a candidate;
+ *  2. every candidate that DOES match is still re-parsed with the `URL`
+ *     constructor and its resolved `.protocol` is checked against an
+ *     allowlist (`http:`/`https:`) before a `href` is ever produced —
+ *     so even a candidate the regex let through unexpectedly (a browser
+ *     quirk in how `URL` resolves something odd, e.g. embedded
+ *     backslashes) cannot end up with a dangerous scheme in the actual
+ *     `href` attribute. A candidate that fails either check is emitted
+ *     as plain text instead of being silently dropped.
+ */
+export function linkify(text: string): LinkifiedPart[] {
+    const parts: LinkifiedPart[] = [];
+    let lastIndex = 0;
+
+    for (const match of text.matchAll(URL_PATTERN)) {
+        const candidate = match[0];
+        const index = match.index ?? 0;
+
+        if (index > lastIndex) {
+            parts.push({ type: 'text', value: text.slice(lastIndex, index) });
+        }
+
+        const href = safeHref(candidate);
+        parts.push(href ? { type: 'link', value: candidate, href } : { type: 'text', value: candidate });
+
+        lastIndex = index + candidate.length;
+    }
+
+    if (lastIndex < text.length) {
+        parts.push({ type: 'text', value: text.slice(lastIndex) });
+    }
+
+    return parts;
+}
+
+function safeHref(candidate: string): string | null {
+    const withScheme = candidate.startsWith('www.') ? `https://${candidate}` : candidate;
+
+    try {
+        const url = new URL(withScheme);
+
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            return null;
+        }
+
+        // Reject userinfo (`user:pass@host`) rather than passing it
+        // through: the DISPLAYED text is the original candidate, e.g.
+        // "https://good.com@evil.com" reads as "good.com" to a viewer,
+        // but the produced href would navigate to evil.com's origin —
+        // `good.com` here is parsed as a username, not a host. This
+        // preview isn't only ever seen by its own author: the public
+        // share page (Task 22's PublicPostResource) renders the same
+        // post content to strangers, so a deceptive link is not
+        // self-targeted-only. Reject the whole candidate rather than
+        // trying to strip the userinfo and relink to the real host,
+        // since that would silently change what the text visually says
+        // versus where it points.
+        if (url.username !== '' || url.password !== '') {
+            return null;
+        }
+
+        return url.toString();
+    } catch {
+        return null;
+    }
+}

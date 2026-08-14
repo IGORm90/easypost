@@ -1,0 +1,28 @@
+{
+    "ok": true,
+    "result": {
+        "message_id": 43,
+        "sender_chat": {
+            "id": -1001234567890,
+            "title": "My Announcements Channel",
+            "type": "channel"
+        },
+        "chat": {
+            "id": -1001234567890,
+            "title": "My Announcements Channel",
+            "type": "channel"
+        },
+        "date": 1755000060,
+        "text": "second segment",
+        "reply_to_message": {
+            "message_id": 42,
+            "chat": {
+                "id": -1001234567890,
+                "title": "My Announcements Channel",
+                "type": "channel"
+            },
+            "date": 1755000000,
+            "text": "hello"
+        }
+    }
+}

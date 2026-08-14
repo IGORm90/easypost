@@ -1,0 +1,432 @@
+<?php
+
+use App\Models\Media;
+use App\Models\Organization;
+use App\Services\Media\MediaUploadService;
+use App\Support\SafeRemoteHost;
+use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
+use League\Flysystem\UnableToWriteFile;
+
+/*
+ * Task 27: POST /api/media (direct multipart upload) and
+ * POST /api/media/from-url (server-side download). See
+ * MediaUploadService's docblock for the security reasoning this file
+ * exercises — mime sniffing, no-execution storage, SSRF/redirect/size/
+ * timeout defenses on the from-url path.
+ */
+
+afterEach(function () {
+    SafeRemoteHost::stopFaking();
+});
+
+// --- POST /api/media -----------------------------------------------------
+
+it('stores an uploaded image and returns its url', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 800, 600)])
+        ->assertCreated()
+        ->assertJsonPath('data.mime', 'image/jpeg');
+
+    expect(Media::count())->toBe(1);
+});
+
+it('rejects a disallowed mime type', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->create('a.exe', 10)])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('rejects a disallowed mime type even when the extension and Content-Type claim otherwise', function () {
+    // Laravel's fake image is real GD-rendered JPEG bytes; renaming it
+    // to .png and forcing a fake Content-Type must not fool the sniff —
+    // MediaUploadService::sniffMime() reads the actual bytes, so the
+    // real mime (image/jpeg) is what decides acceptance, not this
+    // filename/header combination. Since image/jpeg IS allowed, this
+    // proves the sniff -- not the claimed type -- is authoritative by
+    // checking the STORED mime matches the true content, not the claim.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $file = UploadedFile::fake()->image('a.jpg', 10, 10)->mimeType('application/x-msdownload');
+    $renamed = new UploadedFile($file->getPathname(), 'photo.exe', 'application/x-msdownload', null, true);
+
+    $this->postJson('/api/media', ['file' => $renamed])
+        ->assertCreated()
+        ->assertJsonPath('data.mime', 'image/jpeg');
+});
+
+it('captures the real byte size on the stored row', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $file = UploadedFile::fake()->image('a.jpg', 800, 600);
+    $expectedSize = filesize($file->getPathname());
+
+    $this->postJson('/api/media', ['file' => $file])->assertCreated();
+
+    expect(Media::sole()->size_bytes)->toBe($expectedSize);
+});
+
+it('generates a 400px-wide thumbnail for a large image', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 1200, 900)])
+        ->assertCreated()
+        ->assertJsonPath('data.thumbnail_url', fn (?string $url) => $url !== null);
+
+    $media = Media::sole();
+    expect($media->thumbnail_path)->not->toBeNull();
+
+    Storage::disk('media')->assertExists($media->thumbnail_path);
+    [$width] = getimagesizefromstring(Storage::disk('media')->get($media->thumbnail_path));
+    expect($width)->toBe(400);
+});
+
+it('does not generate a separate thumbnail for an image already smaller than the thumbnail width', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 100, 80)])
+        ->assertCreated()
+        ->assertJsonPath('data.thumbnail_url', null);
+
+    expect(Media::sole()->thumbnail_path)->toBeNull();
+});
+
+it('captures width and height from the uploaded image', function () {
+    // Task 28 review ruling: dimensions are captured once at upload
+    // time (MediaUploadService::extractDimensions()), never re-derived
+    // later by reading the stored object back off disk.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $response = $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 800, 600)])
+        ->assertCreated();
+
+    // Round-trip fix (also fix): MediaResource -- what GET /api/media
+    // (Task 29's picker/gallery) lists from -- must expose these too,
+    // not only PostResource's already-attached-media shape.
+    $response->assertJsonPath('data.width', 800);
+    $response->assertJsonPath('data.height', 600);
+
+    $media = Media::sole();
+    expect($media->width)->toBe(800)->and($media->height)->toBe(600);
+
+    $index = $this->getJson('/api/media')->assertOk();
+    expect($index->json('data.0.width'))->toBe(800);
+    expect($index->json('data.0.height'))->toBe(600);
+});
+
+it('leaves width and height null on both GET /api/media and the upload response for an unparseable image', function () {
+    // Pins the null-dimension path end to end: MediaFactory always sets
+    // real dimensions, so nothing previously exercised a null value
+    // flowing through either resource. Simulates getimagesize() failing
+    // on a file that still sniffs as an allowed image mime (truncated/
+    // corrupt data) -- MediaUploadService::extractDimensions() must
+    // degrade to null/null rather than fail the whole upload.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    // A single JPEG SOI marker followed by garbage: finfo's magic-byte
+    // sniff (which only looks at the header) reports image/jpeg, but
+    // GD's getimagesize() cannot parse a real image out of it.
+    $bytes = "\xFF\xD8\xFF\xE0".str_repeat("\x00", 64);
+    $file = UploadedFile::fake()->createWithContent('broken.jpg', $bytes);
+
+    $response = $this->postJson('/api/media', ['file' => $file])->assertCreated();
+    $response->assertJsonPath('data.mime', 'image/jpeg');
+    $response->assertJsonPath('data.width', null);
+    $response->assertJsonPath('data.height', null);
+
+    $media = Media::sole();
+    expect($media->width)->toBeNull()->and($media->height)->toBeNull();
+
+    $index = $this->getJson('/api/media')->assertOk();
+    expect($index->json('data.0.width'))->toBeNull();
+    expect($index->json('data.0.height'))->toBeNull();
+});
+
+it('leaves width and height null for an mp4 video', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    // UploadedFile::fake()->create() with an integer size writes NO
+    // real bytes (only fakes getSize()/getClientMimeType() metadata) --
+    // useless for a real finfo sniff, so a minimal, real MP4 `ftyp` box
+    // is used instead: this must be recognized from its actual content,
+    // exactly like the disallowed-type test proves the opposite case.
+    $mp4Bytes = hex2bin('0000001C6674797069736F6D0000020069736F6D69736F326D703431').str_repeat("\0", 200);
+    $file = UploadedFile::fake()->createWithContent('clip.mp4', $mp4Bytes);
+
+    $this->postJson('/api/media', ['file' => $file])
+        ->assertCreated()
+        ->assertJsonPath('data.mime', 'video/mp4')
+        ->assertJsonPath('data.thumbnail_url', null);
+
+    $media = Media::sole();
+    expect($media->width)->toBeNull()->and($media->height)->toBeNull();
+});
+
+it('stores the file at org/{org_id}/{ulid}.{ext} on the media disk', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 10, 10)])->assertCreated();
+
+    $media = Media::sole();
+    expect($media->path)->toMatch('#^org/'.$org->id.'/[0-9A-HJKMNP-TV-Z]{26}\.jpg$#');
+    Storage::disk('media')->assertExists($media->path);
+});
+
+it('sanitizes a directory-traversal / control-character filename before storing it', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $file = UploadedFile::fake()->image('../../etc/passwd'."\r\n".'evil.jpg', 10, 10);
+
+    $this->postJson('/api/media', ['file' => $file])->assertCreated();
+
+    $stored = Media::sole()->original_filename;
+    expect($stored)->not->toContain('..')
+        ->and($stored)->not->toContain('/')
+        ->and($stored)->not->toContain("\r")
+        ->and($stored)->not->toContain("\n");
+});
+
+it('strips quotes and backslashes from a stored filename, since providers put it in a header', function () {
+    // Re-review round 2, finding 1: this value is now sent as the
+    // multipart filename by every provider, and Guzzle writes it into
+    // `Content-Disposition` with sprintf and no escaping — so a `"` in it
+    // appends attacker-chosen parameters to that header. Stripped at the
+    // point of storage as well as at the point of use (MediaDto::filename()),
+    // because "some later layer will handle it" is what made this
+    // reachable in the first place.
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $file = UploadedFile::fake()->image('a".png', 10, 10);
+
+    $this->postJson('/api/media', ['file' => $file])->assertCreated();
+
+    $stored = Media::sole()->original_filename;
+
+    expect($stored)->not->toContain('"')
+        ->and($stored)->not->toContain('\\');
+});
+
+it('does not report success or persist a row when the storage write fails (review finding 1)', function () {
+    // Storage::fake('media') always succeeds -- it cannot distinguish
+    // "the service checked the write" from "the write happened to
+    // work". This forces a real Flysystem failure (as a missing
+    // bucket, or a transient S3/MinIO error, would produce) via a
+    // mocked disk instead.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $failingDisk = Mockery::mock(Filesystem::class);
+    $failingDisk->shouldReceive('writeStream')
+        ->andThrow(UnableToWriteFile::atLocation('org/x/whatever.jpg', 'simulated failure'));
+    Storage::shouldReceive('disk')->with('media')->andReturn($failingDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 10, 10)])
+        ->assertStatus(500);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('does not report success or persist a row when writeStream() returns false (not throws) for the original file (review finding 2)', function () {
+    // Distinct from the throwing case above: this exercises
+    // writeToDisk()'s explicit `$written === false` check directly --
+    // the defense-in-depth branch that matters if a Filesystem
+    // implementation (this project's real 'media' disk config now sets
+    // 'throw' => true and would raise instead, but the Filesystem
+    // CONTRACT does not require that) reports failure by return value
+    // rather than by exception. Review finding 2: the original
+    // Critical-severity bug was exactly this shape on the ORIGINAL
+    // file write (writeStream() returning false, discarded, still
+    // producing a 201 with a persisted row) -- the earlier throwing
+    // test above would have passed against the pre-fix code too (an
+    // unhandled exception also 500s), so it never actually exercised
+    // the specific defect this finding named.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $failingDisk = Mockery::mock(Filesystem::class);
+    $failingDisk->shouldReceive('writeStream')->andReturn(false);
+    Storage::shouldReceive('disk')->with('media')->andReturn($failingDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 10, 10)])
+        ->assertStatus(500);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('stores the original file but leaves thumbnail_path null when only the thumbnail write fails (review finding 1)', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $flakyDisk = Mockery::mock(Filesystem::class);
+    // First writeStream() call is the original file (succeeds); the
+    // second is the thumbnail (fails) -- Mockery::andReturn() with
+    // multiple arguments returns them in call order.
+    $flakyDisk->shouldReceive('writeStream')->andReturn(true, false);
+    $flakyDisk->shouldReceive('url')->andReturn('http://media.test/fake-url');
+    Storage::shouldReceive('disk')->with('media')->andReturn($flakyDisk);
+
+    $this->postJson('/api/media', ['file' => UploadedFile::fake()->image('a.jpg', 1200, 900)])
+        ->assertCreated()
+        ->assertJsonPath('data.thumbnail_url', null);
+
+    $media = Media::sole();
+    expect($media->path)->not->toBeNull()
+        ->and($media->thumbnail_path)->toBeNull();
+});
+
+// --- POST /api/media/from-url ---------------------------------------------
+
+it('refuses to download from a private ip', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://169.254.169.254/latest/meta-data'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('refuses a from-url import when a safe host redirects to a private IP', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    SafeRemoteHost::fake(['safe.example' => ['198.51.100.10']]);
+    Http::fake([
+        'safe.example/*' => Http::response('', 302, ['Location' => 'http://169.254.169.254/secret']),
+    ]);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://safe.example/image.jpg'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('refuses a from-url import whose scheme is neither http nor https', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media/from-url', ['url' => 'ftp://example.com/file.jpg'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('imports media from a safe http url', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    SafeRemoteHost::fake(['safe.example' => ['198.51.100.10']]);
+    // Held in a variable, not chained: the fake File wraps a tmpfile()
+    // resource that is closed (deleting the underlying temp file) as
+    // soon as the object is garbage-collected -- chaining
+    // ->getPathname() directly let it get collected before
+    // file_get_contents() ran.
+    $fakeImage = UploadedFile::fake()->image('a.jpg', 400, 300);
+    $bytes = (string) file_get_contents($fakeImage->getPathname());
+    Http::fake([
+        'safe.example/*' => Http::response($bytes, 200, ['Content-Type' => 'image/jpeg']),
+    ]);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://safe.example/photo.jpg'])
+        ->assertCreated()
+        ->assertJsonPath('data.mime', 'image/jpeg');
+
+    $media = Media::sole();
+    expect($media->size_bytes)->toBe(strlen($bytes));
+    // Same extractDimensions() path as a direct upload -- storeFromUrl()
+    // funnels through the same persist() call, on the downloaded temp
+    // file.
+    expect($media->width)->toBe(400)->and($media->height)->toBe(300);
+});
+
+it('rejects a from-url download whose actual body exceeds the configured size cap, regardless of the declared Content-Length', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    // A tiny configured cap, not a genuine 100MB fixture -- see
+    // config/media.php's docblock for why this is configurable.
+    config(['media.import_max_bytes' => 10]);
+
+    SafeRemoteHost::fake(['safe.example' => ['198.51.100.10']]);
+    $body = str_repeat('x', 1000);
+    Http::fake([
+        // Content-Length lies (claims 10 bytes) -- the actual streamed
+        // body is 1000 bytes; the size check must be based on bytes
+        // actually received, not this header.
+        'safe.example/*' => Http::response($body, 200, ['Content-Type' => 'image/jpeg', 'Content-Length' => '10']),
+    ]);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://safe.example/huge.jpg'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('rejects a from-url download whose sniffed content is not an allowed mime type', function () {
+    Storage::fake('media');
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    SafeRemoteHost::fake(['safe.example' => ['198.51.100.10']]);
+    Http::fake([
+        'safe.example/*' => Http::response('MZ'.str_repeat("\0", 100), 200, ['Content-Type' => 'image/jpeg']),
+    ]);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://safe.example/not-really-an-image.jpg'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('rejects a userinfo-obfuscated from-url URL', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $this->postJson('/api/media/from-url', ['url' => 'http://trusted.example@169.254.169.254/'])
+        ->assertStatus(422);
+
+    expect(Media::count())->toBe(0);
+});
+
+it('exposes the real content-based mime detection used by both upload paths', function () {
+    // MediaUploadService::sniffMime() is the single source of truth
+    // UploadMediaRequest, store() and storeFromUrl() all read from --
+    // exercised directly here against a real GD-rendered PNG to prove
+    // it reads content, not extension.
+    $file = UploadedFile::fake()->image('anything.txt', 5, 5);
+
+    expect(MediaUploadService::sniffMime($file->getPathname()))->toBe('image/jpeg');
+});

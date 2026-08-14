@@ -1,0 +1,11 @@
+{
+    "ok": true,
+    "result": {
+        "id": -1001234567890,
+        "title": "My Announcements Channel",
+        "type": "channel",
+        "username": "my_announcements",
+        "description": "Official updates channel",
+        "invite_link": "https://t.me/my_announcements"
+    }
+}
