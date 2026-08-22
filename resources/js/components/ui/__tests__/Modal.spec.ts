@@ -105,3 +105,56 @@ it('wraps Tab from the last focusable element back to the first, instead of lett
 
     w.unmount();
 });
+
+// Task 1.1 (share button): PostEditorModal needs a "Share" action beside
+// the title, not buried in the body among the composer's own controls.
+// The slot is additive — the header of every existing caller, none of
+// which passes it, is byte-for-byte what it was.
+it('renders the actions slot in the header, before the close button', () => {
+    const w = mount(Modal, {
+        props: { open: true, title: 'Title' },
+        slots: { actions: '<button type="button" class="share-action">Share</button>' },
+        global: { stubs: { teleport: true } },
+    });
+
+    const header = w.get('[role="dialog"] > div');
+    const buttons = header.findAll('button');
+
+    expect(header.find('.share-action').exists()).toBe(true);
+    // Close stays last, so Tab reaches the actions first — the same
+    // reading order as the visual one.
+    expect(buttons[buttons.length - 1].attributes('aria-label')).toBeTruthy();
+});
+
+it('leaves the header untouched when no actions slot is passed', () => {
+    const w = mountModal();
+    const header = w.get('[role="dialog"] > div');
+
+    expect(header.findAll('button')).toHaveLength(1);
+});
+
+// Task 1.1 opens a share-link modal from inside PostEditorModal. Both are
+// Modals, both listened for Escape on `document`, and both reacted — so
+// one Escape dismissed the little dialog AND the multi-minute composition
+// behind it. Only the topmost open modal may answer Escape.
+it('only the topmost open modal reacts to Escape', async () => {
+    const bottom = mountModal();
+    const top = mountModal();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await top.vm.$nextTick();
+
+    expect(top.emitted('close')).toBeTruthy();
+    expect(bottom.emitted('close')).toBeFalsy();
+});
+
+it('hands Escape back to the one underneath once the topmost closes', async () => {
+    const bottom = mountModal();
+    const top = mountModal();
+
+    await top.setProps({ open: false });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await bottom.vm.$nextTick();
+
+    expect(bottom.emitted('close')).toBeTruthy();
+});

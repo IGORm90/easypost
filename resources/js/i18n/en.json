@@ -228,10 +228,29 @@
         "locked": "Published posts can't be moved or deleted.",
         "remove": "Remove",
         "removeConfirm": "Remove this post from the calendar?",
+        "actions": "Post actions",
+        "share": {
+            "menuItem": "Share",
+            "indicator": "Public link is active",
+            "title": "Share this post",
+            "description": "A public link shows this post exactly as it will be published — no editing, no account needed. Anyone holding the link can open it.",
+            "create": "Create link",
+            "linkLabel": "Public link",
+            "active": "The link is active",
+            "inactive": "No link yet",
+            "revoke": "Turn the link off",
+            "revokeConfirm": "Turn this link off? Anyone already holding it will stop being able to open the post.",
+            "createError": "Could not create the link. Please try again.",
+            "revokeError": "Could not turn the link off. Please try again."
+        },
+        "duplicate": {
+            "menuItem": "Duplicate"
+        },
         "toast": {
             "moveConflict": "This post was already published, so the move was cancelled. The list has been refreshed.",
             "moveError": "Could not reschedule the post. Please try again.",
-            "removeError": "Could not remove the post. Please try again."
+            "removeError": "Could not remove the post. Please try again.",
+            "duplicateError": "Could not duplicate the post. Please try again."
         },
         "newPost": "New post",
         "errors": {

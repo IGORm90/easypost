@@ -2,12 +2,13 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Badge from '../ui/Badge.vue';
+import PostActionsMenu from './PostActionsMenu.vue';
 import type { CalendarEntry } from '../../stores/posts';
 
 /**
  * Renders one calendar card. This is a pure presentational component fed
  * by CalendarGrid.vue's `eventContent` slot (see that file) — it never
- * touches the store itself, only emits intent (`remove`) back up.
+ * touches the store itself, only emits intent (`remove`, `share`) back up.
  *
  * State is never conveyed by colour alone (color.md §3.3/§4): every
  * state below pairs a colour with a text label (the Badge) and, for the
@@ -27,7 +28,7 @@ const props = defineProps<{
     locked: boolean;
 }>();
 
-const emit = defineEmits<{ remove: [string] }>();
+const emit = defineEmits<{ remove: [string]; share: [string]; duplicate: [string] }>();
 
 const { t } = useI18n();
 
@@ -46,17 +47,56 @@ const badgeStatus = computed(() => {
 
 const isDraft = computed(() => props.entry.state === 'DRAFT');
 
+const isShared = computed(() => props.entry.share_token !== null);
+
+/**
+ * Sharing and duplicating both stay available on a locked (PUBLISHED)
+ * card — for sharing that is in fact the common case, since the link
+ * shows the post as published, and duplicating a post that published
+ * well is the main reason the action exists. Neither touches the
+ * original: duplicate writes a brand-new DRAFT group. `locked` only
+ * takes away the destructive action, which is exactly what
+ * PostState::PUBLISHED being terminal means here.
+ */
+const menuItems = computed(() => {
+    const items: Array<{ key: string; label: string; variant?: 'default' | 'danger' }> = [
+        { key: 'share', label: t('calendar.share.menuItem') },
+        { key: 'duplicate', label: t('calendar.duplicate.menuItem') },
+    ];
+
+    if (!props.locked) {
+        items.push({ key: 'remove', label: t('calendar.remove'), variant: 'danger' as const });
+    }
+
+    return items;
+});
+
+/**
+ * Dispatch is exhaustive on purpose. This used to fall through — anything
+ * that was not 'share' emitted 'remove' — which quietly turned every menu
+ * item added later into a delete button, with the worst failure mode this
+ * card has. An unknown key is now a no-op.
+ */
+function onMenuSelect(key: string): void {
+    switch (key) {
+        case 'share':
+            emit('share', props.entry.id);
+            break;
+        case 'duplicate':
+            emit('duplicate', props.entry.id);
+            break;
+        case 'remove':
+            emit('remove', props.entry.id);
+            break;
+    }
+}
+
 // One line combining every channel targeted by this group — the
 // calendar shows one card per PostGroup (per CalendarEntryResource), not
 // one per channel-specific Post segment.
 const channelNames = computed(() => props.entry.posts.map((post) => post.integration.name).join(', '));
 
 const preview = computed(() => props.entry.posts[0]?.content ?? '');
-
-function onRemoveClick(event: MouseEvent): void {
-    event.stopPropagation();
-    emit('remove', props.entry.id);
-}
 </script>
 
 <template>
@@ -83,29 +123,43 @@ function onRemoveClick(event: MouseEvent): void {
                 stays decorative; the name it was meant to carry now lives
                 in real text beside it, visually hidden.
             -->
-            <span v-if="locked" class="sr-only">{{ t('calendar.locked') }}</span>
-            <svg
-                v-if="locked"
-                class="h-3 w-3 shrink-0 text-muted"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                aria-hidden="true"
-            >
-                <path
-                    fill-rule="evenodd"
-                    d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z"
-                    clip-rule="evenodd"
-                />
-            </svg>
-            <button
-                v-else
-                type="button"
-                class="shrink-0 text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-                :aria-label="t('calendar.remove')"
-                @click="onRemoveClick"
-            >
-                &times;
-            </button>
+            <span class="flex shrink-0 items-center gap-1">
+                <!--
+                    An active public link is a state the owner must be able
+                    to notice, and color.md §4 forbids conveying it by
+                    colour alone — so it gets the same icon + real text
+                    treatment the lock below already has.
+                -->
+                <span v-if="isShared" class="sr-only">{{ t('calendar.share.indicator') }}</span>
+                <svg
+                    v-if="isShared"
+                    class="h-3 w-3 shrink-0 text-muted"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                >
+                    <path
+                        d="M8.5 11.5a3.5 3.5 0 005 0l2.5-2.5a3.536 3.536 0 10-5-5l-1 1a.75.75 0 101.06 1.06l1-1a2.036 2.036 0 112.88 2.88l-2.5 2.5a2 2 0 01-2.88 0 .75.75 0 10-1.06 1.06zm3-3a3.5 3.5 0 00-5 0L4 11a3.536 3.536 0 105 5l1-1a.75.75 0 10-1.06-1.06l-1 1a2.036 2.036 0 11-2.88-2.88l2.5-2.5a2 2 0 012.88 0 .75.75 0 101.06-1.06z"
+                    />
+                </svg>
+
+                <span v-if="locked" class="sr-only">{{ t('calendar.locked') }}</span>
+                <svg
+                    v-if="locked"
+                    class="h-3 w-3 shrink-0 text-muted"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                >
+                    <path
+                        fill-rule="evenodd"
+                        d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z"
+                        clip-rule="evenodd"
+                    />
+                </svg>
+
+                <PostActionsMenu :items="menuItems" :label="t('calendar.actions')" @select="onMenuSelect" />
+            </span>
         </div>
 
         <p class="truncate text-muted">{{ preview }}</p>

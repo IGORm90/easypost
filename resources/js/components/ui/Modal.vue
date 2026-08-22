@@ -1,3 +1,20 @@
+<script lang="ts">
+/**
+ * Every open modal, in the order it opened. Modals stack — Task 1.1
+ * opens ShareLinkModal from inside PostEditorModal — and both listen for
+ * Escape on `document`, so without this both answered a single press:
+ * the small dialog closed AND the multi-minute composition behind it
+ * went with it. Only the last entry here reacts.
+ *
+ * This lives in a plain `<script>` block, not in `<script setup>` below:
+ * the body of `<script setup>` IS the setup function and runs once per
+ * instance, which would give every modal its own private "stack" of one
+ * and defeat the whole point. It is a property of the page, and there is
+ * exactly one page.
+ */
+const stack: symbol[] = [];
+</script>
+
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -26,6 +43,9 @@ const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreB
 });
 
 const emit = defineEmits<{ close: [] }>();
+
+/** This instance's place in the shared `stack` above. */
+const identity = Symbol('modal');
 
 const { t } = useI18n();
 
@@ -56,7 +76,11 @@ function onKeydown(event: KeyboardEvent): void {
         // Deliberately not gated on `ignoreBackdropClick`: that guards
         // against a misplaced CLICK. Escape is intentional, and without
         // it a keyboard user has no equivalent of the close button.
-        emit('close');
+        //
+        // It IS gated on being the topmost modal — see `stack` above.
+        if (stack[stack.length - 1] === identity) {
+            emit('close');
+        }
 
         return;
     }
@@ -93,6 +117,7 @@ watch(
     async (open) => {
         if (open) {
             restoreFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            stack.push(identity);
             document.addEventListener('keydown', onKeydown);
             await nextTick();
             (focusables()[0] ?? dialog.value)?.focus();
@@ -100,6 +125,7 @@ watch(
             return;
         }
 
+        leaveStack();
         document.removeEventListener('keydown', onKeydown);
         restoreFocusTo?.focus();
         restoreFocusTo = null;
@@ -107,7 +133,19 @@ watch(
     { immediate: true },
 );
 
+function leaveStack(): void {
+    const index = stack.lastIndexOf(identity);
+
+    if (index !== -1) {
+        stack.splice(index, 1);
+    }
+}
+
 onBeforeUnmount(() => {
+    // A modal can be torn down while still open (its whole page unmounts),
+    // which would otherwise leave a dead entry on top of the stack and
+    // silence Escape for everything underneath it, permanently.
+    leaveStack();
     document.removeEventListener('keydown', onKeydown);
 });
 </script>
@@ -124,20 +162,30 @@ onBeforeUnmount(() => {
                 tabindex="-1"
                 class="relative w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-lg"
             >
-                <div class="mb-4 flex items-center justify-between">
+                <div class="mb-4 flex items-center justify-between gap-2">
                     <h2 v-if="title" :id="titleId" class="text-base font-semibold text-text">{{ title }}</h2>
-                    <button
-                        type="button"
-                        class="ml-auto rounded-xl p-1 text-muted hover:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                        :aria-label="t('ui.close')"
-                        @click="emit('close')"
-                    >
-                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path
-                                d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-                            />
-                        </svg>
-                    </button>
+                    <!--
+                        Header actions (Task 1.1's "Share"). Deliberately
+                        placed BEFORE the close button so both the visual
+                        order and the tab order put "do something" ahead of
+                        "leave" — and so `ml-auto` keeps pinning the group
+                        to the right whether or not the slot is filled.
+                    -->
+                    <div class="ml-auto flex items-center gap-2">
+                        <slot name="actions" />
+                        <button
+                            type="button"
+                            class="rounded-xl p-1 text-muted hover:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                            :aria-label="t('ui.close')"
+                            @click="emit('close')"
+                        >
+                            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path
+                                    d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+                                />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <slot />
             </div>

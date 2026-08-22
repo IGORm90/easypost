@@ -186,3 +186,35 @@ it('a draft created WITH an explicit publish_date keeps it, appearing only in a 
     $todayRange->assertOk();
     expect(collect((array) $todayRange->json())->pluck('id'))->not->toContain($groupId);
 });
+
+/*
+ * Task 1.1 (share button): the calendar card needs to show whether a
+ * public link is already active without fetching the full group, so the
+ * calendar entry carries `share_token` — the same field PostGroupResource
+ * has always exposed. It is the organization's own data; the public
+ * viewer route is what the token opens, and only members ever see this
+ * response.
+ */
+it('exposes the share token on calendar entries', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $shared = PostGroup::factory()->for($org)->create([
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->addDay(),
+        'share_token' => str_repeat('a', 64),
+    ]);
+    Post::factory()->for($shared, 'group')->create(['organization_id' => $org->id, 'integration_id' => $integration->id]);
+
+    $private = PostGroup::factory()->for($org)->create(['state' => PostState::QUEUE, 'publish_date' => now()->addDay()]);
+    Post::factory()->for($private, 'group')->create(['organization_id' => $org->id, 'integration_id' => $integration->id]);
+
+    $entries = collect((array) $this->getJson('/api/calendar?'.http_build_query([
+        'from' => now()->subDay()->toIso8601String(),
+        'to' => now()->addWeek()->toIso8601String(),
+    ]))->assertOk()->json())->keyBy('id');
+
+    expect($entries[$shared->id]['share_token'])->toBe(str_repeat('a', 64))
+        ->and($entries[$private->id]['share_token'])->toBeNull();
+});

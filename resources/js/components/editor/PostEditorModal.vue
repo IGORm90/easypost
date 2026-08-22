@@ -11,6 +11,7 @@ import ChannelTab from './ChannelTab.vue';
 import ThreadEditor from './ThreadEditor.vue';
 import ScheduleControls from './ScheduleControls.vue';
 import PreviewPane from '../previews/PreviewPane.vue';
+import ShareLinkModal from '../posts/ShareLinkModal.vue';
 import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
 import { useMediaStore } from '../../stores/media';
@@ -109,6 +110,18 @@ const pendingSaveType = ref<SaveType | null>(null);
  * the modal now correctly calls itself "New post".
  */
 const loadedFromServer = ref(false);
+/**
+ * Task 1.1's share link, keyed off `props.groupId` rather than
+ * `effectiveGroupId`. That distinction matters: a group that loaded
+ * already published resets `effectiveGroupId` to null (see its docblock)
+ * — and a published post is exactly the one people most want to share.
+ * `shareToken` is seeded by `loadGroup()` from PostGroupResource, which
+ * has always carried the field.
+ */
+const shareToken = ref<string | null>(null);
+const shareOpen = ref(false);
+
+const canShare = computed(() => props.groupId !== null && loadedFromServer.value);
 const generalErrors = ref<string[]>([]);
 const channelErrors = reactive<Record<string, Record<number, string[]>>>({});
 
@@ -317,6 +330,8 @@ function resetForm(): void {
     groupLocked.value = false;
     pendingSaveType.value = null;
     loadedFromServer.value = false;
+    shareToken.value = null;
+    shareOpen.value = false;
 }
 
 /**
@@ -336,6 +351,7 @@ async function loadGroup(id: string): Promise<void> {
     const { data } = await api.get<PostGroupApi>(`/posts/${id}`);
 
     loadedFromServer.value = true;
+    shareToken.value = data.share_token;
     selectedTags.value = [...data.tags];
     publishDate.value = data.publish_date;
 
@@ -553,10 +569,15 @@ async function executeSave(type: SaveType): Promise<void> {
 // signature selector below) — see that ref's docblock for why the two
 // must not be conflated.
 const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit') : t('editor.titleNew')));
+
 </script>
 
 <template>
     <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" @close="emit('close')">
+        <template v-if="canShare" #actions>
+            <Button variant="secondary" @click="shareOpen = true">{{ t('calendar.share.menuItem') }}</Button>
+        </template>
+
         <div v-if="loading" class="py-8 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
 
         <div v-else class="flex max-h-[75vh] flex-col gap-4 overflow-y-auto">
@@ -704,5 +725,13 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
             -->
             <Button variant="ghost" type="button" class="self-start" @click="emit('close')">{{ t('editor.closeWithoutSaving') }}</Button>
         </div>
+    
+        <ShareLinkModal
+            :open="shareOpen"
+            :group-id="groupId"
+            :share-token="shareToken"
+            @close="shareOpen = false"
+            @changed="shareToken = $event"
+        />
     </Modal>
 </template>

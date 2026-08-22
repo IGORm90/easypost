@@ -3,12 +3,14 @@ import { createPinia, setActivePinia } from 'pinia'
 const get = vi.fn()
 const patch = vi.fn()
 const del = vi.fn()
+const post = vi.fn()
 
 vi.mock('../../api/client', () => ({
   api: {
     get: (...args: unknown[]) => get(...args),
     patch: (...args: unknown[]) => patch(...args),
     delete: (...args: unknown[]) => del(...args),
+    post: (...args: unknown[]) => post(...args),
   },
 }))
 
@@ -17,6 +19,7 @@ beforeEach(() => {
   get.mockClear()
   patch.mockClear()
   del.mockClear()
+  post.mockClear()
 })
 
 function entry(overrides: Record<string, unknown> = {}) {
@@ -24,6 +27,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     id: 'group-1',
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
+    share_token: null,
     tags: [],
     posts: [{ id: 'post-1', content: 'hello', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Chan' } }],
     ...overrides,
@@ -134,4 +138,124 @@ it('remove() keeps the entry out on success', async () => {
   await store.remove('a')
 
   expect(store.entries.map((e) => e.id)).toEqual(['b'])
+})
+
+it('share() returns the server-built url and records the token it ends with', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry()] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+
+  post.mockResolvedValueOnce({ data: { url: 'https://app.example/share/tok-123' } })
+
+  const url = await store.share('group-1')
+
+  expect(post).toHaveBeenCalledWith('/posts/group-1/share')
+  expect(url).toBe('https://app.example/share/tok-123')
+  expect(store.entries[0].share_token).toBe('tok-123')
+})
+
+it('share() still resolves for a group that is not in the current range', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  post.mockResolvedValueOnce({ data: { url: 'https://app.example/share/tok-9' } })
+
+  expect(await store.share('offscreen')).toBe('https://app.example/share/tok-9')
+})
+
+it('share() leaves the entry untouched when the request fails', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry()] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+
+  post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 500 } })
+
+  await expect(store.share('group-1')).rejects.toBeTruthy()
+
+  expect(store.entries[0].share_token).toBeNull()
+})
+
+it('unshare() clears the token optimistically and restores it on failure', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry({ share_token: 'tok-123' })] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+
+  let rejectDelete: (reason: unknown) => void = () => {}
+  del.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject }))
+
+  const pending = store.unshare('group-1')
+
+  // Cleared synchronously, before the DELETE settles.
+  expect(store.entries[0].share_token).toBeNull()
+
+  rejectDelete({ isAxiosError: true, response: { status: 500 } })
+  await expect(pending).rejects.toBeTruthy()
+
+  expect(del).toHaveBeenCalledWith('/posts/group-1/share')
+  expect(store.entries[0].share_token).toBe('tok-123')
+})
+
+it('unshare() keeps the token cleared on success', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry({ share_token: 'tok-123' })] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+
+  del.mockResolvedValueOnce({})
+  await store.unshare('group-1')
+
+  expect(store.entries[0].share_token).toBeNull()
+})
+
+it('unshare() on an unknown group id still calls the API, so a stale card can revoke', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  del.mockResolvedValueOnce({})
+  await store.unshare('offscreen')
+
+  expect(del).toHaveBeenCalledWith('/posts/offscreen/share')
+})
+
+// Task 1.2. duplicate() returns only the new group id: the 201 body is a
+// PostGroupResource, which carries neither the integration objects nor
+// the tag names a CalendarEntry needs, so it cannot be spliced into
+// `entries`. The page refetches the range instead.
+it('duplicate() posts to the duplicate endpoint and returns the new group id', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry()] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+
+  post.mockResolvedValueOnce({ data: { id: 'group-copy' } })
+  const newId = await store.duplicate('group-1')
+
+  expect(post).toHaveBeenCalledWith('/posts/group-1/duplicate')
+  expect(newId).toBe('group-copy')
+})
+
+// A rejected duplicate must not half-touch the calendar: nothing was
+// written locally, so there is nothing to roll back, and the error goes
+// to the page, which decides whether to say anything (a 402 is already
+// announced by the LimitToast the api client raises).
+it('duplicate() re-throws and leaves entries untouched when the request fails', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce({ data: [entry()] })
+
+  const store = usePostsStore()
+  await store.fetchRange('x', 'y')
+  const before = JSON.stringify(store.entries)
+
+  post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 402 } })
+  await expect(store.duplicate('group-1')).rejects.toBeTruthy()
+
+  expect(JSON.stringify(store.entries)).toBe(before)
 })

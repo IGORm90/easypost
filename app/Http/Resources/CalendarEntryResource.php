@@ -15,7 +15,11 @@ use Illuminate\Support\Collection;
  * PostGroupResource (Task 20's edit-round-trip shape), this does not
  * group posts back into per-integration chains or echo `settings`/
  * `media_ids`: the calendar only ever renders a group's cards, never
- * feeds a response straight back into PUT /api/posts/{group}.
+ * feeds a response straight back into PUT /api/posts/{group}. It does
+ * carry `share_token`, though: the calendar card shows a "link is
+ * active" indicator, and making that one flag cost a per-card fetch of
+ * the whole group would be absurd. It is the organization's own data —
+ * this endpoint is never reachable without membership.
  *
  * Requires `posts.integration` and `tags` to already be eager-loaded by
  * CalendarService — see that class's docblock for why (avoiding N+1
@@ -37,6 +41,7 @@ class CalendarEntryResource extends JsonResource
             'id' => $this->id,
             'state' => $this->state,
             'publish_date' => $this->publish_date,
+            'share_token' => $this->share_token,
             'tags' => TagResource::collection($this->whenLoaded('tags')),
             'posts' => $posts->map(fn (Post $post): array => [
                 'id' => $post->id,

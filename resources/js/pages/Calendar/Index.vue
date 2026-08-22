@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAxiosError } from 'axios';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '../../layouts/AppLayout.vue';
@@ -10,6 +11,7 @@ import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewS
 import TagFilter from '../../components/calendar/TagFilter.vue';
 import PublishErrorBanner from '../../components/calendar/PublishErrorBanner.vue';
 import PostEditorModal from '../../components/editor/PostEditorModal.vue';
+import ShareLinkModal from '../../components/posts/ShareLinkModal.vue';
 import { usePostsStore, type CalendarTag } from '../../stores/posts';
 import { useAuthStore } from '../../stores/auth';
 import { useOrganizationStore } from '../../stores/organization';
@@ -132,6 +134,53 @@ function onEdit(groupId: string): void {
     editorOpen.value = true;
 }
 
+/**
+ * The share link modal is owned here rather than by the card, so that a
+ * single instance serves every card and sits above the grid instead of
+ * inside a FullCalendar-rendered cell. The token comes straight from the
+ * store entry (CalendarEntryResource carries `share_token`), so opening
+ * it costs no request; `changed` needs no handler because the store has
+ * already updated that same entry.
+ */
+const shareGroupId = ref<string | null>(null);
+
+const shareToken = computed(() => postsStore.entries.find((entry) => entry.id === shareGroupId.value)?.share_token ?? null);
+
+function onShare(groupId: string): void {
+    shareGroupId.value = groupId;
+}
+
+/**
+ * Duplicating: copy, refetch, then open the copy for editing.
+ *
+ * The refetch is what makes the copy appear — the store deliberately
+ * writes nothing locally (see its docblock), and the copy always
+ * inherits the original's publish_date, so it always lands inside the
+ * range `load()` refetches. Opening the editor afterwards is the point
+ * of the flow: the copy is a DRAFT sitting on the original's date, so it
+ * almost always needs its text or its time changed before it is useful.
+ * `onEdit()` is reused verbatim; PostEditorModal loads the group from
+ * the server by id and does not read the store, so the order of these
+ * two steps only affects what is behind the modal.
+ *
+ * A plan-limit rejection is a 402, and the api client's interceptor has
+ * already raised the LimitToast by the time this catch runs — saying it
+ * again in `notice` would be the same refusal told twice, so only other
+ * failures get a message. Same rule MediaUploader.vue:123 follows.
+ */
+async function onDuplicate(groupId: string): Promise<void> {
+    try {
+        const newId = await postsStore.duplicate(groupId);
+
+        await load();
+        onEdit(newId);
+    } catch (error) {
+        if (!(isAxiosError(error) && error.response?.status === 402)) {
+            notice.value = { text: t('calendar.toast.duplicateError'), variant: 'danger' };
+        }
+    }
+}
+
 function onNewPost(): void {
     editorGroupId.value = null;
     editorOpen.value = true;
@@ -191,6 +240,8 @@ function onEditorSaved(): void {
                 :timezone="timezone"
                 @range-change="onRangeChange"
                 @edit="onEdit"
+                @share="onShare"
+                @duplicate="onDuplicate"
                 @blocked="onBlocked"
                 @error="onGridError"
             />
@@ -201,6 +252,13 @@ function onEditorSaved(): void {
             :group-id="editorGroupId"
             @close="editorOpen = false"
             @saved="onEditorSaved"
+        />
+
+        <ShareLinkModal
+            :open="shareGroupId !== null"
+            :group-id="shareGroupId"
+            :share-token="shareToken"
+            @close="shareGroupId = null"
         />
     </AppLayout>
 </template>

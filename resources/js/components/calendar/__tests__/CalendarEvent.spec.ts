@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
 import CalendarEvent from '../CalendarEvent.vue'
+import PostActionsMenu from '../PostActionsMenu.vue'
 import en from '../../../i18n/en.json'
 
 function entry(overrides: Record<string, unknown> = {}) {
@@ -7,6 +8,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     id: 'group-1',
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
+    share_token: null,
     tags: [],
     posts: [{ id: 'post-1', content: 'hello there', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Announcements', picture: null } }],
     ...overrides,
@@ -35,11 +37,20 @@ it('a non-draft card has a solid border, not dashed', () => {
   expect(w.classes()).not.toContain('border-dashed')
 })
 
-it('a locked (PUBLISHED) card shows a lock indicator instead of the remove button, and never emits remove', async () => {
+// Task 1.1 rewrote this: a locked card is no longer button-less. Sharing
+// a PUBLISHED post is the whole point of the share link, so the actions
+// menu stays — what the lock forbids is editing and deleting, and only
+// "Remove" disappears from the menu.
+it('a locked (PUBLISHED) card shows a lock indicator and offers Share but not Remove', async () => {
   const w = mount(CalendarEvent, { props: { entry: entry({ state: 'PUBLISHED' }), locked: true } })
 
   expect(w.find('svg').exists()).toBe(true)
-  expect(w.find('button').exists()).toBe(false)
+
+  await w.get('button[aria-haspopup="menu"]').trigger('click')
+  const labels = w.findAll('[role="menuitem"]').map((i) => i.text())
+
+  expect(labels).toContain(en.calendar.share.menuItem)
+  expect(labels).not.toContain(en.calendar.remove)
 })
 
 // Final review, Important 11: the lock icon carried `aria-hidden="true"`
@@ -59,12 +70,76 @@ it('announces the locked state as text, since an aria-label on an aria-hidden ic
   expect(icons.map((icon) => icon.attributes('aria-label'))).toEqual(icons.map(() => undefined))
 })
 
-it('an unlocked card exposes a remove button that emits remove with the group id', async () => {
+it('an unlocked card emits remove with the group id when Remove is chosen', async () => {
   const w = mount(CalendarEvent, { props: { entry: entry({ id: 'group-42' }), locked: false } })
 
-  const button = w.find('button')
-  expect(button.exists()).toBe(true)
-  await button.trigger('click')
+  await w.get('button[aria-haspopup="menu"]').trigger('click')
+  const remove = w.findAll('[role="menuitem"]').find((i) => i.text() === en.calendar.remove)
+  await remove?.trigger('click')
 
   expect(w.emitted('remove')).toEqual([['group-42']])
+})
+
+it('emits share with the group id when Share is chosen', async () => {
+  const w = mount(CalendarEvent, { props: { entry: entry({ id: 'group-42' }), locked: false } })
+
+  await w.get('button[aria-haspopup="menu"]').trigger('click')
+  const share = w.findAll('[role="menuitem"]').find((i) => i.text() === en.calendar.share.menuItem)
+  await share?.trigger('click')
+
+  expect(w.emitted('share')).toEqual([['group-42']])
+})
+
+// color.md §4: an active public link is a state the owner needs to be
+// able to see at a glance, and it may not be conveyed by colour alone —
+// same treatment the lock already gets (icon + real text).
+it('shows the active-link state as text beside an icon, not as colour', () => {
+  const shared = mount(CalendarEvent, { props: { entry: entry({ share_token: 'tok-1' }), locked: false } })
+  const plain = mount(CalendarEvent, { props: { entry: entry(), locked: false } })
+
+  expect(shared.text()).toContain(en.calendar.share.indicator)
+  expect(plain.text()).not.toContain(en.calendar.share.indicator)
+  expect(shared.findAll('svg').length).toBeGreaterThan(plain.findAll('svg').length)
+})
+
+// Task 1.2, the hazard found while adding a third menu item: onMenuSelect
+// used to be a fall-through — anything that was not 'share' emitted
+// 'remove'. That made every future menu entry a delete button by default,
+// and the failure mode is the worst one available here (a post silently
+// disappears). Dispatch is now explicit, and an unrecognised key does
+// nothing at all.
+it('an unrecognised menu key emits nothing, least of all remove', async () => {
+  const w = mount(CalendarEvent, { props: { entry: entry(), locked: false } })
+
+  w.findComponent(PostActionsMenu).vm.$emit('select', 'not-a-real-action')
+  await w.vm.$nextTick()
+
+  expect(w.emitted('remove')).toBeUndefined()
+  expect(w.emitted('share')).toBeUndefined()
+})
+
+// Task 1.2. Duplicating produces a fresh DRAFT group and leaves the
+// original untouched, so — unlike Remove — the item stays on a locked
+// (PUBLISHED) card. Repeating a post that already published well is in
+// fact the main reason to duplicate at all.
+it('offers Duplicate on both an unlocked and a locked card', async () => {
+  for (const locked of [false, true]) {
+    const w = mount(CalendarEvent, { props: { entry: entry({ state: locked ? 'PUBLISHED' : 'QUEUE' }), locked } })
+
+    await w.get('button[aria-haspopup="menu"]').trigger('click')
+    const labels = w.findAll('[role="menuitem"]').map((i) => i.text())
+
+    expect(labels).toContain(en.calendar.duplicate.menuItem)
+  }
+})
+
+it('emits duplicate — and never remove — with the group id when Duplicate is chosen', async () => {
+  const w = mount(CalendarEvent, { props: { entry: entry({ id: 'group-42' }), locked: false } })
+
+  await w.get('button[aria-haspopup="menu"]').trigger('click')
+  const duplicate = w.findAll('[role="menuitem"]').find((i) => i.text() === en.calendar.duplicate.menuItem)
+  await duplicate?.trigger('click')
+
+  expect(w.emitted('duplicate')).toEqual([['group-42']])
+  expect(w.emitted('remove')).toBeUndefined()
 })

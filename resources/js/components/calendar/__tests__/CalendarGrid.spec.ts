@@ -33,6 +33,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     id: 'group-1',
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
+    share_token: null,
     tags: [],
     posts: [{ id: 'post-1', content: 'hi', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Chan', picture: null } }],
     ...overrides,
@@ -173,4 +174,22 @@ it('re-points every off-palette FullCalendar default at a colour token', async (
   const missing = required.filter((name) => !new RegExp(`--fc-${name}:\\s*var\\(--[a-z0-9-]+\\)`).test(source))
 
   expect(missing).toEqual([])
+})
+
+// Task 1.2. Duplicating is owned by the page, not the grid: the page has
+// to refetch the range and then open the editor on the copy. The grid's
+// only job is to relay the card's request upward — the same shape share
+// already uses, and deliberately not the shape remove uses (which calls
+// the store itself). This asserts the wiring the FullCalendar stub would
+// otherwise hide: eventContent must actually hand CalendarEvent an
+// onDuplicate handler.
+it('relays a card duplicate request upward instead of acting on it', async () => {
+  const w = await mountGrid([entry()])
+  const options = optionsOf(w)
+
+  const vnode = options.eventContent({ event: { extendedProps: { entry: entry() } } })
+  vnode.props.onDuplicate('group-1')
+
+  expect(w.emitted('duplicate')).toEqual([['group-1']])
+  expect(del).not.toHaveBeenCalled()
 })

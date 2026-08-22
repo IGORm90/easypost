@@ -34,6 +34,8 @@ export interface CalendarEntry {
     id: string;
     state: string;
     publish_date: string;
+    /** Non-null while a public `/share/{token}` link is active — see `share()`/`unshare()` below. */
+    share_token: string | null;
     tags: CalendarTag[];
     posts: CalendarPost[];
 }
@@ -131,6 +133,88 @@ export const usePostsStore = defineStore('posts', {
                 this.entries.splice(index, 0, removed);
                 throw error;
             }
+        },
+
+        /**
+         * Turns on the public share link and returns the URL to show the
+         * user. `POST /api/posts/{group}/share` is idempotent-ish — it
+         * mints a token only if there isn't one — so calling it on an
+         * already-shared group simply returns the existing URL.
+         *
+         * The API deliberately answers with a finished URL, not a bare
+         * token: ShareService builds it with `URL::to()` against the
+         * server's own `APP_URL`. The frontend must not assemble that URL
+         * from `window.location.origin`, or a deployment where the SPA is
+         * served from a different host than `APP_URL` would hand out links
+         * that 404. The token is sliced back out of the URL only to drive
+         * the local "link is active" indicator — never to rebuild the URL.
+         *
+         * No optimistic write here, unlike `unshare()`: there is nothing
+         * to show until the server has actually minted the token.
+         */
+        async share(groupId: string): Promise<string> {
+            const { data } = await api.post<{ url: string }>(`/posts/${groupId}/share`);
+
+            const entry = this.entries.find((item) => item.id === groupId);
+
+            if (entry) {
+                entry.share_token = data.url.split('/').pop() ?? null;
+            }
+
+            return data.url;
+        },
+
+        /**
+         * Revokes the link. Same "write locally first, roll back to the
+         * exact previous value on failure, re-throw" shape as `moveTo()`
+         * and `remove()` — the caller decides how to message the failure.
+         *
+         * Unlike those two, an entry missing from `entries` is NOT a
+         * no-op: the editor modal can be open on a group that is outside
+         * the calendar's current range, and a revoke must still reach the
+         * server there. Only the local rollback is skipped.
+         */
+        async unshare(groupId: string): Promise<void> {
+            const entry = this.entries.find((item) => item.id === groupId);
+            const original = entry?.share_token ?? null;
+
+            if (entry) {
+                entry.share_token = null;
+            }
+
+            try {
+                await api.delete(`/posts/${groupId}/share`);
+            } catch (error) {
+                if (entry) {
+                    entry.share_token = original;
+                }
+
+                throw error;
+            }
+        },
+
+        /**
+         * Copies a group. The server answers 201 with a PostGroupResource
+         * describing the new DRAFT — same content, media, tags and
+         * publish_date as the original, no publish history.
+         *
+         * Only the new id is returned, and nothing is written to
+         * `entries`. That is not laziness: a PostGroupResource is a
+         * different shape from the CalendarEntryResource this store
+         * holds — it carries no `integration` objects and no tag names —
+         * so a copy spliced in from it would render as a broken card.
+         * The page refetches the visible range instead, which is cheap
+         * because the copy always inherits the original's publish_date
+         * and therefore always lands in that same range.
+         *
+         * Errors are re-thrown untouched. A plan-limit rejection is a
+         * 402, and the api client's interceptor has already raised the
+         * LimitToast for it by the time this rejects.
+         */
+        async duplicate(groupId: string): Promise<string> {
+            const { data } = await api.post<{ id: string }>(`/posts/${groupId}/duplicate`);
+
+            return data.id;
         },
     },
 });

@@ -38,6 +38,12 @@ Deeper references, per area:
   npm run typecheck && npx vitest run && npm run build  # frontend
   ```
 
+- **TDD is mandatory: write the failing test first, then the code.** For every feature and every
+  bugfix — add or change a test that fails for the right reason, watch it fail, then write the
+  minimum code to make it pass, then refactor. A bugfix without a test that reproduced the bug is
+  not a fix. Do not write implementation code for which no test was written first; if a change
+  genuinely cannot be tested (a build config, a doc), say so explicitly instead of skipping quietly.
+
 - `make setup` is the only setup path. **Never run `php artisan key:generate` on an install that
   already has connected channels** — it makes every encrypted `Integration` token undecryptable,
   permanently.

@@ -40,6 +40,8 @@ const props = defineProps<{
 const emit = defineEmits<{
     'range-change': [{ from: string; to: string }];
     edit: [string];
+    share: [string];
+    duplicate: [string];
     blocked: [{ groupId: string; status?: number }];
     error: [unknown];
 }>();
@@ -130,6 +132,25 @@ function eventAllow(_span: unknown, draggedEvent: EventApi | null): boolean {
     return draggedEvent ? !isLocked(entryOf(draggedEvent)) : true;
 }
 
+/**
+ * Sharing is owned by the page, not the grid: the link modal must sit
+ * above the calendar, and — unlike remove — it is available on locked
+ * (PUBLISHED) cards too, so there is nothing to guard here.
+ */
+function onShare(groupId: string): void {
+    emit('share', groupId);
+}
+
+/**
+ * Duplicating is the page's business too, and for a stronger reason than
+ * share: on success the page has to refetch the visible range and then
+ * open the editor on the copy, neither of which the grid can do. So this
+ * relays rather than calling the store the way onRemove does.
+ */
+function onDuplicate(groupId: string): void {
+    emit('duplicate', groupId);
+}
+
 async function onRemove(groupId: string): Promise<void> {
     if (!window.confirm(t('calendar.removeConfirm'))) {
         return;
@@ -159,7 +180,7 @@ const calendarOptions = computed(() => ({
     eventContent: (arg: { event: EventApi }) => {
         const entry = entryOf(arg.event);
 
-        return h(CalendarEvent, { entry, locked: isLocked(entry), onRemove });
+        return h(CalendarEvent, { entry, locked: isLocked(entry), onRemove, onShare, onDuplicate });
     },
     eventClick: onEventClick,
     eventDrop: onEventDrop,
