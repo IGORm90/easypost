@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, useId } from 'vue';
 
-type InputType = 'text' | 'email' | 'password' | 'search' | 'number' | 'url';
+// 'color' renders the browser's native picker. Tag colours are free-form
+// #rrggbb (the API validates that shape), so a swatch grid would have had
+// to hardcode hex literals — which palette.spec.ts forbids outside the
+// values listed in color.md.
+type InputType = 'text' | 'email' | 'password' | 'search' | 'number' | 'url' | 'color';
 
 // Attrs like `autocomplete`/`required`/`maxlength` a form page passes must
 // land on the actual <input>, not on this component's wrapping <div> (the

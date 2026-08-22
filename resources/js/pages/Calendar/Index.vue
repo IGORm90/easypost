@@ -9,6 +9,7 @@ import Button from '../../components/ui/Button.vue';
 import CalendarGrid from '../../components/calendar/CalendarGrid.vue';
 import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewSwitcher.vue';
 import TagFilter from '../../components/calendar/TagFilter.vue';
+import TagManager from '../../components/tags/TagManager.vue';
 import PublishErrorBanner from '../../components/calendar/PublishErrorBanner.vue';
 import PostEditorModal from '../../components/editor/PostEditorModal.vue';
 import ShareLinkModal from '../../components/posts/ShareLinkModal.vue';
@@ -42,6 +43,17 @@ async function loadTags(): Promise<void> {
     try {
         const { data } = await api.get<CalendarTag[]>('/tags');
         availableTags.value = data;
+
+        // A tag can be deleted from the manager this page opens, and the
+        // filter holds ids, not objects. Left alone, a stale id would go
+        // on filtering the calendar down to nothing with no visible
+        // reason — an empty month that looks like a bug.
+        const live = new Set(data.map((tag) => tag.id));
+        const kept = selectedTags.value.filter((id) => live.has(id));
+
+        if (kept.length !== selectedTags.value.length) {
+            selectedTags.value = kept;
+        }
     } catch {
         // Non-fatal: the calendar itself still works with an empty tag
         // filter, so a failed tag fetch doesn't block the page.
@@ -142,6 +154,13 @@ function onEdit(groupId: string): void {
  * it costs no request; `changed` needs no handler because the store has
  * already updated that same entry.
  */
+/**
+ * Tag management lives here rather than inside TagFilter: that component
+ * is mounted twice — here and inside PostEditorModal — and a trigger in
+ * it would put a third modal on top of the editor.
+ */
+const tagManagerOpen = ref(false);
+
 const shareGroupId = ref<string | null>(null);
 
 const shareToken = computed(() => postsStore.entries.find((entry) => entry.id === shareGroupId.value)?.share_token ?? null);
@@ -218,7 +237,10 @@ function onEditorSaved(): void {
                     />
                 </div>
                 <div class="flex flex-col gap-1">
-                    <span class="text-sm font-medium text-text">{{ t('calendar.filters.tags') }}</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium text-text">{{ t('calendar.filters.tags') }}</span>
+                        <Button variant="ghost" @click="tagManagerOpen = true">{{ t('tags.manage') }}</Button>
+                    </div>
                     <TagFilter v-model="selectedTags" :tags="availableTags" />
                 </div>
             </div>
@@ -260,5 +282,7 @@ function onEditorSaved(): void {
             :share-token="shareToken"
             @close="shareGroupId = null"
         />
+
+        <TagManager :open="tagManagerOpen" @close="tagManagerOpen = false" @changed="loadTags" />
     </AppLayout>
 </template>

@@ -32,7 +32,11 @@ class TagController extends Controller
 
     public function index(): JsonResponse
     {
-        $tags = Tag::query()->orderBy('name')->get();
+        // withCount, not a loaded relation: the manager UI only needs the
+        // number, and it warns before a delete that silently cascades
+        // `post_group_tag`. Loading the groups themselves to count them
+        // would drag every group of every tag over the wire for one int.
+        $tags = Tag::query()->withCount('postGroups')->orderBy('name')->get();
 
         return response()->json(TagResource::collection($tags));
     }

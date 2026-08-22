@@ -4,6 +4,9 @@ import PostEditorModal from '../PostEditorModal.vue';
 import { useAuthStore } from '../../../stores/auth';
 import type { Integration, Provider } from '../../../stores/integrations';
 import type { PostGroupApi } from '../types';
+import TagManager from '../../tags/TagManager.vue';
+import TagFilter from '../../calendar/TagFilter.vue';
+import en from '../../../i18n/en.json';
 
 const get = vi.fn();
 const post = vi.fn();
@@ -496,4 +499,26 @@ it('renders no --warning anywhere in the editor, leaving that colour to the plan
     // ...and now the confirmation Toast as well.
     expect(w.text()).toContain('This will publish a second, separate post');
     expect(w.html()).not.toMatch(/(?:bg|text|border)-warning/);
+});
+
+/*
+ * Task 1.3. The tag block was gated on `availableTags.length > 0`, so on
+ * an organization with no tags there was nothing on screen at all — the
+ * one moment a "New tag" trigger is most needed was the one moment it
+ * was hidden.
+ */
+it('offers to create a tag even when the organization has none yet', async () => {
+    const w = await mountReady();
+
+    expect(w.findComponent(TagManager).exists()).toBe(true);
+    expect(w.findAll('button').some((b) => b.text() === en.tags.add)).toBe(true);
+});
+
+it('selects a tag created from inside the editor, so it is actually attached to the post', async () => {
+    const w = await mountReady();
+
+    w.findComponent(TagManager).vm.$emit('created', { id: 'tag-new', name: 'Promo', color: '#A94E08' });
+    await flushPromises();
+
+    expect(w.findComponent(TagFilter).props('modelValue')).toContain('tag-new');
 });

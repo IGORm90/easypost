@@ -20,6 +20,11 @@ class TagResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'color' => $this->color,
+            // Conditional on purpose. This resource is shared with
+            // CalendarEntryResource, where the count is never loaded: an
+            // unconditional field would query a missing attribute there
+            // and fatten every calendar card for nothing.
+            'post_groups_count' => $this->whenCounted('postGroups'),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

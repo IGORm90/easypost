@@ -56,3 +56,17 @@ it('sets no aria-describedby when there is no error to point at', () => {
 
     expect(w.get('input').attributes('aria-describedby')).toBeUndefined();
 });
+
+// Task 1.3: tags carry a colour, and the manager needs a picker for it.
+// Widening the union rather than dropping a raw <input type="color"> into
+// TagManager keeps the label association, the generated id and the error
+// plumbing this component already owns — all of which a bare input would
+// have had to reimplement.
+it('renders a colour picker with a real label when asked for type="color"', () => {
+    const w = mount(Input, { props: { type: 'color', label: 'Tag colour', modelValue: '#0F726B' } });
+
+    const input = w.get('input');
+
+    expect(input.attributes('type')).toBe('color');
+    expect(w.get('label').attributes('for')).toBe(input.attributes('id'));
+});

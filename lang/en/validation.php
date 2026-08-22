@@ -180,6 +180,14 @@ return [
     |
     */
 
+    /*
+     * Not a rule name: raised by the closure in
+     * ValidatesTagUniqueness, which compares lower(name) because Postgres'
+     * default collation is case-sensitive and Rule::unique would miss
+     * "Launch" vs "launch".
+     */
+    'tag_name_unique' => 'A tag with this name already exists.',
+
     'custom' => [
         'attribute-name' => [
             'rule-name' => 'custom-message',

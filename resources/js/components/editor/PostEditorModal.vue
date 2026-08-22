@@ -6,6 +6,7 @@ import Modal from '../ui/Modal.vue';
 import Toast from '../ui/Toast.vue';
 import Button from '../ui/Button.vue';
 import TagFilter from '../calendar/TagFilter.vue';
+import TagManager from '../tags/TagManager.vue';
 import ChannelPicker from './ChannelPicker.vue';
 import ChannelTab from './ChannelTab.vue';
 import ThreadEditor from './ThreadEditor.vue';
@@ -120,6 +121,24 @@ const loadedFromServer = ref(false);
  */
 const shareToken = ref<string | null>(null);
 const shareOpen = ref(false);
+
+/**
+ * The tag manager opens on top of this modal. Modal.vue keeps a stack of
+ * open modals so Escape only reaches the topmost — the same mechanism
+ * ShareLinkModal below already relies on.
+ */
+const tagManagerOpen = ref(false);
+
+/**
+ * A tag created from here is almost always meant for the post being
+ * written, so it goes straight into the selection rather than leaving
+ * the user to hunt for it in the list they just added to.
+ */
+function onTagCreated(tag: CalendarTag): void {
+    if (!selectedTags.value.includes(tag.id)) {
+        selectedTags.value = [...selectedTags.value, tag.id];
+    }
+}
 
 const canShare = computed(() => props.groupId !== null && loadedFromServer.value);
 const generalErrors = ref<string[]>([]);
@@ -669,8 +688,18 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                 </div>
             </div>
 
-            <div v-if="availableTags.length > 0" class="flex flex-col gap-1">
-                <span class="text-sm font-medium text-text">{{ t('editor.tags') }}</span>
+            <!--
+                Deliberately not gated on `availableTags.length`: the block
+                used to disappear entirely when the organization had no
+                tags, which hid the "New tag" trigger in the one situation
+                where it is the only way forward.
+            -->
+            <div class="flex flex-col gap-1">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium text-text">{{ t('editor.tags') }}</span>
+                    <!-- secondary, not primary: color.md §3.1 — the save button owns primary here. -->
+                    <Button variant="secondary" @click="tagManagerOpen = true">{{ t('tags.add') }}</Button>
+                </div>
                 <TagFilter v-model="selectedTags" :tags="availableTags" />
             </div>
 
@@ -732,6 +761,13 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
             :share-token="shareToken"
             @close="shareOpen = false"
             @changed="shareToken = $event"
+        />
+
+        <TagManager
+            :open="tagManagerOpen"
+            @close="tagManagerOpen = false"
+            @changed="fetchTags"
+            @created="onTagCreated"
         />
     </Modal>
 </template>

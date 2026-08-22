@@ -21,6 +21,13 @@ export interface CalendarTag {
     id: string;
     name: string;
     color: string;
+    /**
+     * How many post groups carry this tag. Present only on `GET /api/tags`
+     * — TagResource emits it with `whenCounted`, and the calendar's copy
+     * of the same resource never loads the count. Optional here rather
+     * than in a separate type so one shape serves both readers.
+     */
+    post_groups_count?: number;
 }
 
 /**

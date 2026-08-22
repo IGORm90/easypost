@@ -36,7 +36,7 @@ trait ValidatesTagUniqueness
                 ->exists();
 
             if ($exists) {
-                $fail('A tag with this name already exists.');
+                $fail(__('validation.tag_name_unique'));
             }
         };
     }

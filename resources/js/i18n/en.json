@@ -261,6 +261,26 @@
             "unknownReason": "No reason was recorded."
         }
     },
+    "tags": {
+        "manage": "Manage tags",
+        "title": "Tags",
+        "add": "New tag",
+        "empty": "No tags yet. Create one to group and filter your posts.",
+        "nameLabel": "Name",
+        "colorLabel": "Colour",
+        "create": "Create tag",
+        "rename": "Rename",
+        "save": "Save",
+        "cancel": "Cancel",
+        "remove": "Delete",
+        "usage": "On {count} post(s)",
+        "unused": "Not used yet",
+        "removeConfirm": "Delete \"{name}\"? It will come off {count} post(s) — the posts themselves stay.",
+        "removeConfirmUnused": "Delete \"{name}\"? No post is using it.",
+        "loadError": "Could not load the tags. Please try again.",
+        "saveError": "Could not save the tag. Please try again.",
+        "removeError": "Could not delete the tag. Please try again."
+    },
     "editor": {
         "titleNew": "New post",
         "titleEdit": "Edit post",
