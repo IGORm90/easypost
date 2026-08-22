@@ -6,6 +6,7 @@ import Forgot from './pages/Auth/Forgot.vue';
 import Reset from './pages/Auth/Reset.vue';
 import Profile from './pages/Settings/Profile.vue';
 import Team from './pages/Settings/Team.vue';
+import Sets from './pages/Settings/Sets.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
 import Media from './pages/Media/Index.vue';
@@ -47,6 +48,10 @@ const router = createRouter({
         { path: '/integrations/callback', name: 'integrations-callback', component: IntegrationsCallback, meta: { requiresAuth: true } },
         { path: '/settings/profile', name: 'settings-profile', component: Profile, meta: { requiresAuth: true } },
         { path: '/settings/team', name: 'settings-team', component: Team, meta: { requiresAuth: true } },
+        // Task 1.4: channel sets were creatable only through the API
+        // until this screen existed — the editor could apply them but
+        // never make one.
+        { path: '/settings/sets', name: 'settings-sets', component: Sets, meta: { requiresAuth: true } },
         { path: '/invites/:token', name: 'invites-accept', component: AcceptInvite, meta: { requiresAuth: true } },
     ],
 });

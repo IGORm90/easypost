@@ -25,7 +25,7 @@ function mountLayout() {
 }
 
 /** Every destination the sidebar offers must be reachable on a phone too. */
-const DESTINATIONS = ['home', 'channels', 'media', 'settings-profile', 'settings-team'];
+const DESTINATIONS = ['home', 'channels', 'media', 'settings-profile', 'settings-team', 'settings-sets'];
 
 function routeNames(wrapper: ReturnType<typeof mountLayout>, selector: string): string[] {
     return wrapper.findAll(`${selector} a`).map((link) => link.attributes('data-route') ?? '');

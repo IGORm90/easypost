@@ -9,6 +9,7 @@
         "media": "Media",
         "settingsProfile": "Profile",
         "settingsTeam": "Team",
+        "settingsSets": "Channel sets",
         "logout": "Log out"
     },
     "ui": {
@@ -280,6 +281,29 @@
         "loadError": "Could not load the tags. Please try again.",
         "saveError": "Could not save the tag. Please try again.",
         "removeError": "Could not delete the tag. Please try again."
+    },
+    "sets": {
+        "title": "Channel sets",
+        "manage": "Channel sets",
+        "intro": "A set is a saved group of channels. Pick it once in the editor instead of ticking the same channels on every post.",
+        "empty": "No sets yet.",
+        "emptyHint": "Create one below, or save your current selection straight from the post editor.",
+        "noChannels": "Connect a channel first — a set is a shortcut for choosing between them.",
+        "nameLabel": "Name",
+        "channelsLabel": "Channels",
+        "channelCount": "{count} channel(s)",
+        "orphaned": "No channels left in this set — its channels were disconnected. Add at least one to be able to save it.",
+        "create": "Create set",
+        "rename": "Edit",
+        "save": "Save",
+        "cancel": "Cancel",
+        "remove": "Delete",
+        "removeConfirm": "Delete \"{name}\"? It is only a shortcut for choosing channels — no post and no channel is affected.",
+        "saveAsSet": "Save as set",
+        "saveAsSetName": "Set name",
+        "loadError": "Could not load the sets. Please try again.",
+        "saveError": "Could not save the set. Please try again.",
+        "removeError": "Could not delete the set. Please try again."
     },
     "editor": {
         "titleNew": "New post",

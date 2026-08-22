@@ -4,6 +4,7 @@ import PostEditorModal from '../PostEditorModal.vue';
 import { useAuthStore } from '../../../stores/auth';
 import type { Integration, Provider } from '../../../stores/integrations';
 import type { PostGroupApi } from '../types';
+import ChannelPicker from '../ChannelPicker.vue';
 import TagManager from '../../tags/TagManager.vue';
 import TagFilter from '../../calendar/TagFilter.vue';
 import en from '../../../i18n/en.json';
@@ -521,4 +522,42 @@ it('selects a tag created from inside the editor, so it is actually attached to 
     await flushPromises();
 
     expect(w.findComponent(TagFilter).props('modelValue')).toContain('tag-new');
+});
+
+/**
+ * Task 1.4. ChannelPicker collects the name but deliberately makes no
+ * request of its own (see its docblock), so the POST — and keeping the
+ * chip list it renders in step afterwards — is this modal's job.
+ */
+it('saves the current channel selection as a set and offers it back as a chip', async () => {
+    post.mockResolvedValueOnce({ data: { id: 'set-new', name: 'Launch crew', integration_ids: ['int-1'] } });
+    const w = await mountReady();
+
+    await w.find('input[type="checkbox"]').setValue(true);
+    await w.findAll('button').find((b) => b.text() === en.sets.saveAsSet)!.trigger('click');
+    await w.get('[data-test="save-set-name"] input').setValue('Launch crew');
+    await w.get('form[data-test="save-set-form"]').trigger('submit');
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith('/sets', { name: 'Launch crew', integration_ids: ['int-1'] });
+    // No refetch of /sets: the created set is appended to the list this
+    // modal already holds.
+    expect(get.mock.calls.filter(([url]) => url === '/sets')).toHaveLength(1);
+    expect(w.findComponent(ChannelPicker).props('sets')).toEqual([
+        { id: 'set-new', name: 'Launch crew', integration_ids: ['int-1'] },
+    ]);
+});
+
+it('says so rather than failing silently when the set cannot be saved', async () => {
+    post.mockRejectedValueOnce(axiosError(422, { errors: { name: ['The name field is required.'] } }));
+    const w = await mountReady();
+
+    await w.find('input[type="checkbox"]').setValue(true);
+    await w.findAll('button').find((b) => b.text() === en.sets.saveAsSet)!.trigger('click');
+    await w.get('[data-test="save-set-name"] input').setValue('Launch crew');
+    await w.get('form[data-test="save-set-form"]').trigger('submit');
+    await flushPromises();
+
+    expect(w.text()).toContain(en.sets.saveError);
+    expect(w.findComponent(ChannelPicker).props('sets')).toEqual([]);
 });

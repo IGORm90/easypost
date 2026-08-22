@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Badge from '../ui/Badge.vue';
+import Button from '../ui/Button.vue';
+import Input from '../ui/Input.vue';
 import type { Integration, Provider } from '../../stores/integrations';
 import type { SetDto } from './types';
 
@@ -15,6 +17,12 @@ import type { SetDto } from './types';
  * Disabled channels (`integration.disabled`) are still selectable here:
  * disabling only pauses automatic scheduling elsewhere, it does not
  * forbid composing content for that channel by hand.
+ *
+ * Saving the current selection as a new set (Task 1.4) collects the name
+ * here but does not POST it: this component stays store-less and
+ * HTTP-less, as MediaGrid.vue cites it for, so `save-set` goes out and
+ * the parent — which already owns the `sets` list it passes back in —
+ * makes the request.
  */
 const props = defineProps<{
     integrations: Integration[];
@@ -23,7 +31,7 @@ const props = defineProps<{
     modelValue: string[];
 }>();
 
-const emit = defineEmits<{ 'update:modelValue': [string[]] }>();
+const emit = defineEmits<{ 'update:modelValue': [string[]]; 'save-set': [string] }>();
 
 const { t } = useI18n();
 
@@ -58,6 +66,36 @@ function applySet(set: SetDto): void {
 }
 
 const hasSets = computed(() => props.sets.length > 0);
+
+/** `null` while the name form is closed — it opens on demand rather than sitting on screen unused. */
+const setName = ref<string | null>(null);
+
+/**
+ * `integration_ids` is `required` on POST /api/sets, so an empty
+ * selection cannot become a set at all. Hiding the control says that up
+ * front instead of letting the user name a set and then collect a 422.
+ */
+const canSaveSet = computed(() => props.modelValue.length > 0);
+
+/** A name of nothing but spaces still passes the server's `required`, so it is refused here. */
+const trimmedSetName = computed(() => (setName.value ?? '').trim());
+
+watch(canSaveSet, (possible) => {
+    // Deselecting the last channel mid-typing would otherwise leave a
+    // form on screen whose submit can no longer do anything.
+    if (!possible) {
+        setName.value = null;
+    }
+});
+
+function submitSetName(): void {
+    if (trimmedSetName.value === '') {
+        return;
+    }
+
+    emit('save-set', trimmedSetName.value);
+    setName.value = null;
+}
 </script>
 
 <template>
@@ -96,6 +134,20 @@ const hasSets = computed(() => props.sets.length > 0);
                 <span class="truncate">{{ integration.name }}</span>
                 <Badge status="neutral">{{ providerName(integration.provider_identifier) }}</Badge>
             </label>
+        </div>
+
+        <div v-if="canSaveSet">
+            <Button v-if="setName === null" variant="ghost" @click="setName = ''">{{ t('sets.saveAsSet') }}</Button>
+
+            <form v-else data-test="save-set-form" class="flex flex-wrap items-end gap-2" @submit.prevent="submitSetName">
+                <div data-test="save-set-name" class="min-w-48 flex-1">
+                    <Input v-model="setName" :label="t('sets.saveAsSetName')" />
+                </div>
+                <!-- secondary, not primary: the editor's own save button
+                     is this screen's primary action (color.md §3.1). -->
+                <Button type="submit" variant="secondary" :disabled="trimmedSetName === ''">{{ t('sets.save') }}</Button>
+                <Button variant="ghost" @click="setName = null">{{ t('sets.cancel') }}</Button>
+            </form>
         </div>
     </div>
 </template>

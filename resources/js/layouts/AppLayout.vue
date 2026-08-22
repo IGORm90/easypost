@@ -23,6 +23,7 @@ const NAV_ITEMS = [
     { name: 'media', label: 'nav.media' },
     { name: 'settings-profile', label: 'nav.settingsProfile' },
     { name: 'settings-team', label: 'nav.settingsTeam' },
+    { name: 'settings-sets', label: 'nav.settingsSets' },
 ] as const;
 
 const NAV_LINK_CLASS = 'rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text';

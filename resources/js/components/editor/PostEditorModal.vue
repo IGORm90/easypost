@@ -318,6 +318,30 @@ async function fetchSets(): Promise<void> {
     sets.value = data;
 }
 
+/**
+ * Task 1.4. ChannelPicker collects the name only — it stays store-less
+ * and HTTP-less — so the request lives here, next to the `sets` list it
+ * feeds. The created set is appended rather than triggering a refetch:
+ * `POST /api/sets` returns the same SetResource shape `GET /api/sets`
+ * does, and a round trip would only be a second chance to fail.
+ */
+async function saveSet(name: string): Promise<void> {
+    try {
+        const { data } = await api.post<SetDto>('/sets', {
+            name,
+            integration_ids: selectedChannelIds.value,
+        });
+
+        sets.value = [...sets.value, data];
+    } catch {
+        // One line in the modal's existing error block rather than a
+        // field-level message: the picker's form is already closed by
+        // the time this resolves, and the only field it had — the name —
+        // was non-empty or the submit button would not have fired.
+        generalErrors.value.push(t('sets.saveError'));
+    }
+}
+
 async function fetchSignatures(): Promise<void> {
     const { data } = await api.get<SignatureDto[]>('/signatures');
     signatures.value = data;
@@ -616,6 +640,7 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                 :integrations="integrations.list"
                 :providers="integrations.providers"
                 :sets="sets"
+                @save-set="saveSet"
             />
 
             <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-1">
