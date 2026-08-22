@@ -48,6 +48,15 @@ Deeper references, per area:
   not a fix. Do not write implementation code for which no test was written first; if a change
   genuinely cannot be tested (a build config, a doc), say so explicitly instead of skipping quietly.
 
+- **After any frontend change, verify it in a real browser via the Claude in Chrome extension.**
+  Vitest and `npm run build` prove the code compiles and the units behave; they do not prove the
+  screen renders, the request goes out, or the SPA route even mounts. So once the feature is in,
+  open the app at `http://localhost:8080` in a tab, walk the actual flow you changed (including the
+  error path), read the console for errors and the network panel for the API calls, and only then
+  call it done. Report what you clicked and what you saw. If the browser check is impossible —
+  the extension is unavailable, the stack is not up — say so explicitly instead of skipping it
+  silently.
+
 - `make setup` is the only setup path. **Never run `php artisan key:generate` on an install that
   already has connected channels** — it makes every encrypted `Integration` token undecryptable,
   permanently.
