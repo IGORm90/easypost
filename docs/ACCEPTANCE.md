@@ -120,6 +120,25 @@ covered by `tests/Feature/Publishing/RescheduleTest.php`; what needs a human
 is confirming the drag *gesture itself* — FullCalendar's interaction, not
 just the API call it makes — works and feels right.)
 
+### 5a. The list view pages through posts without repeating one
+
+1. Switch the Calendar page from "Grid" to "List".
+2. Filter by each status; check "Failed" in particular, which is the
+   question the grid cannot answer at all (its error banner only ever
+   speaks about the visible month).
+3. With more than one page of posts — and, ideally, with several posts
+   sharing one publish time, which is normal after a publish-now — press
+   "Show more" until it disappears, then check no post appears twice and
+   none is missing.
+4. Forward the URL (it carries `?mode=list&state=…`) and open it fresh.
+
+Expected: every post appears exactly once across the pages, and the
+forwarded link opens on the same filtered list. Step 3 is the one worth a
+human: `publish_date DESC` alone is not a total order, so a page boundary
+falling inside a tie is precisely where a list silently duplicates or
+drops rows. `tests/Feature/Posts/PostListTest.php` covers it on fabricated
+data; this checks it on real data with real page sizes.
+
 ### 6. Media uploads, inserts into a post, and is sent to the social network
 
 1. Compose a post, upload an image via the media picker.

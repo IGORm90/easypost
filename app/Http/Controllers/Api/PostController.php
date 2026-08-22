@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\FindSlotRequest;
+use App\Http\Requests\PostListRequest;
 use App\Http\Requests\StorePostRequest;
 use App\Http\Requests\UpdatePostDateRequest;
 use App\Http\Requests\UpdatePostRequest;
+use App\Http\Resources\PostGroupListResource;
 use App\Http\Resources\PostGroupResource;
 use App\Models\PostGroup;
+use App\Services\Posts\CalendarService;
 use App\Services\Posts\PostGroupService;
 use App\Services\Posts\ShareService;
 use App\Services\Posts\SlotFinderService;
@@ -39,6 +42,7 @@ class PostController extends Controller
         private readonly PostGroupService $groups,
         private readonly SlotFinderService $slotFinder,
         private readonly ShareService $shares,
+        private readonly CalendarService $calendar,
     ) {}
 
     /**
@@ -51,6 +55,31 @@ class PostController extends Controller
         $publishDate = $this->slotFinder->findNextFreeSlot($request->string('integration_id')->toString());
 
         return response()->json(['publish_date' => $publishDate]);
+    }
+
+    /**
+     * GET /api/posts — Block 2's list view.
+     *
+     * The collection root, so unlike `find-slot`/`errors` it needs no
+     * ordering games against the `{group}` wildcard: that wildcard only
+     * ever matches a non-empty segment.
+     *
+     * Answers `{data, links, meta}` via `->response()` — the paginated
+     * shape `GET /api/media` already established and `stores/media.ts`
+     * already knows how to page through. `GET /api/calendar`'s bare
+     * array is the deliberate exception, not the pattern: it returns a
+     * whole date range at once and has nothing to page.
+     */
+    public function index(PostListRequest $request): JsonResponse
+    {
+        $groups = $this->calendar->list(
+            $request->state(),
+            $request->filled('customer') ? $request->string('customer')->toString() : null,
+            $request->input('tags', []),
+            $request->perPage(),
+        );
+
+        return PostGroupListResource::collection($groups)->response();
     }
 
     public function store(StorePostRequest $request): JsonResponse

@@ -2,12 +2,16 @@
 import { isAxiosError } from 'axios';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Toast from '../../components/ui/Toast.vue';
 import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
 import CalendarGrid from '../../components/calendar/CalendarGrid.vue';
 import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewSwitcher.vue';
+import DisplayModeSwitcher, { type DisplayMode } from '../../components/calendar/DisplayModeSwitcher.vue';
+import StateFilter, { type PostStateFilter } from '../../components/calendar/StateFilter.vue';
+import PostList from '../../components/calendar/PostList.vue';
 import TagFilter from '../../components/calendar/TagFilter.vue';
 import TagManager from '../../components/tags/TagManager.vue';
 import PublishErrorBanner from '../../components/calendar/PublishErrorBanner.vue';
@@ -19,11 +23,43 @@ import { useOrganizationStore } from '../../stores/organization';
 import { api } from '../../api/client';
 
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const postsStore = usePostsStore();
 const auth = useAuthStore();
 const organization = useOrganizationStore();
 
 const view = ref<CalendarView>('month');
+
+/*
+ * Block 2's second axis of display. `mode` is which surface renders at
+ * all; `view` (month/week/day) is a zoom level that only means anything
+ * inside the grid, which is why the switcher for it is hidden in list
+ * mode rather than left on screen doing nothing.
+ *
+ * Both `mode` and `state` are read from — and written back to — the
+ * query string, so "look at everything that failed" is a link a
+ * teammate can be sent. Unknown values fall back to the defaults rather
+ * than rendering an empty screen: a mistyped URL should show the
+ * calendar, not nothing. The page NUMBER deliberately stays out of the
+ * URL — see usePostsStore.fetchList().
+ */
+const MODES: DisplayMode[] = ['grid', 'list'];
+const STATES: PostStateFilter[] = ['all', 'DRAFT', 'QUEUE', 'PUBLISHED', 'ERROR'];
+
+const mode = ref<DisplayMode>(MODES.includes(route.query.mode as DisplayMode) ? (route.query.mode as DisplayMode) : 'grid');
+const stateFilter = ref<PostStateFilter>(
+    STATES.includes(route.query.state as PostStateFilter) ? (route.query.state as PostStateFilter) : 'all',
+);
+const listLoadingMore = ref(false);
+/**
+ * Whether the last list load failed. Kept apart from `notice` because it
+ * decides something `notice` cannot: a failed load leaves `list` empty,
+ * and rendering the list's empty state on top of that would tell the
+ * user "no drafts" when the truth is "we do not know". The list is
+ * withheld entirely until a load succeeds.
+ */
+const listFailed = ref(false);
 const customer = ref('');
 const selectedTags = ref<string[]>([]);
 const availableTags = ref<CalendarTag[]>([]);
@@ -80,6 +116,103 @@ async function load(): Promise<void> {
     }
 }
 
+/**
+ * The list's own fetch. It shares the customer/tag filters with the grid
+ * — they are the same two controls, and the API takes the same parameter
+ * names for exactly that reason — and adds the state filter the grid has
+ * no equivalent for.
+ *
+ * `{ reset: true }` on every filter change, because the store appends
+ * pages: without it a narrower filter would show its results below the
+ * wider filter's leftovers.
+ */
+async function loadList(): Promise<void> {
+    postsStore.listFilters = {
+        state: stateFilter.value === 'all' ? undefined : stateFilter.value,
+        customer: customer.value.trim() || undefined,
+        tags: selectedTags.value.length ? selectedTags.value : undefined,
+    };
+
+    loading.value = true;
+
+    try {
+        await postsStore.fetchList({ reset: true });
+        notice.value = null;
+        listFailed.value = false;
+    } catch {
+        notice.value = { text: t('calendar.list.loadError'), variant: 'danger' };
+        listFailed.value = true;
+    } finally {
+        loading.value = false;
+    }
+}
+
+async function loadMore(): Promise<void> {
+    listLoadingMore.value = true;
+
+    try {
+        await postsStore.fetchList();
+    } catch {
+        notice.value = { text: t('calendar.list.loadError'), variant: 'danger' };
+    } finally {
+        listLoadingMore.value = false;
+    }
+}
+
+/**
+ * Whichever surface is showing gets refreshed; the other one is refetched
+ * when it comes back, so there is no point paying for it now.
+ */
+function reload(): void {
+    if (mode.value === 'list') {
+        void loadList();
+
+        return;
+    }
+
+    void load();
+}
+
+/**
+ * `replace`, not `push`: the filter is a view of one screen, not a place.
+ * With `push`, every click of a segment would add a history entry and the
+ * browser's Back button would walk through filter states instead of
+ * leaving the calendar.
+ */
+function syncQuery(): void {
+    void router.replace({
+        query: {
+            ...route.query,
+            mode: mode.value === 'grid' ? undefined : mode.value,
+            state: stateFilter.value === 'all' ? undefined : stateFilter.value,
+        },
+    });
+}
+
+watch(mode, (next) => {
+    syncQuery();
+
+    if (next === 'list') {
+        void loadList();
+
+        return;
+    }
+
+    // Going back to the grid remounts CalendarGrid (v-if, not v-show),
+    // which re-emits range-change and reloads `entries` on its own.
+});
+
+watch(stateFilter, () => {
+    syncQuery();
+    void loadList();
+});
+
+onMounted(() => {
+    if (mode.value === 'list') {
+        void loadList();
+    }
+});
+
 // CalendarGrid emits range-change exactly when FullCalendar's visible
 // range actually changes (navigation or view switch) — never on a plain
 // render — so this is the only place fetchRange() gets called for a new
@@ -92,10 +225,10 @@ function onRangeChange(next: { from: string; to: string }): void {
 let customerDebounce: ReturnType<typeof setTimeout> | undefined;
 watch(customer, () => {
     clearTimeout(customerDebounce);
-    customerDebounce = setTimeout(load, 300);
+    customerDebounce = setTimeout(reload, 300);
 });
 
-watch(selectedTags, load, { deep: true });
+watch(selectedTags, reload, { deep: true });
 
 // Same "switching orgs refreshes dependent data" pattern as
 // Channels/Index.vue and Settings/Team.vue — the calendar is
@@ -105,7 +238,7 @@ watch(
     (id, previousId) => {
         if (id && id !== previousId) {
             loadTags();
-            load();
+            reload();
         }
     },
 );
@@ -191,12 +324,30 @@ async function onDuplicate(groupId: string): Promise<void> {
     try {
         const newId = await postsStore.duplicate(groupId);
 
-        await load();
+        reload();
         onEdit(newId);
     } catch (error) {
         if (!(isAxiosError(error) && error.response?.status === 402)) {
             notice.value = { text: t('calendar.toast.duplicateError'), variant: 'danger' };
         }
+    }
+}
+
+/**
+ * Deleting from the list. The grid does this inside CalendarGrid (it owns
+ * the card), the list does not — so the confirmation and the failure
+ * message live here. The store takes the row out of BOTH collections and
+ * puts it back at its index if the request fails.
+ */
+async function onListRemove(groupId: string): Promise<void> {
+    if (!window.confirm(t('calendar.removeConfirm'))) {
+        return;
+    }
+
+    try {
+        await postsStore.remove(groupId);
+    } catch {
+        notice.value = { text: t('calendar.toast.removeError'), variant: 'danger' };
     }
 }
 
@@ -210,7 +361,7 @@ function onEditorSaved(): void {
     // change — the saved group may be new, moved, or have changed
     // channels, so a full refetch of the current range is simpler and
     // safer than trying to patch a single entry in place.
-    load();
+    reload();
 }
 </script>
 
@@ -223,7 +374,8 @@ function onEditorSaved(): void {
                     <span v-if="loading" class="text-xs text-muted">{{ t('ui.loading') }}</span>
                 </div>
                 <div class="flex items-center gap-3">
-                    <ViewSwitcher v-model="view" />
+                    <ViewSwitcher v-if="mode === 'grid'" v-model="view" />
+                    <DisplayModeSwitcher v-model="mode" />
                     <Button variant="primary" @click="onNewPost">{{ t('calendar.newPost') }}</Button>
                 </div>
             </div>
@@ -235,6 +387,10 @@ function onEditorSaved(): void {
                         :label="t('calendar.filters.customer')"
                         :placeholder="t('calendar.filters.customerPlaceholder')"
                     />
+                </div>
+                <div v-if="mode === 'list'" class="flex flex-col gap-1">
+                    <span class="text-sm font-medium text-text">{{ t('calendar.list.stateFilter') }}</span>
+                    <StateFilter v-model="stateFilter" />
                 </div>
                 <div class="flex flex-col gap-1">
                     <div class="flex items-center gap-2">
@@ -254,9 +410,10 @@ function onEditorSaved(): void {
                 range the grid is showing, so it never speaks about posts
                 that are not on screen.
             -->
-            <PublishErrorBanner :range="range" @retried="load" />
+            <PublishErrorBanner v-if="mode === 'grid'" :range="range" @retried="load" />
 
             <CalendarGrid
+                v-if="mode === 'grid'"
                 :entries="postsStore.entries"
                 :view="view"
                 :timezone="timezone"
@@ -267,6 +424,28 @@ function onEditorSaved(): void {
                 @blocked="onBlocked"
                 @error="onGridError"
             />
+
+            <template v-else-if="!listFailed">
+                <PostList
+                    :entries="postsStore.list"
+                    :timezone="timezone"
+                    :state-filter="stateFilter"
+                    @edit="onEdit"
+                    @share="onShare"
+                    @duplicate="onDuplicate"
+                    @remove="onListRemove"
+                />
+
+                <Button
+                    v-if="postsStore.listHasMore && postsStore.list.length > 0"
+                    variant="ghost"
+                    type="button"
+                    :loading="listLoadingMore"
+                    @click="loadMore"
+                >
+                    {{ t('calendar.list.loadMore') }}
+                </Button>
+            </template>
         </div>
 
         <PostEditorModal

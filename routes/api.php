@@ -198,6 +198,13 @@ Route::middleware('auth:sanctum')->group(function () {
  * own withLimit() call, not this middleware.
  */
 Route::middleware(['auth:sanctum', 'organization'])->prefix('posts')->group(function () {
+    // Block 2: GET /api/posts — the paginated list view of the same
+    // groups the calendar renders as a grid. No `role:`/`plan:`, same
+    // bar as GET /api/calendar: reading your own organization's posts is
+    // everyday content work. The collection root needs no ordering
+    // against `{group}` below (a wildcard never matches an empty
+    // segment), unlike the literal `find-slot`/`errors` segments.
+    Route::get('/', [PostController::class, 'index']);
     Route::post('/', [PostController::class, 'store'])->middleware('plan:posts');
     // 'find-slot' (a literal path segment) is registered before
     // '{group}' (a wildcard) deliberately — same reason

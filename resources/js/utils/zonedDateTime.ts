@@ -73,3 +73,33 @@ export function zonedInputToUtcIso(input: string, timeZone: string): string {
 
     return new Date(naiveUtc - offset).toISOString();
 }
+
+/**
+ * The calendar day an instant falls on, as `YYYY-MM-DD`, in a given IANA
+ * `timeZone` — the grouping key Block 2's list view uses for its day
+ * headings, and a stable sort/compare key besides.
+ *
+ * Same rule as the two functions above, and the reason this lives here
+ * rather than in the list component: `new Date(iso).toDateString()` (or
+ * anything else that goes through the platform's local zone) answers
+ * with the *browser's* day, so a post scheduled at 23:30 lands under the
+ * wrong heading for every user whose profile timezone is not the one
+ * their machine happens to be set to. The zone is always passed in
+ * explicitly, never resolved from the environment.
+ */
+export function zonedDayKey(iso: string, timeZone: string): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    })
+        .formatToParts(new Date(iso))
+        .reduce<Record<string, string>>((acc, part) => {
+            acc[part.type] = part.value;
+
+            return acc;
+        }, {});
+
+    return `${parts.year}-${parts.month}-${parts.day}`;
+}

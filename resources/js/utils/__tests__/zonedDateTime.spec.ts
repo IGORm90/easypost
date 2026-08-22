@@ -1,4 +1,4 @@
-import { utcIsoToZonedInput, zonedInputToUtcIso } from '../zonedDateTime';
+import { utcIsoToZonedInput, zonedDayKey, zonedInputToUtcIso } from '../zonedDateTime';
 
 it('renders a UTC instant as the profile timezone wall clock, not the test runner locale', () => {
     // 2026-08-20T09:00:00Z is 12:00 in Europe/Moscow (UTC+3, no DST).
@@ -58,3 +58,25 @@ describe('across a DST transition', () => {
     expect(zonedInputToUtcIso('2026-04-05T04:00', 'Australia/Sydney')).toBe('2026-04-04T18:00:00.000Z')
   })
 })
+
+/*
+ * Block 2's list groups rows by day, and the day a post belongs to is a
+ * question only the viewer's own timezone can answer. The runner's TZ is
+ * pinned to America/Chicago (vitest.config.ts), so a naive
+ * `new Date(iso).toDateString()` would answer with Chicago's day for
+ * every user in the world — these cases fail loudly if it ever does.
+ */
+describe('zonedDayKey', () => {
+    it('answers with the day in the given zone, not the runner zone', () => {
+        // 2026-08-20T23:30Z is already the 21st in Europe/Moscow (UTC+3)
+        // and still the 20th in UTC — and is the 20th, 18:30, in the
+        // runner's own America/Chicago.
+        expect(zonedDayKey('2026-08-20T23:30:00.000000Z', 'Europe/Moscow')).toBe('2026-08-21');
+        expect(zonedDayKey('2026-08-20T23:30:00.000000Z', 'UTC')).toBe('2026-08-20');
+        expect(zonedDayKey('2026-08-20T23:30:00.000000Z', 'Australia/Sydney')).toBe('2026-08-21');
+    });
+
+    it('accepts the microsecond-precision ISO strings the API actually sends', () => {
+        expect(zonedDayKey('2026-01-02T00:00:00.000000Z', 'UTC')).toBe('2026-01-02');
+    });
+});

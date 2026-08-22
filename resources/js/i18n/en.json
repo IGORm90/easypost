@@ -216,6 +216,11 @@
             "week": "Week",
             "day": "Day"
         },
+        "mode": {
+            "label": "Display mode",
+            "grid": "Grid",
+            "list": "List"
+        },
         "filters": {
             "customer": "Customer",
             "customerPlaceholder": "Filter by customer",
@@ -262,6 +267,27 @@
             "retryError": "Could not retry this post. Please try again.",
             "retryConflict": "This post is no longer retryable — it may have been retried already, or has since published.",
             "unknownReason": "No reason was recorded."
+        },
+        "list": {
+            "stateFilter": "Status",
+            "states": {
+                "all": "All",
+                "DRAFT": "Drafts",
+                "QUEUE": "Scheduled",
+                "PUBLISHED": "Published",
+                "ERROR": "Failed"
+            },
+            "empty": {
+                "all": "No posts yet. Compose one and it will show up here.",
+                "DRAFT": "No drafts. Anything you start without scheduling lands here.",
+                "QUEUE": "Nothing is scheduled right now.",
+                "PUBLISHED": "Nothing has published yet.",
+                "ERROR": "Nothing has failed to publish. That is the good outcome."
+            },
+            "comments": "{count} comment(s)",
+            "loadMore": "Show more",
+            "loadError": "Could not load the list of posts.",
+            "noDate": "No date"
         }
     },
     "tags": {

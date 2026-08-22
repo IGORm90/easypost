@@ -259,3 +259,109 @@ it('duplicate() re-throws and leaves entries untouched when the request fails', 
 
   expect(JSON.stringify(store.entries)).toBe(before)
 })
+
+/*
+ * Block 2's list view. It is a second collection in the same store — a
+ * different response shape (PostGroupListResource: `preview`/`channels`/
+ * `comments_count`, no nested segment content), so it cannot share
+ * `entries` — which makes the mutations below the interesting part: they
+ * used to look the group up in `entries` alone, so a row acted on from
+ * the list issued its request and then sat there unchanged.
+ */
+function listRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'group-1',
+    state: 'QUEUE',
+    publish_date: '2026-08-20T09:00:00.000000Z',
+    share_token: null,
+    preview: 'hello',
+    channels: [{ id: 'int-1', provider_identifier: 'telegram', name: 'Chan', picture: null }],
+    tags: [],
+    comments_count: 0,
+    ...overrides,
+  }
+}
+
+function page(rows: unknown[], current = 1, last = 1) {
+  return { data: { data: rows, meta: { current_page: current, last_page: last } } }
+}
+
+it('fetchList() sends the state/tag/customer filters and the next page number', async () => {
+  const { usePostsStore } = await import('../posts')
+  get.mockResolvedValueOnce(page([listRow()]))
+
+  const store = usePostsStore()
+  store.listFilters = { state: 'ERROR', customer: 'Acme', tags: ['t-1'] }
+  await store.fetchList({ reset: true })
+
+  expect(get).toHaveBeenCalledWith('/posts', {
+    params: { page: 1, state: 'ERROR', customer: 'Acme', tags: ['t-1'] },
+  })
+  expect(store.list.map((row) => row.id)).toEqual(['group-1'])
+})
+
+it('fetchList() appends the next page and stops when the last one is reached', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  get.mockResolvedValueOnce(page([listRow({ id: 'a' })], 1, 2))
+  await store.fetchList({ reset: true })
+  expect(store.listHasMore).toBe(true)
+
+  get.mockResolvedValueOnce(page([listRow({ id: 'b' })], 2, 2))
+  await store.fetchList()
+
+  expect(store.list.map((row) => row.id)).toEqual(['a', 'b'])
+  expect(store.listHasMore).toBe(false)
+
+  // Exhausted: a further call must not issue a request for page 3.
+  get.mockClear()
+  await store.fetchList()
+  expect(get).not.toHaveBeenCalled()
+})
+
+it('fetchList({ reset: true }) throws away what a previous filter accumulated', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  get.mockResolvedValueOnce(page([listRow({ id: 'a' })], 1, 2))
+  await store.fetchList({ reset: true })
+
+  get.mockResolvedValueOnce(page([listRow({ id: 'z' })], 1, 1))
+  await store.fetchList({ reset: true })
+
+  expect(store.list.map((row) => row.id)).toEqual(['z'])
+  expect(get).toHaveBeenLastCalledWith('/posts', { params: { page: 1, state: undefined, customer: undefined, tags: undefined } })
+})
+
+it('remove() takes the row out of the list too, and puts it back at its index on failure', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  get.mockResolvedValueOnce(page([listRow({ id: 'a' }), listRow({ id: 'b' }), listRow({ id: 'c' })]))
+  await store.fetchList({ reset: true })
+
+  del.mockResolvedValueOnce({})
+  await store.remove('b')
+  expect(store.list.map((row) => row.id)).toEqual(['a', 'c'])
+
+  del.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409 } })
+  await expect(store.remove('a')).rejects.toBeTruthy()
+  expect(store.list.map((row) => row.id)).toEqual(['a', 'c'])
+})
+
+it('share()/unshare() keep the list row indicator in step', async () => {
+  const { usePostsStore } = await import('../posts')
+  const store = usePostsStore()
+
+  get.mockResolvedValueOnce(page([listRow()]))
+  await store.fetchList({ reset: true })
+
+  post.mockResolvedValueOnce({ data: { url: 'https://app.example/share/tok-77' } })
+  await store.share('group-1')
+  expect(store.list[0].share_token).toBe('tok-77')
+
+  del.mockResolvedValueOnce({})
+  await store.unshare('group-1')
+  expect(store.list[0].share_token).toBeNull()
+})
