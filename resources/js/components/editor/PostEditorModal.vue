@@ -13,6 +13,7 @@ import ThreadEditor from './ThreadEditor.vue';
 import ScheduleControls from './ScheduleControls.vue';
 import PreviewPane from '../previews/PreviewPane.vue';
 import ShareLinkModal from '../posts/ShareLinkModal.vue';
+import CommentThread from '../posts/CommentThread.vue';
 import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
 import { useMediaStore } from '../../stores/media';
@@ -692,6 +693,23 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                                 {{ signature.content.slice(0, 40) }}
                             </option>
                         </select>
+                        <!--
+                            Task 1.5: a new tab, not a router-link. The
+                            signatures screen is a page rather than a
+                            stacked modal (unlike TagManager), so
+                            navigating to it from inside the editor would
+                            unmount this modal and take the unsaved draft
+                            with it. Opening it alongside costs the user
+                            nothing and loses nothing.
+                        -->
+                        <a
+                            href="/settings/signatures"
+                            target="_blank"
+                            rel="noopener"
+                            class="text-xs text-primary underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                            {{ t('signatures.manage') }}
+                        </a>
                     </div>
                     <p v-if="loadedFromServer" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
 
@@ -739,6 +757,17 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                 @save-schedule="requestSave('schedule')"
                 @save-now="requestSave('now')"
             />
+
+            <!--
+                Task 1.6: keyed on `props.groupId`, not `effectiveGroupId`
+                — the latter is nulled when a 409 or a published lock
+                forces the editor into "this will be a new post" mode,
+                and the comments still belong to the group that was
+                opened. A brand-new post has no group to comment on at
+                all, so the thread is simply absent. Same reasoning as
+                `canShare` above.
+            -->
+            <CommentThread v-if="props.groupId" :group-id="props.groupId" />
 
             <!--
                 Task 25 review, Finding 3: saving while `groupLocked` is

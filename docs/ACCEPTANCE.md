@@ -212,18 +212,25 @@ Tailwind classes — see above):
 ## Backend built, no UI yet
 
 Recorded at MVP close-out (final review, batch 4) so the next reader does
-not assume these are live. Each is reachable, tested and tenant-scoped;
-what none of them has is anything in the SPA that calls it. They are
-groundwork, not features — do not include them in an acceptance pass, and
-do not treat their absence from the UI as a regression.
+not assume these are live. Each was reachable, tested and tenant-scoped;
+what none of them had was anything in the SPA that called it. Anything
+listed here is groundwork, not a feature — do not include it in an
+acceptance pass, and do not treat its absence from the UI as a
+regression.
 
-| Surface | Routes | State |
+**This list is now empty.** Tasks 1.1–1.7 built a caller for every entry
+that used to be on it. Kept as a heading rather than deleted, because the
+category is real and the next backend-ahead-of-UI surface belongs here.
+
+What closed it, in case a reader is looking for where each one went:
+
+| Surface | Routes | Caller |
 | --- | --- | --- |
-| Comments | `GET`/`POST /api/posts/{group}/comments` | The whole subsystem — controller, service, resource, request, migration and tests — has no SPA caller. Task 22 built the API; the commenting UI was never in the plan. |
-| Duplicate a post | `POST /api/posts/{group}/duplicate` | No caller. |
-| Impersonation | `POST /api/admin/impersonate/{user}`, `.../stop` | No caller. There is no admin screen; a SUPERADMIN would have to call it directly. |
-| Share-link minting | `POST /api/posts/{group}/share` | The *viewer* is built and routed (`/share/:token`, `Public/SharedPost.vue`); the button that mints the link is not. A share link can only be created by calling the API. |
-| Tag / set / signature editing | `POST`/`PUT`/`DELETE` on `/api/tags`, `/api/sets`, `/api/signatures` | `GET` is consumed (the calendar's tag filter, the editor's set and signature pickers); nothing in the SPA creates, renames or deletes any of the three. |
+| Comments | `GET`/`POST /api/posts/{group}/comments` | Task 1.6 — `components/posts/CommentThread.vue`, mounted as a section of `PostEditorModal.vue` for a saved group. Append-only, matching an API with no PUT and no DELETE. |
+| Duplicate a post | `POST /api/posts/{group}/duplicate` | Task 1.2 — the calendar's post context menu. |
+| Impersonation | `POST /api/admin/impersonate/{user}`, `.../stop` | Task 1.7 — `pages/Admin/Users.vue` starts it, `components/admin/ImpersonationBanner.vue` shows it and stops it. Needed two new backend pieces of its own: `GET /api/admin/users` (there was no user list to pick from) and two new keys on `GET /api/auth/me` (`is_superadmin`, `impersonator`), without which the SPA could not tell it was impersonating at all. |
+| Share-link minting | `POST /api/posts/{group}/share` | Task 1.1 — the editor header and the calendar context menu. |
+| Tag / set / signature editing | `POST`/`PUT`/`DELETE` on `/api/tags`, `/api/sets`, `/api/signatures` | Tasks 1.3, 1.4, 1.5 — `components/tags/TagManager.vue`, `pages/Settings/Sets.vue`, `pages/Settings/Signatures.vue`. |
 
 Two related notes, checked rather than carried over:
 

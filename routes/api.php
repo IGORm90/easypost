@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CalendarController;
 use App\Http\Controllers\Api\CommentController;
@@ -116,6 +117,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // route-model binding lookup, never reaching stop() at all.
     Route::post('admin/impersonate/stop', [ImpersonationController::class, 'stop']);
     Route::post('admin/impersonate/{user}', [ImpersonationController::class, 'start'])
+        ->middleware('superadmin');
+
+    // Task 1.7: the list impersonation never had. Instance-wide, so no
+    // `organization` middleware and no tenant scope — picking whom to
+    // impersonate means looking outside your own workspace.
+    Route::get('admin/users', [AdminUserController::class, 'index'])
         ->middleware('superadmin');
 });
 

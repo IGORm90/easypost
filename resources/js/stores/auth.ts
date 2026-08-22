@@ -23,11 +23,26 @@ export interface AuthOrganization {
     updated_at: string;
 }
 
+/**
+ * The real actor behind a borrowed session (Task 1.7). Reported by
+ * `GET /api/auth/me` from the `impersonator_id` session key
+ * ImpersonationService writes — there is no other way for the SPA to
+ * learn that it is not who it appears to be.
+ */
+export interface Impersonator {
+    id: string;
+    name: string;
+}
+
 interface AuthState {
     user: AuthUser | null;
     organizations: AuthOrganization[];
     /** True once fetchMe() has resolved (successfully or not) at least once — lets the router guard fetch session state exactly once per app load. */
     ready: boolean;
+    /** True when this user holds the instance-level `users.is_superadmin` privilege — NOT the per-tenant OrganizationRole::SUPERADMIN, which is a different thing and grants nothing here. */
+    isSuperadmin: boolean;
+    /** Non-null while this session is being borrowed from someone else — the only thing the impersonation banner can be built on. */
+    impersonator: Impersonator | null;
     /** True when the server rejected a request with 401 after the user had been signed in — the login page explains the sign-out rather than leaving it unexplained. Cleared on the next successful login. */
     sessionExpired: boolean;
 }
@@ -43,6 +58,8 @@ export const useAuthStore = defineStore('auth', {
     state: (): AuthState => ({
         user: null,
         organizations: [],
+        isSuperadmin: false,
+        impersonator: null,
         ready: false,
         sessionExpired: false,
     }),
@@ -76,6 +93,11 @@ export const useAuthStore = defineStore('auth', {
             } finally {
                 this.user = null;
                 this.organizations = [];
+                // Session facts, so they die with the session: an
+                // `isSuperadmin` left standing would offer the admin
+                // link to whoever signs in next on this browser.
+                this.isSuperadmin = false;
+                this.impersonator = null;
                 this.ready = true;
                 // A deliberate log-out is not an expiry: never explain it
                 // to the user as one.
@@ -95,6 +117,8 @@ export const useAuthStore = defineStore('auth', {
         markSessionExpired(): void {
             this.user = null;
             this.organizations = [];
+            this.isSuperadmin = false;
+            this.impersonator = null;
             this.ready = true;
             this.sessionExpired = true;
             localStorage.removeItem('organization_id');
@@ -107,13 +131,22 @@ export const useAuthStore = defineStore('auth', {
          */
         async fetchMe(): Promise<void> {
             try {
-                const { data } = await api.get<{ user: AuthUser; organizations: AuthOrganization[] }>('/auth/me');
+                const { data } = await api.get<{
+                    user: AuthUser;
+                    organizations: AuthOrganization[];
+                    is_superadmin: boolean;
+                    impersonator: Impersonator | null;
+                }>('/auth/me');
                 this.user = data.user;
                 this.organizations = data.organizations;
+                this.isSuperadmin = data.is_superadmin;
+                this.impersonator = data.impersonator;
                 applyUserLocale(data.user.locale);
             } catch {
                 this.user = null;
                 this.organizations = [];
+                this.isSuperadmin = false;
+                this.impersonator = null;
             } finally {
                 this.ready = true;
             }

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ThemeToggle from '../components/ui/ThemeToggle.vue';
 import OrganizationSwitcher from '../components/OrganizationSwitcher.vue';
 import LimitToast from '../components/ui/LimitToast.vue';
+import ImpersonationBanner from '../components/admin/ImpersonationBanner.vue';
 import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
@@ -24,7 +25,16 @@ const NAV_ITEMS = [
     { name: 'settings-profile', label: 'nav.settingsProfile' },
     { name: 'settings-team', label: 'nav.settingsTeam' },
     { name: 'settings-sets', label: 'nav.settingsSets' },
+    { name: 'settings-signatures', label: 'nav.settingsSignatures' },
+    // Task 1.7. The only entry that is not for everyone: it goes to the
+    // one route gated by more than a session, so offering it to a user
+    // the guard would immediately turn around is worse than not showing
+    // it. Hiding is not the security boundary — the `superadmin`
+    // middleware on /api/admin/* is.
+    { name: 'admin-users', label: 'nav.admin', superadminOnly: true },
 ] as const;
+
+const navItems = computed(() => NAV_ITEMS.filter((item) => !('superadminOnly' in item) || auth.isSuperadmin));
 
 const NAV_LINK_CLASS = 'rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text';
 /**
@@ -39,17 +49,29 @@ const mobileNavOpen = ref(false);
 </script>
 
 <template>
-    <div class="flex min-h-screen bg-bg text-text">
+    <!--
+        An outer column so the impersonation banner can span the full
+        width above both the sidebar and the content. The inner row is
+        the layout that was here before, unchanged.
+    -->
+    <div class="flex min-h-screen flex-col bg-bg text-text">
         <!-- Global "plan limit reached" warning (Task 36) — one instance
              for the whole authenticated app, not per-page; see
              LimitToast.vue's docblock. -->
         <LimitToast />
 
+        <!-- Task 1.7: one instance for the whole authenticated app, for
+             the same reason LimitToast has one — and mounted here rather
+             than at the root because there is no App.vue (app.ts does
+             `createApp(RouterView)`). See ImpersonationBanner.vue. -->
+        <ImpersonationBanner />
+
+        <div class="flex flex-1">
         <!-- Sidebar sits on the third background level (color.md §3.4). -->
         <aside class="hidden w-56 shrink-0 border-r border-border bg-surface-2 p-4 md:flex md:flex-col md:gap-1">
             <p class="mb-3 text-sm font-semibold">{{ t('app.name') }}</p>
             <router-link
-                v-for="item in NAV_ITEMS"
+                v-for="item in navItems"
                 :key="item.name"
                 :to="{ name: item.name }"
                 :class="NAV_LINK_CLASS"
@@ -108,7 +130,7 @@ const mobileNavOpen = ref(false);
                 :aria-label="t('nav.menu')"
             >
                 <router-link
-                    v-for="item in NAV_ITEMS"
+                    v-for="item in navItems"
                     :key="item.name"
                     :to="{ name: item.name }"
                     :class="NAV_LINK_CLASS"
@@ -124,6 +146,7 @@ const mobileNavOpen = ref(false);
                     <p class="text-sm text-muted">{{ t('shell.comingSoon') }}</p>
                 </slot>
             </main>
+        </div>
         </div>
     </div>
 </template>

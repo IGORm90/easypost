@@ -78,6 +78,20 @@ class AuthController extends Controller
         return response()->noContent();
     }
 
+    /**
+     * The SPA's session bootstrap. Beyond the user and their memberships
+     * it answers two questions nothing else in the API could (Task 1.7):
+     * may this person open the admin screen, and is this session
+     * currently borrowed from someone else.
+     *
+     * Both sit on the response rather than inside UserResource on
+     * purpose. That resource's docblock calls its array the entire
+     * contract of what it can return, and RegistrationTest asserts
+     * `user.is_superadmin` is absent from it — an instance-level
+     * privilege has no business riding along with every login response
+     * and every member listing. Here it is scoped to the one endpoint
+     * that describes the current session.
+     */
     public function me(Request $request): JsonResponse
     {
         /** @var User $user */
@@ -86,6 +100,40 @@ class AuthController extends Controller
         return response()->json([
             'user' => new UserResource($user),
             'organizations' => OrganizationResource::collection($user->organizations),
+            // Cast, not passed through: `users.is_superadmin` is
+            // NOT NULL with a database default, so a User instance that
+            // has not been round-tripped through a read carries null for
+            // it rather than false. The SPA gates a route on this value
+            // and must never have to tell those two apart.
+            'is_superadmin' => (bool) $user->is_superadmin,
+            'impersonator' => $this->impersonator($request),
         ]);
+    }
+
+    /**
+     * The real actor behind an impersonated session, or null for an
+     * ordinary one. `impersonator_id` is the session key
+     * ImpersonationService writes and DenyWhileImpersonating reads —
+     * this is the only place its value is turned back into a person.
+     *
+     * A missing user is treated as no impersonation rather than an
+     * error: the account can be deleted mid-session, and
+     * ImpersonationService::stop() already handles that case properly
+     * when the user tries to leave. Failing this endpoint would take the
+     * whole SPA down instead.
+     *
+     * @return array{id: string, name: string}|null
+     */
+    private function impersonator(Request $request): ?array
+    {
+        $id = $request->session()->get('impersonator_id');
+
+        if ($id === null) {
+            return null;
+        }
+
+        $actor = User::query()->find($id);
+
+        return $actor === null ? null : ['id' => $actor->id, 'name' => $actor->name];
     }
 }

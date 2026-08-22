@@ -196,3 +196,72 @@ it('forbids impersonating oneself', function () {
         ->postJson("/api/admin/impersonate/{$actor->id}")
         ->assertStatus(422);
 });
+
+/*
+ * Task 1.7: until now nothing in the API said whether the current session
+ * was borrowed. The SPA has to know two things it could not previously
+ * ask for — may this user open the admin screen at all, and is this
+ * session currently someone else's — and /auth/me is where it asks.
+ *
+ * Both live on the endpoint's response rather than inside UserResource:
+ * that resource's docblock calls its array the entire contract of what it
+ * can return, and RegistrationTest asserts `user.is_superadmin` is absent
+ * from it. An instance-level privilege has no business riding along with
+ * every login response and every member listing.
+ */
+it('tells an ordinary session that it is nobody else and holds no instance privilege', function () {
+    $this->actingAs(User::factory()->create());
+
+    $this->getJson('/api/auth/me')
+        ->assertOk()
+        ->assertJsonPath('is_superadmin', false)
+        ->assertJsonPath('impersonator', null)
+        // The flag stays off the user object itself.
+        ->assertJsonMissingPath('user.is_superadmin');
+});
+
+it('reports the instance privilege to the superadmin who has it', function () {
+    $this->actingAs(User::factory()->create(['is_superadmin' => true]));
+
+    $this->getJson('/api/auth/me')->assertOk()->assertJsonPath('is_superadmin', true);
+});
+
+it('names the real actor behind an impersonated session, and stops naming them once it ends', function () {
+    $cookieName = config('session.cookie');
+    $actor = User::factory()->create([
+        'name' => 'Robin Ash',
+        'password' => Hash::make('secret1234'),
+        'is_superadmin' => true,
+    ]);
+    $target = User::factory()->create(['name' => 'Dana Levin']);
+
+    $cookie = loginAndGetCookie($actor->email, 'secret1234');
+    Auth::forgetGuards();
+
+    test()->withCookie($cookieName, $cookie)
+        ->postJson("/api/admin/impersonate/{$target->id}")
+        ->assertOk();
+    Auth::forgetGuards();
+
+    // The borrowed session reports the target as the user, the actor as
+    // the impersonator — this pair is the only thing the banner can be
+    // built on — and no instance privilege, because the target has none.
+    test()->withCookie($cookieName, $cookie)
+        ->getJson('/api/auth/me')
+        ->assertOk()
+        ->assertJsonPath('user.name', 'Dana Levin')
+        ->assertJsonPath('impersonator.id', $actor->id)
+        ->assertJsonPath('impersonator.name', 'Robin Ash')
+        ->assertJsonPath('is_superadmin', false);
+    Auth::forgetGuards();
+
+    test()->withCookie($cookieName, $cookie)->postJson('/api/admin/impersonate/stop')->assertOk();
+    Auth::forgetGuards();
+
+    test()->withCookie($cookieName, $cookie)
+        ->getJson('/api/auth/me')
+        ->assertOk()
+        ->assertJsonPath('user.name', 'Robin Ash')
+        ->assertJsonPath('impersonator', null)
+        ->assertJsonPath('is_superadmin', true);
+});

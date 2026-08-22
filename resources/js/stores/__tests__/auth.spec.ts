@@ -126,3 +126,72 @@ it('fetchMe() clears user on a failed (e.g. 401) request instead of throwing', a
   expect(store.user).toBeNull()
   expect(store.ready).toBe(true)
 })
+
+// Task 1.7: /auth/me is the only place the API says whether this session
+// may open the admin screen and whether it is currently borrowed from
+// someone else. Both had nowhere to live in the store before this.
+it('records the instance privilege and the impersonator /auth/me reports', async () => {
+  const { useAuthStore } = await import('../auth')
+  const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'en', email_verified_at: null, created_at: '', updated_at: '' }
+  get.mockResolvedValueOnce({
+    data: { user, organizations: [], is_superadmin: true, impersonator: { id: '02', name: 'Robin Ash' } },
+  })
+
+  const auth = useAuthStore()
+  await auth.fetchMe()
+
+  expect(auth.isSuperadmin).toBe(true)
+  expect(auth.impersonator).toEqual({ id: '02', name: 'Robin Ash' })
+})
+
+it('treats a session with neither as exactly that, not as unknown', async () => {
+  const { useAuthStore } = await import('../auth')
+  const user = { id: '01', name: 'Ann', email: 'ann@example.com', timezone: 'UTC', locale: 'en', email_verified_at: null, created_at: '', updated_at: '' }
+  get.mockResolvedValueOnce({ data: { user, organizations: [], is_superadmin: false, impersonator: null } })
+
+  const auth = useAuthStore()
+  await auth.fetchMe()
+
+  expect(auth.isSuperadmin).toBe(false)
+  expect(auth.impersonator).toBeNull()
+})
+
+// Both are session facts, so they must die with the session — a stale
+// `isSuperadmin` left behind by a log-out would show the admin link to
+// whoever signs in next on the same browser.
+it('drops the privilege and the impersonator when the session ends', async () => {
+  const { useAuthStore } = await import('../auth')
+  const auth = useAuthStore()
+  auth.isSuperadmin = true
+  auth.impersonator = { id: '02', name: 'Robin Ash' }
+
+  await auth.logout()
+
+  expect(auth.isSuperadmin).toBe(false)
+  expect(auth.impersonator).toBeNull()
+})
+
+it('drops them when the server expires the session out from under us', async () => {
+  const { useAuthStore } = await import('../auth')
+  const auth = useAuthStore()
+  auth.isSuperadmin = true
+  auth.impersonator = { id: '02', name: 'Robin Ash' }
+
+  auth.markSessionExpired()
+
+  expect(auth.isSuperadmin).toBe(false)
+  expect(auth.impersonator).toBeNull()
+})
+
+it('drops them when /auth/me itself fails', async () => {
+  const { useAuthStore } = await import('../auth')
+  const auth = useAuthStore()
+  auth.isSuperadmin = true
+  auth.impersonator = { id: '02', name: 'Robin Ash' }
+  get.mockRejectedValueOnce(new Error('network'))
+
+  await auth.fetchMe()
+
+  expect(auth.isSuperadmin).toBe(false)
+  expect(auth.impersonator).toBeNull()
+})

@@ -112,6 +112,11 @@ beforeEach(() => {
         if (url === '/sets') return Promise.resolve({ data: [] });
         if (url === '/signatures') return Promise.resolve({ data: [] });
         if (url === '/tags') return Promise.resolve({ data: [] });
+        // Task 1.6: the comment thread mounts alongside an existing
+        // group and reads its own endpoint. Answered before the group
+        // branch below, which would otherwise treat
+        // `/posts/group-b/comments` as a group id.
+        if (url.startsWith('/posts/') && url.endsWith('/comments')) return Promise.resolve({ data: [] });
         if (url.startsWith('/posts/')) {
             const id = url.replace('/posts/', '');
             const fixture = groupFixtures[id];
@@ -560,4 +565,25 @@ it('says so rather than failing silently when the set cannot be saved', async ()
 
     expect(w.text()).toContain(en.sets.saveError);
     expect(w.findComponent(ChannelPicker).props('sets')).toEqual([]);
+});
+
+// Task 1.6: comments belong to a saved group. A brand-new post has none
+// to attach to, and the endpoint is keyed on a group id that does not
+// exist yet — so the thread is absent rather than empty.
+it('offers no comment thread on a post that has not been saved yet', async () => {
+    const w = await mountReady();
+
+    expect(w.find('[data-test="comment-form"]').exists()).toBe(false);
+});
+
+it('loads the comment thread of the group it opened', async () => {
+    const w = mount(PostEditorModal, {
+        props: { open: true, groupId: 'group-b' },
+        global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+
+    expect(get).toHaveBeenCalledWith('/posts/group-b/comments');
+    expect(w.find('[data-test="comment-form"]').exists()).toBe(true);
+    expect(w.text()).toContain(en.comments.title);
 });

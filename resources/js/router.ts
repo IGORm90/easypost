@@ -7,10 +7,12 @@ import Reset from './pages/Auth/Reset.vue';
 import Profile from './pages/Settings/Profile.vue';
 import Team from './pages/Settings/Team.vue';
 import Sets from './pages/Settings/Sets.vue';
+import Signatures from './pages/Settings/Signatures.vue';
 import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
 import Media from './pages/Media/Index.vue';
 import Calendar from './pages/Calendar/Index.vue';
+import AdminUsers from './pages/Admin/Users.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import SharedPost from './pages/Public/SharedPost.vue';
 import { useAuthStore } from './stores/auth';
@@ -52,6 +54,16 @@ const router = createRouter({
         // until this screen existed — the editor could apply them but
         // never make one.
         { path: '/settings/sets', name: 'settings-sets', component: Sets, meta: { requiresAuth: true } },
+        // Task 1.5: signatures had the same shape of gap as sets — the
+        // editor's per-channel picker listed them from the day the API
+        // shipped, but nothing in the SPA could create one.
+        { path: '/settings/signatures', name: 'settings-signatures', component: Signatures, meta: { requiresAuth: true } },
+        // Task 1.7: the only route in the app gated by more than a
+        // session. `requiresSuperadmin` reads the instance-level
+        // `users.is_superadmin` flag reported by /auth/me — never the
+        // per-tenant OrganizationRole::SUPERADMIN, which is a
+        // different thing and grants nothing here.
+        { path: '/admin/users', name: 'admin-users', component: AdminUsers, meta: { requiresAuth: true, requiresSuperadmin: true } },
         { path: '/invites/:token', name: 'invites-accept', component: AcceptInvite, meta: { requiresAuth: true } },
     ],
 });
@@ -78,6 +90,15 @@ router.beforeEach(async (to) => {
 
     if (to.meta.requiresAuth && !auth.user) {
         return { name: 'login' };
+    }
+
+    // Checked after `requiresAuth` above, so a signed-out visitor lands
+    // on the login page rather than being bounced to the calendar they
+    // also cannot see. This is a courtesy, not a security boundary: the
+    // `superadmin` middleware on /api/admin/* is what actually refuses,
+    // and it does so whatever the SPA believes.
+    if (to.meta.requiresSuperadmin && !auth.isSuperadmin) {
+        return { name: 'home' };
     }
 
     // Signed-in users hitting /login, /register, etc. get bounced home

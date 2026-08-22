@@ -10,6 +10,8 @@
         "settingsProfile": "Profile",
         "settingsTeam": "Team",
         "settingsSets": "Channel sets",
+        "settingsSignatures": "Signatures",
+        "admin": "Admin",
         "logout": "Log out"
     },
     "ui": {
@@ -304,6 +306,68 @@
         "loadError": "Could not load the sets. Please try again.",
         "saveError": "Could not save the set. Please try again.",
         "removeError": "Could not delete the set. Please try again."
+    },
+    "signatures": {
+        "title": "Signatures",
+        "manage": "Manage signatures",
+        "intro": "A signature is a saved tail — contacts, a disclaimer, a call to subscribe. The editor appends the one you pick to the last segment of a channel's thread.",
+        "empty": "No signatures yet.",
+        "emptyHint": "Write one below. Whatever you save here shows up in the post editor's per-channel picker.",
+        "contentLabel": "Signature text",
+        "isDefaultLabel": "Use as the default signature",
+        "defaultBadge": "Default",
+        "defaultHint": "An organization has at most one default signature — making this one the default takes the mark off whichever signature holds it now.",
+        "makeDefault": "Make default",
+        "create": "Create signature",
+        "edit": "Edit",
+        "save": "Save",
+        "cancel": "Cancel",
+        "remove": "Delete",
+        "removeConfirm": "Delete this signature? Posts that already carry its text keep it — only the saved signature goes away.",
+        "loadError": "Could not load the signatures. Please try again.",
+        "saveError": "Could not save the signature. Please try again.",
+        "removeError": "Could not delete the signature. Please try again."
+    },
+    "comments": {
+        "title": "Comments",
+        "intro": "Internal to your team — nothing here is published or shown on a shared link.",
+        "empty": "No comments yet.",
+        "emptyHint": "Leave a note for whoever picks this post up next.",
+        "inputLabel": "Add a comment",
+        "submit": "Comment",
+        "loadError": "Could not load the comments. Please try again.",
+        "sendError": "Could not send the comment. Your text is still here — try again."
+    },
+    "admin": {
+        "impersonating": {
+            "label": "You are working as {name}.",
+            "hint": "Everything you do here is recorded as them.",
+            "stop": "Back to my account",
+            "stopError": "Could not end the impersonation session. Please try again."
+        },
+        "users": {
+            "title": "Users",
+            "intro": "Every account on this instance. Sign in as one of them to see exactly what they see.",
+            "search": "Search by name or email",
+            "empty": "Nobody matches that search.",
+            "emptyHint": "Try part of a name, or the address they signed up with.",
+            "columnName": "Name",
+            "columnEmail": "Email",
+            "columnOrganizations": "Workspaces",
+            "columnCreated": "Joined",
+            "noOrganizations": "No workspace",
+            "superadmin": "Superadmin",
+            "impersonate": "Sign in as",
+            "more": "Load more",
+            "loadError": "Could not load the users. Please try again."
+        },
+        "errors": {
+            "forbidden": "Only a superadmin can start an impersonation session.",
+            "nested": "You are already impersonating someone. Go back to your own account first.",
+            "self": "That is your own account.",
+            "actorGone": "The account you were impersonating from no longer exists. Please sign in again.",
+            "generic": "Could not sign in as that user. Please try again."
+        }
     },
     "editor": {
         "titleNew": "New post",
