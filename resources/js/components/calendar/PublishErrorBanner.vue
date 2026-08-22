@@ -44,6 +44,17 @@ const failures = ref<FailedGroup[]>([]);
 const retrying = ref<string | null>(null);
 const retryError = ref<string | null>(null);
 
+/**
+ * Deliberately component-local and deliberately not persisted.
+ *
+ * A failed publication is not a notice the user gets to silence for good:
+ * a reload, or coming back to the calendar later, must show it again. So
+ * no localStorage and no Pinia store here — closing means "I have seen
+ * this, get it off my screen for now", and `load()` does not reset it,
+ * because paging the calendar is not a new decision about the banner.
+ */
+const dismissed = ref(false);
+
 async function load(): Promise<void> {
     if (!props.range) {
         return;
@@ -89,12 +100,28 @@ watch(() => props.range, load, { immediate: true, deep: true });
 
 <template>
     <section
-        v-if="failures.length > 0"
+        v-if="failures.length > 0 && !dismissed"
         role="alert"
         data-test="publish-error-banner"
         class="flex flex-col gap-3 rounded-xl border border-danger/40 bg-danger-soft p-3 text-sm text-danger"
     >
-        <h2 class="font-semibold">{{ t('calendar.errors.title', { count: failures.length }) }}</h2>
+        <div class="flex items-start justify-between gap-2">
+            <h2 class="font-semibold">{{ t('calendar.errors.title', { count: failures.length }) }}</h2>
+
+            <button
+                type="button"
+                class="-m-1 rounded-xl p-1 text-danger/70 hover:text-danger focus:outline-none focus:ring-2 focus:ring-primary"
+                :aria-label="t('ui.close')"
+                data-test="dismiss-publish-errors"
+                @click="dismissed = true"
+            >
+                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path
+                        d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+                    />
+                </svg>
+            </button>
+        </div>
 
         <div v-for="failure in failures" :key="failure.id" class="flex flex-wrap items-start justify-between gap-2">
             <div class="flex flex-col gap-1">

@@ -125,3 +125,38 @@ it('keeps the calendar usable when the error list itself cannot be loaded', asyn
 
     expect(w.find('[data-test="publish-error-banner"]').exists()).toBe(false);
 });
+
+/*
+ * The banner had no way out: it renders whenever /posts/errors returns a
+ * non-empty list, sits above the calendar grid, and only disappears once
+ * every group is retried away. An operator who has already seen it needs
+ * to be able to put it aside.
+ */
+it('offers a way to close the banner', async () => {
+    const w = await mountBanner();
+
+    expect(w.get('[data-test="dismiss-publish-errors"]').attributes('aria-label')).toBe(
+        i18n.global.t('ui.close'),
+    );
+});
+
+it('hides the banner when the close button is clicked', async () => {
+    const w = await mountBanner();
+
+    await w.get('[data-test="dismiss-publish-errors"]').trigger('click');
+
+    expect(w.find('[data-test="publish-error-banner"]').exists()).toBe(false);
+});
+
+it('stays closed when the calendar moves to another range', async () => {
+    // Dismissal is a decision about this session, not about this month:
+    // paging the calendar refetches, but must not resurrect the banner.
+    const w = await mountBanner();
+
+    await w.get('[data-test="dismiss-publish-errors"]').trigger('click');
+    await w.setProps({ range: { from: '2026-10-01', to: '2026-10-31' } });
+    await flushPromises();
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(w.find('[data-test="publish-error-banner"]').exists()).toBe(false);
+});
