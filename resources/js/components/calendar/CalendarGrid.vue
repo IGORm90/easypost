@@ -152,7 +152,13 @@ function onDuplicate(groupId: string): void {
 }
 
 async function onRemove(groupId: string): Promise<void> {
-    if (!window.confirm(t('calendar.removeConfirm'))) {
+    // Block 4: with lazy generation there is only ever one future
+    // occurrence of a series, so deleting it does not remove "one of
+    // many" — it ends the series, and nothing left on screen afterwards
+    // would explain where the repeat went. The wording has to say so.
+    const repeating = postsStore.findEverywhere(groupId).some((target) => target.repeats);
+
+    if (!window.confirm(repeating ? t('calendar.removeConfirmRepeating') : t('calendar.removeConfirm'))) {
         return;
     }
 

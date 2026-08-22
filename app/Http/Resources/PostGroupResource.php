@@ -36,6 +36,14 @@ class PostGroupResource extends JsonResource
             'publish_date' => $this->publish_date,
             'error' => $this->error,
             'share_token' => $this->share_token,
+            // Block 4: named exactly as the request names them, because
+            // this response is documented to be feedable straight back
+            // into PUT (see this class's docblock) — the editor does
+            // precisely that when it loads a group for editing.
+            'repeat_unit' => $this->repeat_unit,
+            'repeat_interval' => $this->repeat_interval,
+            'repeat_until' => $this->repeat_until,
+            'repeat_parent_id' => $this->repeat_parent_id,
             'tags' => $this->whenLoaded('tags', fn () => $this->tags->pluck('id')->values()),
             'posts' => $posts->groupBy('integration_id')->map(function (Collection $chain, string $integrationId): array {
                 $chain = $chain->sortBy('order')->values();

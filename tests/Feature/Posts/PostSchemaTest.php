@@ -316,3 +316,54 @@ it('does not cascade a deleted user onward to the group\'s posts and comments', 
 
     expect(Post::withoutGlobalScope('organization')->where('id', $post->id)->exists())->toBeTrue();
 });
+
+/*
+ * Block 4: the recurrence columns. `repeat_spawned_at`'s conditional
+ * UPDATE in RecurrenceService is the first line of defence against a
+ * re-run of PublishPostJob creating a second successor; this unique
+ * index is the second, and it has to hold even if that claim is ever
+ * bypassed. See the block's "Идемпотентность" note.
+ */
+it('rejects two occurrences of the same series scheduled for the same instant', function () {
+    $root = PostGroup::factory()->create();
+    $date = now()->addDay();
+
+    PostGroup::factory()->create([
+        'organization_id' => $root->organization_id,
+        'repeat_parent_id' => $root->id,
+        'publish_date' => $date,
+    ]);
+
+    expect(fn () => PostGroup::factory()->create([
+        'organization_id' => $root->organization_id,
+        'repeat_parent_id' => $root->id,
+        'publish_date' => $date,
+    ]))->toThrow(QueryException::class, 'post_groups_repeat_parent_id_publish_date_unique');
+});
+
+it('lets any number of non-repeating groups share a publish_date', function () {
+    // Postgres treats every NULL in a unique index as distinct, which is
+    // what keeps the index above from constraining the ordinary,
+    // non-repeating groups that make up almost the whole table.
+    $date = now()->addDay();
+    $a = PostGroup::factory()->create(['publish_date' => $date, 'repeat_parent_id' => null]);
+    $b = PostGroup::factory()->create(['publish_date' => $date, 'repeat_parent_id' => null]);
+
+    expect($a->id)->not->toBe($b->id);
+});
+
+it('nulls out repeat_parent_id instead of deleting the rest of the series with its root', function () {
+    // nullOnDelete(), not cascadeOnDelete(): losing the series link is
+    // survivable, losing the occurrences themselves is not.
+    $root = PostGroup::factory()->create();
+    $child = PostGroup::factory()->create([
+        'organization_id' => $root->organization_id,
+        'repeat_parent_id' => $root->id,
+    ]);
+
+    $root->delete();
+
+    $survived = PostGroup::withoutGlobalScope('organization')->find($child->id);
+    expect($survived)->not->toBeNull()
+        ->and($survived->repeat_parent_id)->toBeNull();
+});

@@ -13,6 +13,7 @@ function row(overrides: Partial<PostListRow> = {}): PostListRow {
         channels: [{ id: 'int-1', provider_identifier: 'telegram', name: 'Team channel', picture: null }],
         tags: [],
         comments_count: 0,
+        repeats: false,
         ...overrides,
     };
 }
@@ -110,4 +111,15 @@ it('survives a row that lost its publish date instead of rendering an invalid da
     expect(w.findAll('[data-test="post-row"]')).toHaveLength(1);
     expect(w.text()).toContain('No date');
     expect(w.text()).not.toContain('Invalid');
+});
+
+// Block 4, color.md §4: the same rule the share indicator follows — a
+// repeating post is marked by an icon AND real text, never by colour.
+it('marks a repeating post with text beside an icon, not with colour', () => {
+    const repeating = mountList([row({ repeats: true })]);
+    const plain = mountList([row()]);
+
+    expect(repeating.text()).toContain('Repeating post');
+    expect(plain.text()).not.toContain('Repeating post');
+    expect(repeating.findAll('svg').length).toBeGreaterThan(plain.findAll('svg').length);
 });

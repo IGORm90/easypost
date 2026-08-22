@@ -203,3 +203,82 @@ it('does not claim the list is empty when the load failed', async () => {
     expect(w.text()).toContain('Could not load the list of posts.');
     expect(w.findComponent(PostList).exists()).toBe(false);
 });
+
+/*
+ * Block 4. With lazy generation there is only ever ONE future occurrence
+ * of a series, so deleting it is not "removing one of many" — it ends the
+ * series outright, and nothing else on screen would say so afterwards.
+ */
+it('warns that deleting the pending occurrence ends the whole series', async () => {
+    const confirm = vi.fn(() => false);
+    Object.defineProperty(window, 'confirm', { value: confirm, writable: true, configurable: true });
+
+    get.mockImplementation((url: string) => {
+        if (url === '/tags') return Promise.resolve({ data: [] });
+        if (url === '/posts') {
+            return Promise.resolve({
+                data: {
+                    data: [
+                        {
+                            id: 'group-r',
+                            state: 'QUEUE',
+                            publish_date: '2026-08-20T09:00:00.000000Z',
+                            share_token: null,
+                            repeats: true,
+                            preview: 'weekly',
+                            channels: [],
+                            tags: [],
+                            comments_count: 0,
+                        },
+                    ],
+                    meta: { current_page: 1, last_page: 1 },
+                },
+            });
+        }
+        return Promise.resolve({ data: [] });
+    });
+
+    const { w } = await mountPage({ mode: 'list' });
+
+    w.findComponent(PostList).vm.$emit('remove', 'group-r');
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('stops the series'));
+});
+
+it('asks the ordinary question for a post that does not repeat', async () => {
+    const confirm = vi.fn(() => false);
+    Object.defineProperty(window, 'confirm', { value: confirm, writable: true, configurable: true });
+
+    get.mockImplementation((url: string) => {
+        if (url === '/tags') return Promise.resolve({ data: [] });
+        if (url === '/posts') {
+            return Promise.resolve({
+                data: {
+                    data: [
+                        {
+                            id: 'group-o',
+                            state: 'QUEUE',
+                            publish_date: '2026-08-20T09:00:00.000000Z',
+                            share_token: null,
+                            repeats: false,
+                            preview: 'one-off',
+                            channels: [],
+                            tags: [],
+                            comments_count: 0,
+                        },
+                    ],
+                    meta: { current_page: 1, last_page: 1 },
+                },
+            });
+        }
+        return Promise.resolve({ data: [] });
+    });
+
+    const { w } = await mountPage({ mode: 'list' });
+
+    w.findComponent(PostList).vm.$emit('remove', 'group-o');
+    await flushPromises();
+
+    expect(confirm).toHaveBeenCalledWith(expect.not.stringContaining('stops the series'));
+});

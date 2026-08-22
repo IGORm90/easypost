@@ -230,6 +230,34 @@ Expected: step 2 is blocked with a clear "plan limit reached" message; step 4
 succeeds immediately after the plan change, with no restart or cache clear
 needed.
 
+### 10a. A repeating post keeps repeating, and stops when told to
+
+Block 4. This is the item the automated suite can least be trusted on:
+`RecurrenceTest` drives `PublishService` directly under `Queue::fake()`,
+so the successor is created inside the test process, with the tenant
+context the test happens to be in. Production creates it on a queue
+worker with **no** organization context at all, where the `organization`
+global scope returns zero rows — a mistake there produces a successor
+with no content rather than an error.
+
+1. Schedule a post on a real channel for a minute from now, set the
+   repeat to "every few days", interval 1, and an end date three days
+   out. Save.
+2. Wait for Horizon to publish it. The calendar should show the original
+   as published and exactly **one** new occurrence, one day later,
+   carrying the same text, media and tags, and marked with the repeating
+   indicator.
+3. In Horizon, retry the completed `PublishPostJob`. No second occurrence
+   appears (`repeat_spawned_at` has already been claimed).
+4. Open the pending occurrence, set the repeat back to "Do not repeat"
+   and save. Publish it. No further occurrence is created.
+5. Drop the organization onto a plan whose monthly post quota is already
+   spent (`php artisan org:plan {id} free`), then publish another
+   repeating post. Expected: the post itself publishes normally and stays
+   `PUBLISHED`, no job lands in `failed_jobs`, no successor is created,
+   and the author receives the "a repeating post has stopped repeating"
+   mail in Mailpit.
+
 ### 11. Interface is checked in both themes
 
 1. Toggle the app's theme (light/dark) — wherever that control lives in
@@ -296,6 +324,14 @@ pass should exercise them by hand.
   invoking those callbacks — the library is stubbed out, so a wrong option
   name or a version bump that renames a hook would pass. Drag a post in a
   browser (§3) rather than trusting the suite here.
+- **Recurring publication never runs on a real worker in the suite.**
+  `RecurrenceTest` clears `OrganizationContext` deliberately, which is
+  the closest a test can get, but it still runs in-process with
+  `Queue::fake()`: the successor is created synchronously rather than by
+  a Horizon worker, and its own `PublishPostJob` is never executed. The
+  one thing that proves the whole loop closes — an occurrence publishing
+  and creating the next one, twice in a row, unattended — is §10a.
+
 - **`MvpFlowTest` is not end to end**, and its own docblock says so: it
   runs against the `fake` provider with `Queue::fake()`, so it proves the
   application's own wiring, never a real provider call or a real worker.

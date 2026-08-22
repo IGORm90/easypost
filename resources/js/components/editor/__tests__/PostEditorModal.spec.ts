@@ -72,6 +72,10 @@ function groupApi(overrides: Partial<PostGroupApi> = {}): PostGroupApi {
         publish_date: null,
         error: null,
         share_token: null,
+        repeat_unit: null,
+        repeat_interval: null,
+        repeat_until: null,
+        repeat_parent_id: null,
         tags: [],
         posts: [
             {
@@ -604,4 +608,76 @@ it('offers emoji on the shared text field but no format toolbar', async () => {
     // supports marks; this fixture's provider declares none, so the only
     // thing proven here is that the shared field itself never gets one.
     expect(w.find('[data-testid="format-toolbar"]').exists()).toBe(false);
+});
+
+/*
+ * Block 4: the recurrence rule rides on the same payload as the post and
+ * comes back on the same response, so the editor is the only place a
+ * series is started, changed or stopped. There is deliberately no
+ * separate "stop repeating" endpoint — a PUT without the fields is the
+ * stop.
+ */
+it('sends the recurrence rule with the post', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'every week');
+
+    await w.get('[data-testid="repeat-unit"]').setValue('WEEK');
+    await w.get('[data-testid="repeat-interval"]').setValue('2');
+    await w.get('[data-testid="repeat-until"]').setValue('2026-12-01T09:00');
+    await flushPromises();
+
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith(
+        '/posts',
+        expect.objectContaining({ repeat_unit: 'WEEK', repeat_interval: 2, repeat_until: expect.any(String) }),
+    );
+});
+
+it('sends no recurrence at all for a post that does not repeat', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'just once');
+
+    const publishNow = w.findAll('button').find((b) => b.text() === 'Publish now');
+    await publishNow!.trigger('click');
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith(
+        '/posts',
+        expect.objectContaining({ repeat_unit: null, repeat_interval: null, repeat_until: null }),
+    );
+});
+
+it('loads an existing series back into the repeat control', async () => {
+    groupFixtures['group-b'] = groupApi({
+        repeat_unit: 'MONTH',
+        repeat_interval: 3,
+        repeat_until: '2026-12-01T09:00:00.000Z',
+    });
+
+    const w = mount(PostEditorModal, {
+        props: { open: true, groupId: 'group-b' },
+        global: { stubs: { teleport: true } },
+    });
+    await flushPromises();
+
+    expect((w.get('[data-testid="repeat-unit"]').element as HTMLSelectElement).value).toBe('MONTH');
+    expect((w.get('[data-testid="repeat-interval"]').element as HTMLInputElement).value).toBe('3');
+});
+
+it('refuses to schedule a repeating post with no end date', async () => {
+    // The backend requires it (an endless series would eat the monthly
+    // quota forever), so the button is blocked rather than the user
+    // being handed a 422.
+    const w = await mountReady();
+    await selectChannelAndType(w, 'weekly, forever?');
+    await w.get('#publish-date').setValue('2026-09-01T09:00');
+    await w.get('[data-testid="repeat-unit"]').setValue('WEEK');
+    await flushPromises();
+
+    const schedule = w.findAll('button').find((b) => b.text() === 'Schedule');
+    expect((schedule!.element as HTMLButtonElement).disabled).toBe(true);
+    expect(w.text()).toContain('when the repeat should stop');
 });

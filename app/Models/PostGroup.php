@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\PostState;
+use App\Enums\RepeatUnit;
 use App\Models\Concerns\BelongsToOrganization;
 use Carbon\CarbonInterface;
 use Database\Factories\PostGroupFactory;
@@ -24,6 +25,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * class's docblock for the transition table and why `PUBLISHED` is
  * terminal.
  *
+ * `creator` is annotated as nullable below because `created_by` is
+ * `nullOnDelete()`: an offboarded author leaves the group behind with no
+ * creator at all, and every reader of `$group->creator` has to keep
+ * handling that.
+ *
  * @property string $id
  * @property string $organization_id
  * @property PostState $state
@@ -34,6 +40,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $error
  * @property CarbonInterface|null $notified_at
  * @property string|null $share_token
+ * @property RepeatUnit|null $repeat_unit
+ * @property int|null $repeat_interval
+ * @property CarbonInterface|null $repeat_until
+ * @property string|null $repeat_parent_id
+ * @property CarbonInterface|null $repeat_spawned_at
+ * @property User|null $creator
  */
 class PostGroup extends Model
 {
@@ -51,6 +63,11 @@ class PostGroup extends Model
         'share_token',
         'queue_version',
         'last_dispatched_at',
+        'repeat_unit',
+        'repeat_interval',
+        'repeat_until',
+        'repeat_parent_id',
+        'repeat_spawned_at',
     ];
 
     /**
@@ -64,6 +81,10 @@ class PostGroup extends Model
             'queue_version' => 'integer',
             'notified_at' => 'datetime',
             'last_dispatched_at' => 'datetime',
+            'repeat_unit' => RepeatUnit::class,
+            'repeat_interval' => 'integer',
+            'repeat_until' => 'datetime',
+            'repeat_spawned_at' => 'datetime',
         ];
     }
 
@@ -89,6 +110,29 @@ class PostGroup extends Model
     public function comments(): HasMany
     {
         return $this->hasMany(Comment::class);
+    }
+
+    /**
+     * The FIRST group of this recurring series — never the immediate
+     * predecessor. See the recurrence migration for why: it makes the
+     * whole series one query instead of a walk.
+     *
+     * @return BelongsTo<PostGroup, $this>
+     */
+    public function repeatParent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'repeat_parent_id');
+    }
+
+    /**
+     * Every other occurrence of the series this group is the root of.
+     * Only ever populated on the root, by construction.
+     *
+     * @return HasMany<PostGroup, $this>
+     */
+    public function repeatChildren(): HasMany
+    {
+        return $this->hasMany(self::class, 'repeat_parent_id');
     }
 
     /**

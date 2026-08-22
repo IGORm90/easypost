@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Posts\Concerns;
 
+use App\Enums\RepeatUnit;
 use App\Models\Integration;
 use App\Models\Media;
 use App\Services\Posts\PostValidationService;
@@ -79,6 +80,15 @@ trait ValidatesPostChains
         return [
             'type' => ['required', Rule::in(['schedule', 'draft', 'now'])],
             'publish_date' => ['nullable', 'date'],
+            // Block 4. The recurrence rule rides on the same body as the
+            // post: `repeat_unit` alone answers "does this repeat?", and
+            // the other two are meaningless without it, hence
+            // `required_with` in both directions. The interval's upper
+            // bound depends on the unit and therefore lives in
+            // validateRecurrence() below, not here.
+            'repeat_unit' => ['nullable', Rule::enum(RepeatUnit::class), 'required_with:repeat_interval,repeat_until'],
+            'repeat_interval' => ['nullable', 'integer', 'min:1', 'required_with:repeat_unit'],
+            'repeat_until' => ['nullable', 'date', 'required_with:repeat_unit'],
             'tags' => ['sometimes', 'array'],
             'tags.*' => ['string', Rule::exists('tags', 'id')->where('organization_id', OrganizationContext::id())],
             'posts' => ['required', 'array', 'min:1'],
@@ -151,6 +161,7 @@ trait ValidatesPostChains
             }
 
             $this->validatePublishDate($validator);
+            $this->validateRecurrence($validator);
             $this->validateChannelLimits($validator);
         });
     }
@@ -183,6 +194,57 @@ trait ValidatesPostChains
 
         if ($date->isPast()) {
             $validator->errors()->add('publish_date', 'The publish date must be in the future.');
+        }
+    }
+
+    /**
+     * The three recurrence rules that need the parsed payload rather
+     * than a single field.
+     *
+     * `repeat_interval`'s ceiling is a property of the unit
+     * (`RepeatUnit::maxInterval()`) — 365 days, 52 weeks or 12 months —
+     * so it cannot be a static `max:` rule without hard-coding the same
+     * table in a third place.
+     *
+     * `repeat_until` is bounded on BOTH sides. In the past, a series
+     * would end before it began. Further out than a year, it is a
+     * commitment nobody is watching — every occurrence is a real post
+     * against the monthly quota, and the block's whole "no endless
+     * series" rule would be defeated by simply typing a distant year.
+     * And it must be strictly after `publish_date`, or the very first
+     * successor is already past the end.
+     */
+    private function validateRecurrence(Validator $validator): void
+    {
+        $unit = $this->input('repeat_unit');
+
+        if (! is_string($unit) || RepeatUnit::tryFrom($unit) === null) {
+            return;
+        }
+
+        $interval = (int) $this->input('repeat_interval');
+        $max = RepeatUnit::from($unit)->maxInterval();
+
+        if ($interval > $max) {
+            $validator->errors()->add('repeat_interval', "The repeat interval may not be greater than {$max} for this unit.");
+        }
+
+        if (! $this->filled('repeat_until')) {
+            return;
+        }
+
+        $until = Carbon::parse($this->input('repeat_until'));
+
+        if ($until->isPast()) {
+            $validator->errors()->add('repeat_until', 'The repeat end date must be in the future.');
+        }
+
+        if ($until->greaterThan(Carbon::now()->addYear())) {
+            $validator->errors()->add('repeat_until', 'The repeat end date may not be more than a year away.');
+        }
+
+        if ($this->filled('publish_date') && $until->lessThanOrEqualTo(Carbon::parse($this->input('publish_date')))) {
+            $validator->errors()->add('repeat_until', 'The repeat end date must be after the publish date.');
         }
     }
 

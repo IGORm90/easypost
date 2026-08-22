@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\PostState;
+use App\Enums\RepeatUnit;
 use App\Models\Integration;
 use App\Models\Media;
 use App\Models\Organization;
@@ -283,3 +284,108 @@ it('does not create anything when validation fails mid-request (transactional)',
     $response->assertStatus(422);
     expect(PostGroup::count())->toBe(0)->and(Post::count())->toBe(0);
 });
+
+/*
+ * Block 4: the recurrence rule travels on the same payload as the post
+ * itself (`repeat_unit`, `repeat_interval`, `repeat_until`), validated in
+ * ValidatesPostChains, which StorePostRequest and UpdatePostRequest
+ * share verbatim — so covering it here covers both entry points'
+ * structural rules; UpdatePostTest covers what changes on a PUT.
+ */
+it('stores a recurrence rule alongside the post', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'repeat_unit' => 'WEEK',
+        'repeat_interval' => 2,
+        'repeat_until' => now()->addMonths(3)->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'weekly']]]],
+    ])->assertCreated()
+        // No `data` wrapper: PostController hands the resource to
+        // response()->json(), which serialises it directly.
+        ->assertJsonPath('repeat_unit', 'WEEK')
+        ->assertJsonPath('repeat_interval', 2);
+
+    $group = PostGroup::first();
+    expect($group->repeat_unit)->toBe(RepeatUnit::WEEK)
+        ->and($group->repeat_interval)->toBe(2)
+        ->and($group->repeat_until)->not->toBeNull()
+        // The first post of a series is its own root: nothing to point at yet.
+        ->and($group->repeat_parent_id)->toBeNull()
+        ->and($group->repeat_spawned_at)->toBeNull();
+});
+
+it('rejects a recurrence rule with no end date', function () {
+    // An endless series quietly eats the organization's monthly quota
+    // forever, and the person who notices is whoever later cannot save
+    // an ordinary post. The limiter is a required parameter, not a
+    // convenience.
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'repeat_unit' => 'DAY',
+        'repeat_interval' => 1,
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'x']]]],
+    ])->assertStatus(422)->assertJsonValidationErrors('repeat_until');
+});
+
+it('rejects a repeat interval with no unit', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'repeat_interval' => 3,
+        'repeat_until' => now()->addMonth()->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'x']]]],
+    ])->assertStatus(422)->assertJsonValidationErrors('repeat_unit');
+});
+
+it('rejects an interval beyond what its unit can mean', function ($unit, $interval) {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'repeat_unit' => $unit,
+        'repeat_interval' => $interval,
+        'repeat_until' => now()->addMonths(2)->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'x']]]],
+    ])->assertStatus(422)->assertJsonValidationErrors('repeat_interval');
+})->with([
+    ['DAY', 366],
+    ['WEEK', 53],
+    ['MONTH', 13],
+    ['DAY', 0],
+]);
+
+it('rejects an end date in the past, further than a year out, or before the post itself', function ($until) {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'schedule',
+        'publish_date' => now()->addMonth()->toIso8601String(),
+        'repeat_unit' => 'DAY',
+        'repeat_interval' => 1,
+        'repeat_until' => $until,
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'x']]]],
+    ])->assertStatus(422)->assertJsonValidationErrors('repeat_until');
+})->with([
+    'in the past' => [fn () => now()->subDay()->toIso8601String()],
+    'more than a year out' => [fn () => now()->addYears(2)->toIso8601String()],
+    'before the post publishes' => [fn () => now()->addWeek()->toIso8601String()],
+]);

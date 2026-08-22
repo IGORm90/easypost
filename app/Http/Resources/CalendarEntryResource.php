@@ -42,6 +42,10 @@ class CalendarEntryResource extends JsonResource
             'state' => $this->state,
             'publish_date' => $this->publish_date,
             'share_token' => $this->share_token,
+            // Block 4: the card shows THAT a post repeats, never the
+            // rule — one boolean rather than four fields per entry, on
+            // an endpoint that returns a whole month at a time.
+            'repeats' => $this->repeat_unit !== null,
             'tags' => TagResource::collection($this->whenLoaded('tags')),
             'posts' => $posts->map(fn (Post $post): array => [
                 'id' => $post->id,

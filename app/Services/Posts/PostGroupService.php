@@ -118,6 +118,7 @@ class PostGroupService
             $group = PostGroup::create([
                 'state' => PostState::DRAFT,
                 'publish_date' => $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null),
+                ...$this->recurrenceAttributes($data),
             ]);
 
             if ($targetState !== PostState::DRAFT) {
@@ -171,6 +172,13 @@ class PostGroupService
             $group->posts()->delete();
 
             $group->publish_date = $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null);
+            // Block 4: a PUT is a full replace, recurrence included —
+            // omitting the fields clears the rule, which is exactly how
+            // the editor stops a series. Reaching this line at all means
+            // the group is still editable (guardEditable() above), so
+            // this can only ever rewrite the rule of an occurrence that
+            // has not published yet.
+            $group->fill($this->recurrenceAttributes($data));
             $this->bumpQueueVersionIfQueuing($group, $targetState);
             $group->save();
 
@@ -262,6 +270,129 @@ class PostGroupService
 
             return $group->fresh(['posts.media', 'tags']);
         });
+    }
+
+    /**
+     * Block 4: the next occurrence of `$source`'s recurring series,
+     * created straight into `QUEUE` and dispatched. Called only by
+     * `RecurrenceService::spawnNext()`, only after `$source` itself has
+     * published.
+     *
+     * This lives here, rather than in RecurrenceService, so that
+     * `PlanLimitService` keeps being called from the short allow-list
+     * `PlanLimitControllerIsolationTest` enforces — the whole point of
+     * that list is that it stays short. RecurrenceService decides
+     * whether and when; this method performs the INSERT and pays for it
+     * against the quota, exactly as `create()` and `duplicate()` do. An
+     * occurrence is a post like any other: an organization at its
+     * monthly ceiling does not get extra posts by having asked for them
+     * in advance.
+     *
+     * IT RUNS ON A QUEUE WORKER, WITH NO `OrganizationContext`. Three
+     * consequences, each of which is a silent data bug if forgotten:
+     *
+     *  - `organization_id` is passed explicitly. The `creating` hook in
+     *    BelongsToOrganization fills it from the context with `??=`, so
+     *    an explicit value wins and a missing context would otherwise
+     *    leave it null.
+     *  - the source's segments are read with
+     *    `withoutGlobalScope('organization')`. `$source->loadMissing('posts')`
+     *    — what `duplicate()` does, correctly, inside a request — returns
+     *    an EMPTY collection here, because the scope fails closed to zero
+     *    rows with no tenant set. The successor would be created with no
+     *    content at all and published as an empty post.
+     *  - `$source->organization` is read the same way for the limit
+     *    check. `Organization` is the tenant itself and carries no
+     *    organization scope, so a plain read is safe there.
+     *
+     * Unlike `duplicate()` (which produces a DRAFT and dispatches
+     * nothing), this follows `create()`'s tail: transition into QUEUE
+     * through the state machine, `queue_version = 1` (a brand-new id
+     * nothing else can reference yet — no lock needed), and dispatch
+     * after the transaction commits.
+     */
+    public function spawnRecurrence(PostGroup $source, CarbonInterface $publishDate): PostGroup
+    {
+        /** @var Organization $organization */
+        $organization = Organization::query()->whereKey($source->organization_id)->firstOrFail();
+
+        /** @var PostGroup $group */
+        $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($source, $publishDate, $organization) {
+            $group = PostGroup::create([
+                'organization_id' => $organization->id,
+                'state' => PostState::DRAFT,
+                'publish_date' => $publishDate,
+                'created_by' => $source->created_by,
+                // The rule travels with the occurrence — without this the
+                // series would stop after exactly one hop.
+                'repeat_unit' => $source->repeat_unit,
+                'repeat_interval' => $source->repeat_interval,
+                'repeat_until' => $source->repeat_until,
+                // Every occurrence points at the FIRST post of the
+                // series, never at its immediate predecessor.
+                'repeat_parent_id' => $source->repeat_parent_id ?? $source->id,
+            ]);
+
+            $this->stateMachine->transition($group, PostState::QUEUE);
+            $group->queue_version = 1;
+            $group->save();
+
+            $this->copyChainsWithoutScope($source, $group);
+
+            $tagIds = $source->tags()->withoutGlobalScope('organization')->pluck('tags.id')->all();
+            if ($tagIds !== []) {
+                $this->syncTags($group, $tagIds);
+            }
+
+            return $group->fresh(['posts.media', 'tags']);
+        });
+
+        $this->dispatchPublishIfQueued($group);
+
+        return $group;
+    }
+
+    /**
+     * `duplicate()`'s copy loop, re-read without the tenant scope and
+     * landing in QUEUE instead of DRAFT — see `spawnRecurrence()`'s
+     * docblock for why the scope has to come off here and nowhere else.
+     *
+     * The single ascending pass over `order` is what makes the `$idMap`
+     * work: within one chain a parent's order is always strictly less
+     * than its children's, so a parent copy always exists by the time a
+     * child references it, however many channels are interleaved in the
+     * list. Publish history (`release_id`/`release_url`/`error`/
+     * `published_at`) is deliberately not carried over: the successor is
+     * new, unpublished content, never a second claim on a release the
+     * network already has.
+     */
+    private function copyChainsWithoutScope(PostGroup $source, PostGroup $target): void
+    {
+        $posts = Post::withoutGlobalScope('organization')
+            ->where('post_group_id', $source->id)
+            ->with(['media' => fn ($query) => $query->withoutGlobalScope('organization')])
+            ->orderBy('order')
+            ->orderBy('id')
+            ->get();
+
+        $idMap = [];
+
+        foreach ($posts as $post) {
+            $copy = Post::create([
+                'post_group_id' => $target->id,
+                'organization_id' => $target->organization_id,
+                'integration_id' => $post->integration_id,
+                'parent_post_id' => $post->parent_post_id !== null ? ($idMap[$post->parent_post_id] ?? null) : null,
+                'order' => $post->order,
+                'content' => $post->content,
+                'settings' => $post->settings,
+                'state' => PostState::QUEUE,
+            ]);
+
+            $this->attachMedia($copy, $post->media->pluck('id')->all());
+
+            $idMap[$post->id] = $copy->id;
+        }
     }
 
     /**
@@ -447,6 +578,34 @@ class PostGroupService
         // and this class's docblock ("Deletion mirrors the edit rule")
         // for why a group with any released segment could never reach
         // this line in the first place.
+    }
+
+    /**
+     * The three recurrence fields as the request supplies them, already
+     * normalised to the one shape every reader tests: no `repeat_unit`
+     * means no series, and then the other two are cleared with it rather
+     * than left behind as debris a later edit could resurrect.
+     *
+     * `repeat_parent_id`/`repeat_spawned_at` are deliberately absent —
+     * neither is client input. They are written only by
+     * `spawnRecurrence()` and `RecurrenceService` respectively.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function recurrenceAttributes(array $data): array
+    {
+        $unit = $data['repeat_unit'] ?? null;
+
+        if ($unit === null) {
+            return ['repeat_unit' => null, 'repeat_interval' => null, 'repeat_until' => null];
+        }
+
+        return [
+            'repeat_unit' => $unit,
+            'repeat_interval' => (int) $data['repeat_interval'],
+            'repeat_until' => Carbon::parse($data['repeat_until']),
+        ];
     }
 
     /**

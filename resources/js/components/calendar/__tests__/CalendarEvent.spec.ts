@@ -9,6 +9,7 @@ function entry(overrides: Record<string, unknown> = {}) {
     state: 'QUEUE',
     publish_date: '2026-08-20T09:00:00.000000Z',
     share_token: null,
+    repeats: false,
     tags: [],
     posts: [{ id: 'post-1', content: 'hello there', state: 'QUEUE', integration: { id: 'int-1', provider_identifier: 'telegram', name: 'Announcements', picture: null } }],
     ...overrides,
@@ -142,4 +143,16 @@ it('emits duplicate — and never remove — with the group id when Duplicate is
 
   expect(w.emitted('duplicate')).toEqual([['group-42']])
   expect(w.emitted('remove')).toBeUndefined()
+})
+
+// Block 4: same rule as the active-link indicator above — icon plus real
+// text, so "this one repeats" survives a colourblind reader and a
+// grayscale print alike (color.md §4).
+it('shows a repeating post as text beside an icon, not as colour', () => {
+  const repeating = mount(CalendarEvent, { props: { entry: entry({ repeats: true }), locked: false } })
+  const plain = mount(CalendarEvent, { props: { entry: entry(), locked: false } })
+
+  expect(repeating.text()).toContain(en.calendar.repeatIndicator)
+  expect(plain.text()).not.toContain(en.calendar.repeatIndicator)
+  expect(repeating.findAll('svg').length).toBeGreaterThan(plain.findAll('svg').length)
 })

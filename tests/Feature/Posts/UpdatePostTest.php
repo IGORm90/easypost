@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\PostState;
+use App\Enums\RepeatUnit;
 use App\Models\Integration;
 use App\Models\Organization;
 use App\Models\Post;
@@ -319,4 +320,62 @@ it("404s duplicating another organization's group", function () {
 
     actingAsMember($org);
     $this->postJson("/api/posts/{$foreignGroup->id}/duplicate")->assertNotFound();
+});
+
+/*
+ * Block 4: a PUT replaces the recurrence rule the same way it replaces
+ * the chains — wholesale. That is not incidental: it is the ONLY way to
+ * stop a series, and the editor uses it (send the post back with no
+ * unit). There is deliberately no separate "stop repeating" endpoint.
+ */
+it('stops a series when the recurrence fields are omitted from the update', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $group = PostGroup::factory()->for($org)->create([
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->addDay(),
+        'repeat_unit' => RepeatUnit::DAY,
+        'repeat_interval' => 1,
+        'repeat_until' => now()->addMonth(),
+    ]);
+
+    $this->putJson("/api/posts/{$group->id}", [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'no longer repeating']]]],
+    ])->assertOk();
+
+    $group->refresh();
+    expect($group->repeat_unit)->toBeNull()
+        // Cleared together, so a later edit cannot resurrect a rule from
+        // leftover halves.
+        ->and($group->repeat_interval)->toBeNull()
+        ->and($group->repeat_until)->toBeNull();
+});
+
+it('rewrites the recurrence rule of a pending occurrence', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $group = PostGroup::factory()->for($org)->create([
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->addDay(),
+        'repeat_unit' => RepeatUnit::DAY,
+        'repeat_interval' => 1,
+        'repeat_until' => now()->addMonth(),
+    ]);
+
+    $this->putJson("/api/posts/{$group->id}", [
+        'type' => 'schedule',
+        'publish_date' => now()->addDay()->toIso8601String(),
+        'repeat_unit' => 'MONTH',
+        'repeat_interval' => 1,
+        'repeat_until' => now()->addMonths(6)->toIso8601String(),
+        'posts' => [['integration_id' => $integration->id, 'value' => [['content' => 'monthly now']]]],
+    ])->assertOk();
+
+    $group->refresh();
+    expect($group->repeat_unit)->toBe(RepeatUnit::MONTH)
+        ->and($group->repeat_interval)->toBe(1);
 });

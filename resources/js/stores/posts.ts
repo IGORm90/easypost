@@ -43,6 +43,8 @@ export interface CalendarEntry {
     publish_date: string;
     /** Non-null while a public `/share/{token}` link is active — see `share()`/`unshare()` below. */
     share_token: string | null;
+    /** Block 4: whether this post is part of a repeating series. The rule itself is only ever loaded in the editor — a card needs the fact, not the schedule. */
+    repeats: boolean;
     tags: CalendarTag[];
     posts: CalendarPost[];
 }
@@ -66,6 +68,8 @@ export interface PostListRow {
     state: string;
     publish_date: string | null;
     share_token: string | null;
+    /** See `CalendarEntry.repeats`. */
+    repeats: boolean;
     preview: string;
     channels: CalendarIntegration[];
     tags: CalendarTag[];

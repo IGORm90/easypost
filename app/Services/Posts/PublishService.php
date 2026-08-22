@@ -224,6 +224,7 @@ class PublishService
         private readonly ProviderRegistry $registry,
         private readonly PostStateMachine $stateMachine,
         private readonly MediaTempFiles $mediaFiles,
+        private readonly RecurrenceService $recurrence,
     ) {}
 
     /**
@@ -278,7 +279,36 @@ class PublishService
             throw new PublishRetryNeededException($retryAfterSeconds);
         }
 
-        $this->finalizeGroupState($group->id, $queueVersion);
+        $outcome = $this->finalizeGroupState($group->id, $queueVersion);
+
+        // Block 4. The successor of a recurring post is created here and
+        // nowhere else — AFTER finalizeGroupState()'s transaction has
+        // committed, and only when this run is the one that actually
+        // moved the group to PUBLISHED.
+        //
+        // After the commit, for the same reason PostGroupService only
+        // ever dispatches PublishPostJob post-commit (see its docblock):
+        // spawnRecurrence() enqueues a job for the new occurrence, and a
+        // job enqueued from inside an open transaction can be picked up
+        // by a worker before the row it refers to is visible.
+        //
+        // Only on PUBLISHED, and only on THIS run's own verdict. A null
+        // outcome means some other run (or abandonGroup()) had already
+        // settled the group, or this run's queue_version was superseded
+        // — in both cases the decision is not ours to act on. An ERROR
+        // outcome deliberately spawns nothing: a series that failed
+        // stops rather than marching on, the author is already told by
+        // PostFailedNotification, and a successful manual retry resumes
+        // it through this same line, because `repeat_spawned_at` is
+        // still null.
+        //
+        // spawnNext() never throws — see its docblock. The post is
+        // already out on the network by this point, and nothing about
+        // scheduling the NEXT one may be allowed to report the last one
+        // as failed.
+        if ($outcome === PostState::PUBLISHED) {
+            $this->recurrence->spawnNext($group->id);
+        }
     }
 
     /**
@@ -1049,9 +1079,9 @@ class PublishService
      * transaction holds is free, and the nested `DB::transaction()` is a
      * savepoint, not a second top-level transaction.
      */
-    private function finalizeGroupState(string $postGroupId, ?int $queueVersion): void
+    private function finalizeGroupState(string $postGroupId, ?int $queueVersion): ?PostState
     {
-        DB::transaction(function () use ($postGroupId, $queueVersion): void {
+        return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostState {
             /** @var PostGroup|null $group */
             $group = PostGroup::withoutGlobalScope('organization')
                 ->whereKey($postGroupId)
@@ -1059,11 +1089,11 @@ class PublishService
                 ->first();
 
             if ($group === null || $group->state !== PostState::QUEUE) {
-                return;
+                return null;
             }
 
             if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                return;
+                return null;
             }
 
             $hasUnpublished = Post::withoutGlobalScope('organization')
@@ -1071,7 +1101,11 @@ class PublishService
                 ->where('state', '!=', PostState::PUBLISHED->value)
                 ->exists();
 
-            $this->stateMachine->transition($group, $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED);
+            $outcome = $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED;
+
+            $this->stateMachine->transition($group, $outcome);
+
+            return $outcome;
         });
     }
 }

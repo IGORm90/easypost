@@ -53,6 +53,9 @@ class PostGroupListResource extends JsonResource
             'state' => $this->state,
             'publish_date' => $this->publish_date,
             'share_token' => $this->share_token,
+            // Same one-boolean rule as CalendarEntryResource: the list
+            // row needs the indicator, not the recurrence rule.
+            'repeats' => $this->repeat_unit !== null,
             // The first segment, the same one CalendarEvent.vue previews
             // on a card — `posts()` is ordered by `order`, so this is the
             // thread root, not an arbitrary row.

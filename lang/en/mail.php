@@ -36,6 +36,15 @@ return [
         'action_line' => 'Please review and retry it from your calendar.',
     ],
 
+    'recurrence_paused' => [
+        'subject' => 'A repeating post has stopped repeating',
+        'greeting' => 'Hello :name!',
+        'line' => 'Your repeating post published on :date, but we could not schedule the next one.',
+        'unknown_date' => 'an unknown date',
+        'reason' => 'Your organization has used up its posts for this month, and every occurrence of a repeating post counts as one.',
+        'action_line' => 'The series has stopped. Open the post and schedule it again once you have room, or ask an administrator about your plan.',
+    ],
+
     'weekly_digest' => [
         'subject' => 'Your weekly digest',
         'greeting' => 'Hello :name!',

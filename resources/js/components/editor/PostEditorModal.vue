@@ -21,7 +21,7 @@ import { useAuthStore } from '../../stores/auth';
 import { useMediaStore } from '../../stores/media';
 import { api } from '../../api/client';
 import type { CalendarTag } from '../../stores/posts';
-import type { ChannelDraft, PostGroupApi, SaveType, SetDto, SignatureDto } from './types';
+import type { ChannelDraft, PostGroupApi, RepeatRule, SaveType, SetDto, SignatureDto } from './types';
 
 /**
  * The post composer (Task 25): pick channels (individually or via a
@@ -157,6 +157,9 @@ const activeChannelId = ref<string | null>(null);
 const commonContent = ref('');
 const selectedTags = ref<string[]>([]);
 const publishDate = ref<string | null>(null);
+// Block 4. `unit: null` is "does not repeat" — the same single flag the
+// API uses, so nothing here has to reconcile two representations.
+const repeat = ref<RepeatRule>({ unit: null, interval: 1, until: null });
 
 function providerCapabilities(identifier: string): ProviderCapabilities | undefined {
     return integrations.providers.find((provider) => provider.identifier === identifier)?.capabilities;
@@ -389,6 +392,7 @@ function resetForm(): void {
     commonContent.value = '';
     selectedTags.value = [];
     publishDate.value = null;
+    repeat.value = { unit: null, interval: 1, until: null };
     groupLocked.value = false;
     pendingSaveType.value = null;
     loadedFromServer.value = false;
@@ -416,6 +420,11 @@ async function loadGroup(id: string): Promise<void> {
     shareToken.value = data.share_token;
     selectedTags.value = [...data.tags];
     publishDate.value = data.publish_date;
+    repeat.value = {
+        unit: data.repeat_unit,
+        interval: data.repeat_interval ?? 1,
+        until: data.repeat_until,
+    };
 
     const alreadyPublished = data.state === 'PUBLISHED' || data.posts.some((post) => post.value.some((segment) => segment.published_at !== null));
     if (alreadyPublished) {
@@ -488,6 +497,13 @@ function buildPayload(type: SaveType): Record<string, unknown> {
     return {
         type,
         publish_date: type === 'now' ? null : publishDate.value,
+        // Sent on every save, nulls included: PUT is a full replace, so
+        // omitting them would be indistinguishable from "leave the rule
+        // alone" — and clearing the unit is exactly how a user stops a
+        // series (there is no separate endpoint for that).
+        repeat_unit: repeat.value.unit,
+        repeat_interval: repeat.value.unit ? repeat.value.interval : null,
+        repeat_until: repeat.value.unit ? repeat.value.until : null,
         tags: selectedTags.value,
         // `.filter(Boolean)`: a selected id with no draft yet (e.g. the
         // `selectedChannelIds` watcher hasn't run for it — should not
@@ -775,6 +791,8 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                 :disabled="saveDisabled"
                 :timezone="timezone"
                 :notice="scheduleNotice"
+                :repeat="repeat"
+                @update:repeat="repeat = $event"
                 @save-draft="requestSave('draft')"
                 @save-schedule="requestSave('schedule')"
                 @save-now="requestSave('now')"

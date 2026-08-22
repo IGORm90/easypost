@@ -288,7 +288,9 @@
             "loadMore": "Show more",
             "loadError": "Could not load the list of posts.",
             "noDate": "No date"
-        }
+        },
+        "repeatIndicator": "Repeating post",
+        "removeConfirmRepeating": "Delete this post? It is the next occurrence of a repeating post, so deleting it also stops the series."
     },
     "tags": {
         "manage": "Manage tags",
@@ -477,6 +479,19 @@
             "linkUrl": "Link address",
             "linkApply": "Add link",
             "linkCancel": "Cancel"
+        },
+        "repeat": {
+            "label": "Repeat",
+            "never": "Do not repeat",
+            "unit": {
+                "DAY": "Every few days",
+                "WEEK": "Every few weeks",
+                "MONTH": "Every few months"
+            },
+            "every": "Interval",
+            "until": "Repeat until",
+            "hint": "Each repeat is scheduled only after the previous one has published, and counts as a post against your plan.",
+            "needsEnd": "Choose when the repeat should stop before scheduling."
         }
     },
     "preview": {

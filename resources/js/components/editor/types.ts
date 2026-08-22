@@ -26,6 +26,25 @@ export interface SignatureDto {
 
 export type SaveType = 'draft' | 'schedule' | 'now';
 
+/** The units a repeating post can be spaced by — `App\Enums\RepeatUnit`, 1:1. */
+export type RepeatUnit = 'DAY' | 'WEEK' | 'MONTH';
+
+/**
+ * A post's recurrence rule as both the API and the editor carry it.
+ * `unit === null` is the one canonical "does not repeat", and the other
+ * two fields are meaningless without it — which is why they are cleared
+ * together rather than left behind for a later edit to resurrect.
+ *
+ * `until` is a UTC ISO string, exactly like `publish_date`: the picker
+ * converts to and from the author's timezone at the edge, never in the
+ * payload (see zonedDateTime.ts).
+ */
+export interface RepeatRule {
+    unit: RepeatUnit | null;
+    interval: number;
+    until: string | null;
+}
+
 /**
  * One selected channel's editable state inside the editor. `signatureId`
  * is a purely client-side choice — the backend has no column recording
@@ -53,6 +72,10 @@ export interface PostGroupApi {
     publish_date: string | null;
     error: string | null;
     share_token: string | null;
+    repeat_unit: RepeatUnit | null;
+    repeat_interval: number | null;
+    repeat_until: string | null;
+    repeat_parent_id: string | null;
     tags: string[];
     posts: Array<{
         integration_id: string;

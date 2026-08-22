@@ -2,9 +2,11 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '../ui/Button.vue';
+import RepeatControl from './RepeatControl.vue';
 import { api } from '../../api/client';
 import { utcIsoToZonedInput, zonedInputToUtcIso } from '../../utils/zonedDateTime';
 import type { Integration } from '../../stores/integrations';
+import type { RepeatRule } from './types';
 
 /**
  * The publish-date picker, the "find a free slot" helper (`GET
@@ -25,10 +27,13 @@ const props = defineProps<{
     disabled?: boolean;
     /** Shown just above the save buttons — e.g. "saving now creates a new post" after a 409 (see PostEditorModal.vue). */
     notice?: string | null;
+    /** Block 4: the post's recurrence rule. Repeating IS part of scheduling, which is why it lives in this component rather than beside it. */
+    repeat: RepeatRule;
 }>();
 
 const emit = defineEmits<{
     'update:modelValue': [string | null];
+    'update:repeat': [RepeatRule];
     'save-draft': [];
     'save-schedule': [];
     'save-now': [];
@@ -53,6 +58,12 @@ const localValue = computed({
         emit('update:modelValue', value ? zonedInputToUtcIso(value, props.timezone) : null);
     },
 });
+
+// A repeat with no end date is rejected by the server on purpose — an
+// endless series would consume the organization's monthly post quota
+// forever. Blocking the button here means the user is told before the
+// round trip rather than by a 422 afterwards.
+const repeatIncomplete = computed(() => props.repeat.unit !== null && !props.repeat.until);
 
 async function findSlot(): Promise<void> {
     if (!slotIntegrationId.value) {
@@ -108,6 +119,10 @@ async function findSlot(): Promise<void> {
             <p class="text-xs text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
         </div>
 
+        <RepeatControl :model-value="repeat" :timezone="timezone" @update:model-value="emit('update:repeat', $event)" />
+
+        <p v-if="repeatIncomplete" class="text-sm text-muted">{{ t('editor.repeat.needsEnd') }}</p>
+
         <!-- --muted, not --warning (color.md §3.8, final review Important
              9): this notice shares a screen with accent-tinted avatars,
              and --warning is reserved there for the plan-limit toast. -->
@@ -117,7 +132,7 @@ async function findSlot(): Promise<void> {
             <Button variant="secondary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-draft')">
                 {{ t('editor.actions.saveDraft') }}
             </Button>
-            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled || !modelValue" @click="emit('save-schedule')">
+            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled || !modelValue || repeatIncomplete" @click="emit('save-schedule')">
                 {{ t('editor.actions.schedule') }}
             </Button>
             <Button variant="primary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-now')">

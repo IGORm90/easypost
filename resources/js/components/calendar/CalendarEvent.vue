@@ -143,6 +143,25 @@ const preview = computed(() => props.entry.posts[0]?.content ?? '');
                     />
                 </svg>
 
+                <!--
+                    Block 4: a repeating post, marked the same way — icon
+                    plus real text, never colour alone (color.md §4).
+                -->
+                <span v-if="entry.repeats" class="sr-only">{{ t('calendar.repeatIndicator') }}</span>
+                <svg
+                    v-if="entry.repeats"
+                    class="h-3 w-3 shrink-0 text-muted"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                >
+                    <path
+                        fill-rule="evenodd"
+                        d="M4 5.5A2.5 2.5 0 016.5 3h7.19l-1.22-1.22a.75.75 0 111.06-1.06l2.5 2.5a.75.75 0 010 1.06l-2.5 2.5a.75.75 0 11-1.06-1.06L13.69 4.5H6.5A1 1 0 005.5 5.5v3a.75.75 0 01-1.5 0v-3zm11.25 4a.75.75 0 01.75.75v3a2.5 2.5 0 01-2.5 2.5H6.31l1.22 1.22a.75.75 0 11-1.06 1.06l-2.5-2.5a.75.75 0 010-1.06l2.5-2.5a.75.75 0 111.06 1.06L6.31 14.5h7.19a1 1 0 001-1v-3a.75.75 0 01.75-.75z"
+                        clip-rule="evenodd"
+                    />
+                </svg>
+
                 <span v-if="locked" class="sr-only">{{ t('calendar.locked') }}</span>
                 <svg
                     v-if="locked"
