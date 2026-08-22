@@ -36,6 +36,7 @@ function capabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCa
         maxFileSizeBytes: 5_000_000,
         allowsMixedMedia: false,
         maxThreadLength: 25,
+        supportedMarks: [],
         requiresAltText: false,
         ...overrides,
     };
@@ -259,4 +260,53 @@ it('shows a video attachment as a video, not as an empty box', () => {
 
     expect(chip.text()).toContain(i18n.global.t('media.video'));
     expect(chip.attributes('title')).toBe('clip.mp4');
+});
+
+// --- Block 3: formatting -------------------------------------------------
+
+it('passes the channel own marks down to each segment field', () => {
+    const wrapper = mount(ThreadEditor, {
+        props: { modelValue: segments('hello'), capabilities: capabilities({ supportedMarks: ['BOLD', 'LINK'] }) },
+        global: { plugins: [i18n] },
+    });
+
+    expect(wrapper.find('[data-testid="format-BOLD"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="format-LINK"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="format-ITALIC"]').exists()).toBe(false);
+});
+
+it('offers no toolbar, but still offers emoji, on a channel without formatting', () => {
+    // Emoji are characters — they behave identically everywhere, so they
+    // are offered even where markup is not.
+    const wrapper = mount(ThreadEditor, {
+        props: { modelValue: segments('hello'), capabilities: capabilities({ supportedMarks: [] }) },
+        global: { plugins: [i18n] },
+    });
+
+    expect(wrapper.find('[data-testid="format-toolbar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="emoji-trigger"]').exists()).toBe(true);
+});
+
+it('warns, without blocking, that markup will be published literally', () => {
+    const withMarkup = mount(ThreadEditor, {
+        props: { modelValue: segments('a **bold** claim'), capabilities: capabilities({ supportedMarks: [] }) },
+        global: { plugins: [i18n] },
+    });
+    const withoutMarkup = mount(ThreadEditor, {
+        props: { modelValue: segments('a plain claim'), capabilities: capabilities({ supportedMarks: [] }) },
+        global: { plugins: [i18n] },
+    });
+
+    expect(withMarkup.find('[data-testid="hint-marks-unsupported"]').exists()).toBe(true);
+    // Nothing to warn about when the body has no markup in it.
+    expect(withoutMarkup.find('[data-testid="hint-marks-unsupported"]').exists()).toBe(false);
+});
+
+it('does not warn about literal markup on a channel that renders it', () => {
+    const wrapper = mount(ThreadEditor, {
+        props: { modelValue: segments('a **bold** claim'), capabilities: capabilities({ supportedMarks: ['BOLD'] }) },
+        global: { plugins: [i18n] },
+    });
+
+    expect(wrapper.find('[data-testid="hint-marks-unsupported"]').exists()).toBe(false);
 });

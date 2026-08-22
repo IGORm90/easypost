@@ -51,6 +51,7 @@ class ShortResultProvider implements SocialProviderInterface
             maxFileSizeBytes: 50 * 1024 * 1024,
             allowsMixedMedia: true,
             maxThreadLength: null,
+            supportedMarks: [],
         );
     }
 

@@ -2,6 +2,7 @@
 
 use App\Models\Integration;
 use App\Social\Dto\PostPayloadDto;
+use App\Social\Dto\TextMark;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
@@ -293,4 +294,28 @@ it('does not leak the webhook token through the exception chain on a network-lev
             expect($message)->not->toContain('super-secret-webhook-token-abc123');
         }
     }
+});
+
+// --- Block 3: markup delivery ---------------------------------------------
+
+it('sends the canonical markup to discord untouched', function () {
+    // Discord's own message syntax IS the canonical form for the four
+    // marks it declares (**bold**, *italic*, ~~strike~~, `code`), so
+    // there is nothing to translate and nothing to escape -- the body
+    // must go out exactly as typed.
+    Http::fake([
+        'discord.com/api/webhooks/*' => Http::response(discordFixture('discord_execute_webhook')),
+    ]);
+
+    app(ProviderRegistry::class)->get('discord')
+        ->post(discordIntegration(), [new PostPayloadDto('a **bold** claim & 5 < 6')]);
+
+    Http::assertSent(fn ($request) => $request['content'] === 'a **bold** claim & 5 < 6');
+});
+
+it('does not offer a link mark, because discord would print the brackets', function () {
+    $marks = app(ProviderRegistry::class)->get('discord')->capabilities()->supportedMarks;
+
+    expect($marks)->not->toContain(TextMark::LINK)
+        ->and($marks)->toContain(TextMark::BOLD);
 });

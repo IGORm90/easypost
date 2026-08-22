@@ -41,6 +41,25 @@ function telegramIntegration(array $overrides = []): Integration
     ], $overrides));
 }
 
+/**
+ * The value of one field of a multipart request body, as Laravel's HTTP
+ * client records it (a list of `['name' => …, 'contents' => …]`). The
+ * media-carrying Telegram calls are multipart, so their fields cannot be
+ * read off `$request['field']` the way the form-encoded ones can.
+ *
+ * @param  array<int, array<string, mixed>>  $data
+ */
+function multipartField(array $data, string $name): ?string
+{
+    foreach ($data as $field) {
+        if (($field['name'] ?? null) === $name) {
+            return is_string($field['contents']) ? $field['contents'] : null;
+        }
+    }
+
+    return null;
+}
+
 // --- registry + auth_type -------------------------------------------------
 
 it('resolves telegram from the provider registry', function () {
@@ -327,4 +346,73 @@ it('does not leak the bot token through the exception chain when authenticate() 
             expect($current->getMessage())->not->toContain($token);
         }
     }
+});
+
+// --- Block 3: markup delivery ---------------------------------------------
+
+it('sends formatted content as html with a parse mode', function () {
+    Http::fake([
+        'api.telegram.org/bot*/sendMessage' => Http::response(telegramFixture('telegram_send_message')),
+    ]);
+
+    app(ProviderRegistry::class)->get('telegram')
+        ->post(telegramIntegration(), [new PostPayloadDto('a **bold** claim & a [link](https://example.test)')]);
+
+    Http::assertSent(fn ($request) => $request['text'] === 'a <b>bold</b> claim &amp; a <a href="https://example.test">link</a>'
+        && $request['parse_mode'] === 'HTML');
+});
+
+it('sends unformatted content exactly as before, with no parse mode', function () {
+    // The regression this whole feature has to not cause: a post with no
+    // markup must reach Telegram byte-for-byte as it did before Block 3,
+    // ampersands and angle brackets unescaped. Adding parse_mode
+    // unconditionally would make Telegram reject "5 < 6" outright.
+    Http::fake([
+        'api.telegram.org/bot*/sendMessage' => Http::response(telegramFixture('telegram_send_message')),
+    ]);
+
+    app(ProviderRegistry::class)->get('telegram')
+        ->post(telegramIntegration(), [new PostPayloadDto('5 < 6 && 7 > 6')]);
+
+    Http::assertSent(fn ($request) => $request['text'] === '5 < 6 && 7 > 6'
+        && ! isset($request['parse_mode']));
+});
+
+it('formats a photo caption too', function () {
+    // A caption is post content like any other -- formatting that works
+    // in a text post and silently dies on a post with an image is worse
+    // than no formatting at all.
+    Http::fake([
+        'api.telegram.org/bot*/sendPhoto' => Http::response(telegramFixture('telegram_send_photo')),
+    ]);
+
+    $media = new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png');
+
+    app(ProviderRegistry::class)->get('telegram')
+        ->post(telegramIntegration(), [new PostPayloadDto('a **bold** caption', [$media])]);
+
+    Http::assertSent(fn ($request) => multipartField($request->data(), 'caption') === 'a <b>bold</b> caption'
+        && multipartField($request->data(), 'parse_mode') === 'HTML');
+});
+
+it('formats a media group caption too', function () {
+    Http::fake([
+        'api.telegram.org/bot*/sendMediaGroup' => Http::response(telegramFixture('telegram_send_media_group')),
+    ]);
+
+    $media = [
+        new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png'),
+        new MediaDto(path: base_path('tests/Fixtures/social/sample.png'), mimeType: 'image/png'),
+    ];
+
+    app(ProviderRegistry::class)->get('telegram')
+        ->post(telegramIntegration(), [new PostPayloadDto('a **bold** gallery', $media)]);
+
+    Http::assertSent(function ($request) {
+        $payload = json_decode((string) multipartField($request->data(), 'media'), true);
+
+        return is_array($payload)
+            && $payload[0]['caption'] === 'a <b>bold</b> gallery'
+            && $payload[0]['parse_mode'] === 'HTML';
+    });
 });

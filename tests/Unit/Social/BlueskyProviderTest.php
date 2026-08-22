@@ -362,3 +362,23 @@ it('does not leak the app password or session tokens through the exception chain
         }
     }
 });
+
+// --- Block 3: no markup on a plain-text network ---------------------------
+
+it('declares no text marks and publishes markup characters verbatim', function () {
+    // An AT Protocol post is plain text plus facets, and this provider
+    // builds no facets -- so nothing here can render bold, nothing is
+    // offered, and the body goes out exactly as typed.
+    Http::fake([
+        'bsky.social/xrpc/com.atproto.repo.createRecord' => Http::response(blueskyFixture('bluesky_create_record')),
+    ]);
+
+    $provider = app(ProviderRegistry::class)->get('bluesky');
+
+    expect($provider->capabilities()->supportedMarks)->toBe([]);
+
+    $provider->post(blueskyIntegration(), [new PostPayloadDto('a **bold** claim & 5 < 6')]);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'createRecord')
+        && $request['record']['text'] === 'a **bold** claim & 5 < 6');
+});

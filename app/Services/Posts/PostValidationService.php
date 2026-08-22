@@ -88,6 +88,18 @@ use App\Social\ProviderRegistry;
  * conservative in the common case and the only inaccuracy is undercounting
  * ZWJ-sequence emoji relative to some networks' own weighting, not
  * Cyrillic/emoji in general.
+ *
+ * Formatting markers count too (Block 3). What is stored and counted is
+ * the canonical body — `**bold**`, all ten characters — while the
+ * network counts whatever its own syntax renders to (Telegram counts
+ * `bold`, four, because the markup left in the tags). The gap is always
+ * in the safe direction: this service can only ever refuse a post the
+ * network would have accepted, never wave through one it would reject
+ * on length. Counting the rendered form instead would mean running
+ * every provider's translation here — which is precisely the
+ * provider-specific branching this class exists without (see the
+ * paragraph above about never touching `provider_identifier`) — to buy
+ * a handful of characters back.
  */
 final class PostValidationService
 {

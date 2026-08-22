@@ -18,9 +18,12 @@ const props = withDefaults(
         capabilities: ProviderCapabilities;
         threadLength: number;
         errors?: string[];
+        /** The channel's whole body (all segments joined) — only read to decide whether the "no formatting here" hint is worth showing. */
+        content?: string;
     }>(),
     {
         errors: () => [],
+        content: '',
     },
 );
 
@@ -29,6 +32,18 @@ const { t } = useI18n();
 const threadUnsupported = computed(() => props.threadLength > 1 && !props.capabilities.supportsThreads);
 const threadTooLong = computed(
     () => props.capabilities.maxThreadLength !== null && props.threadLength > props.capabilities.maxThreadLength,
+);
+
+/**
+ * A network with no formatting publishes markup characters verbatim
+ * (Block 3): `**bold**` reaches the reader with its asterisks. That is
+ * deliberate — refusing to save content because it "looks like markup"
+ * would reject `2*3*4` and every code snippet — so this is a hint, not
+ * an error, and it only appears once the body actually contains
+ * something that would have been markup elsewhere.
+ */
+const marksUnsupported = computed(
+    () => props.capabilities.supportedMarks.length === 0 && /(\*\*|~~|`|\[[^\]]+\]\()/.test(props.content),
 );
 </script>
 
@@ -69,6 +84,10 @@ const threadTooLong = computed(
                 />
             </svg>
             {{ message }}
+        </p>
+
+        <p v-if="marksUnsupported" data-testid="hint-marks-unsupported" class="text-muted">
+            {{ t('editor.hints.marksUnsupported') }}
         </p>
 
         <p class="text-muted">

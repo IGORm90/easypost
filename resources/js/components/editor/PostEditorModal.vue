@@ -10,6 +10,8 @@ import TagManager from '../tags/TagManager.vue';
 import ChannelPicker from './ChannelPicker.vue';
 import ChannelTab from './ChannelTab.vue';
 import ThreadEditor from './ThreadEditor.vue';
+import EmojiPicker from './EmojiPicker.vue';
+import { useCaretInsertion } from '../../composables/useCaretInsertion';
 import ScheduleControls from './ScheduleControls.vue';
 import PreviewPane from '../previews/PreviewPane.vue';
 import ShareLinkModal from '../posts/ShareLinkModal.vue';
@@ -248,6 +250,22 @@ function channelHasError(id: string): boolean {
         return count > capabilities.maxCharacters;
     });
 }
+
+/**
+ * The shared field gets the emoji picker but deliberately NO format
+ * toolbar (Block 3). One body is mirrored into several channels whose
+ * `supportedMarks` differ, so a bold typed here would be bold on one
+ * channel and a pair of asterisks on the next — formatting belongs on
+ * the per-channel tabs, where the target is unambiguous. Emoji are just
+ * characters and behave the same everywhere, so they belong here.
+ */
+const commonField = ref<HTMLTextAreaElement | null>(null);
+
+const { insertAtCaret: insertIntoCommon } = useCaretInsertion(
+    commonField,
+    () => commonContent.value,
+    (value) => onCommonContentInput(value),
+);
 
 function onCommonContentInput(value: string): void {
     commonContent.value = value;
@@ -646,8 +664,12 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
 
             <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-1">
                 <label for="common-content" class="text-sm font-medium text-text">{{ t('editor.commonContent') }}</label>
+                <div class="flex flex-wrap items-center gap-1">
+                    <EmojiPicker @select="insertIntoCommon" />
+                </div>
                 <textarea
                     id="common-content"
+                    ref="commonField"
                     :value="commonContent"
                     :placeholder="t('editor.commonContentPlaceholder')"
                     rows="3"

@@ -24,6 +24,7 @@ const capabilities = {
     maxFileSizeBytes: 0,
     allowsMixedMedia: true,
     maxThreadLength: null,
+    supportedMarks: [],
     requiresAltText: false,
 };
 

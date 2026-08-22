@@ -41,6 +41,7 @@ function capabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCa
         maxFileSizeBytes: 5_000_000,
         allowsMixedMedia: false,
         maxThreadLength: 25,
+        supportedMarks: [],
         requiresAltText: false,
         ...overrides,
     };

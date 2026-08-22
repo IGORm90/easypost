@@ -12,6 +12,7 @@ use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
+use App\Social\Dto\TextMark;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
@@ -48,7 +49,7 @@ use InvalidArgumentException;
  */
 class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProviderInterface
 {
-    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles, TranslatesMarkup;
 
     private const string API_BASE = 'https://api.telegram.org';
 
@@ -89,6 +90,12 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
             maxFileSizeBytes: 50 * 1024 * 1024,
             allowsMixedMedia: true,
             maxThreadLength: null,
+            // Every mark, because Telegram's parse_mode=HTML renders
+            // all five (<b>, <i>, <s>, <code>, <a href>). See
+            // TranslatesMarkup: this provider only sets parse_mode on
+            // messages that actually carry markup, so a plain post
+            // goes out exactly as it did before formatting existed.
+            supportedMarks: TextMark::cases(),
             requiresAltText: false,
         );
     }
@@ -211,10 +218,19 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
 
     private function sendMessage(string $token, string $chatId, string $text, ?int $replyTo): PostResultDto
     {
+        // Null means "this body has no markup at all" -- array_filter
+        // then drops both fields and the request is byte-for-byte the
+        // one this method sent before formatting existed. That matters
+        // beyond tidiness: under parse_mode=HTML Telegram answers 400
+        // for a stray '<', so a post reading "5 < 6" would stop
+        // publishing the day the parse mode became unconditional.
+        $html = $this->markupAsHtml($text);
+
         $body = $this->call(
             fn (): Response => $this->http()->asForm()->post($this->apiUrl($token, 'sendMessage'), array_filter([
                 'chat_id' => $chatId,
-                'text' => $text,
+                'text' => $html ?? $text,
+                'parse_mode' => $html === null ? null : 'HTML',
                 'reply_to_message_id' => $replyTo,
             ], static fn (mixed $value): bool => $value !== null)),
             'sending a message',
@@ -229,11 +245,17 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
         $method = $isVideo ? 'sendVideo' : 'sendPhoto';
         $field = $isVideo ? 'video' : 'photo';
 
+        // A caption is post content like any other: formatting that
+        // works in a text post and dies on a post with a picture is a
+        // bug users would report as "bold randomly stops working".
+        $captionHtml = $this->markupAsHtml($caption);
+
         $body = $this->call(
             fn (): Response => $this->uploadHttp()->attach($field, $this->fileStream($media), $media->filename(), $this->fileHeaders($media))
                 ->post($this->apiUrl($token, $method), array_filter([
                     'chat_id' => $chatId,
-                    'caption' => $caption !== '' ? $caption : null,
+                    'caption' => $caption !== '' ? ($captionHtml ?? $caption) : null,
+                    'parse_mode' => $caption !== '' && $captionHtml !== null ? 'HTML' : null,
                     'reply_to_message_id' => $replyTo,
                 ], static fn (mixed $value): bool => $value !== null)),
             'sending media',
@@ -260,7 +282,15 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
             ];
 
             if ($index === 0 && $caption !== '') {
-                $item['caption'] = $caption;
+                // sendMediaGroup takes no top-level parse_mode -- it
+                // belongs to the InputMedia item that carries the
+                // caption, and nowhere else.
+                $captionHtml = $this->markupAsHtml($caption);
+                $item['caption'] = $captionHtml ?? $caption;
+
+                if ($captionHtml !== null) {
+                    $item['parse_mode'] = 'HTML';
+                }
             }
 
             $inputMedia[] = $item;

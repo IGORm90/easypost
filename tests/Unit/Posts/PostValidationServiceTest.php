@@ -204,6 +204,7 @@ it('rejects a chain longer than the network max thread length', function () {
         maxFileSizeBytes: 1_000_000,
         allowsMixedMedia: false,
         maxThreadLength: 2,
+        supportedMarks: [],
     ));
 
     $model = makeIntegration('fake');
@@ -229,6 +230,7 @@ it('rejects a media attachment missing required alt text', function () {
         maxFileSizeBytes: 1_000_000,
         allowsMixedMedia: true,
         maxThreadLength: null,
+        supportedMarks: [],
         requiresAltText: true,
     ));
 

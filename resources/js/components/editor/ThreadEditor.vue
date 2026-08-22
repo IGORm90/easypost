@@ -129,6 +129,8 @@ function removeSegment(index: number): void {
                     :id="`thread-segment-${index}`"
                     :model-value="segment.content"
                     :limit="capabilities.maxCharacters"
+                    :marks="capabilities.supportedMarks"
+                    :emoji="true"
                     :extra-count="index === modelValue.length - 1 ? signatureLength : 0"
                     :label="index === 0 ? (label ? t('editor.thread.rootLabelFor', { name: label }) : t('editor.thread.rootLabel')) : t('editor.thread.replyLabel', { n: index })"
                     :error="errors[index]?.[0]"
@@ -215,7 +217,12 @@ function removeSegment(index: number): void {
             </p>
         </div>
 
-        <ValidationHints :capabilities="capabilities" :thread-length="modelValue.length" :errors="errors[-1]" />
+        <ValidationHints
+            :capabilities="capabilities"
+            :thread-length="modelValue.length"
+            :errors="errors[-1]"
+            :content="modelValue.map((segment) => segment.content).join('\n')"
+        />
 
         <MediaPicker
             :open="pickerSegmentIndex !== null"

@@ -35,6 +35,13 @@ const hasContent = computed(() => props.segments.some((segment) => segment.conte
         <p v-if="!hasContent" class="text-sm text-muted">{{ t('preview.empty') }}</p>
 
         <div v-else class="flex flex-col gap-2">
+            <!--
+                No `marks`: the fallback preview draws a network this
+                build knows nothing about, so it cannot promise that any
+                mark will render. Showing the markers as characters is
+                the honest default -- the same choice the parser makes
+                for a network that declares none.
+            -->
             <PreviewText
                 v-for="(segment, index) in segments"
                 :key="index"

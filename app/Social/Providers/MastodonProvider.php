@@ -104,6 +104,12 @@ class MastodonProvider implements DeclaresAuthFields, SocialProviderInterface, S
             // (https://docs.joinmastodon.org/user/posting/#media).
             allowsMixedMedia: false,
             maxThreadLength: null,
+            // Empty, and deliberately so: the HTML a Mastodon status
+            // is *served* as is produced by the server from plain
+            // text -- POST /api/v1/statuses takes no markup on input
+            // (no content_type on vanilla Mastodon). Offering bold
+            // here would publish literal asterisks.
+            supportedMarks: [],
             requiresAltText: false,
         );
     }

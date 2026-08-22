@@ -139,6 +139,27 @@ falling inside a tie is precisely where a list silently duplicates or
 drops rows. `tests/Feature/Posts/PostListTest.php` covers it on fabricated
 data; this checks it on real data with real page sizes.
 
+### 5b. Formatting and emoji reach the network the way the preview showed
+
+1. Compose a post for a channel whose editor shows a format toolbar.
+   Make one word bold, one italic, add a link, and drop an emoji into the
+   middle of a sentence (not at the end — the caret is the part that
+   breaks).
+2. Add a second channel whose toolbar does not appear at all, and look at
+   its preview: the same body must show its markers as plain characters
+   there, with the "no formatting here" hint underneath.
+3. Publish for real, and read both published posts in the networks
+   themselves.
+4. Publish a second post containing `5 < 6 & 7`, an underscore in
+   `snake_case`, and no formatting at all.
+
+Expected: bold is bold and the link is a link in the first network; the
+second network shows the asterisks the preview promised; the emoji sits
+where it was typed and the character counter agreed. Step 4 is the
+regression check that matters most — it must publish exactly as it always
+did, unescaped and unchanged, because that is the path every existing
+post takes.
+
 ### 6. Media uploads, inserts into a post, and is sent to the social network
 
 1. Compose a post, upload an image via the media picker.
@@ -278,6 +299,13 @@ pass should exercise them by hand.
 - **`MvpFlowTest` is not end to end**, and its own docblock says so: it
   runs against the `fake` provider with `Queue::fake()`, so it proves the
   application's own wiring, never a real provider call or a real worker.
+- **What a network does with the markup we send it.** Block 3's provider
+  tests assert the request body under `Http::fake` — that Telegram gets
+  `<b>` with `parse_mode=HTML`, that Slack gets `*bold*` as mrkdwn, that a
+  post with no markup goes out byte-identical. That is our side of the
+  contract only. Whether Telegram accepts that exact HTML, and whether
+  what the reader sees matches the preview, no CI job can know: it takes a
+  real token and a real message (§5b).
 - **The real object-storage write path.** CI never provisions MinIO, so no
   CI job uploads a file to S3-compatible storage; the media tests use
   `Storage::fake('media')`. Uploading through the UI locally (§5) is the

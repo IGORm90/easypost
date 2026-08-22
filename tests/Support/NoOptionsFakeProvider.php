@@ -43,6 +43,7 @@ class NoOptionsFakeProvider implements SocialProviderInterface
             maxFileSizeBytes: 0,
             allowsMixedMedia: false,
             maxThreadLength: null,
+            supportedMarks: [],
         );
     }
 

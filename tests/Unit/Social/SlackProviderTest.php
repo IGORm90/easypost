@@ -467,3 +467,29 @@ it('does not leak the bot token through the exception chain on a network-level f
         }
     }
 });
+
+// --- Block 3: markup delivery ---------------------------------------------
+
+it('translates formatted content into slack mrkdwn', function () {
+    Http::fake([
+        'slack.com/api/chat.postMessage' => Http::response(slackFixture('slack_post_message')),
+    ]);
+
+    app(ProviderRegistry::class)->get('slack')
+        ->post(slackIntegration(), [new PostPayloadDto('a **bold** claim & a [link](https://example.test)')]);
+
+    // One asterisk, angle-bracketed link: mrkdwn, not Markdown. This is
+    // exactly the per-network knowledge that has to stay in the provider.
+    Http::assertSent(fn ($request) => $request['text'] === 'a *bold* claim &amp; a <https://example.test|link>');
+});
+
+it('sends unformatted content to slack exactly as before', function () {
+    Http::fake([
+        'slack.com/api/chat.postMessage' => Http::response(slackFixture('slack_post_message')),
+    ]);
+
+    app(ProviderRegistry::class)->get('slack')
+        ->post(slackIntegration(), [new PostPayloadDto('5 < 6 && 7 > 6')]);
+
+    Http::assertSent(fn ($request) => $request['text'] === '5 < 6 && 7 > 6');
+});

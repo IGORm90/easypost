@@ -11,6 +11,7 @@ use App\Social\Dto\AuthUrlDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
+use App\Social\Dto\TextMark;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
@@ -114,6 +115,9 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
             maxFileSizeBytes: 50 * 1024 * 1024,
             allowsMixedMedia: true,
             maxThreadLength: null,
+            // The fake network renders everything -- tests that need a
+            // formatting-free channel call withCapabilities().
+            supportedMarks: TextMark::cases(),
         );
     }
 

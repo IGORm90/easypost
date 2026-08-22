@@ -3,6 +3,20 @@ import { api } from '../api/client';
 
 export type ProviderAuthType = 'oauth' | 'manual';
 
+/**
+ * The inline marks a network can render — the frontend mirror of the
+ * backend's App\Social\Dto\TextMark, and the same literals it sends
+ * over the wire.
+ *
+ * The canonical form the editor writes and stores is a small Markdown
+ * subset (`**bold**`, `*italic*`, `~~strike~~`, `` `code` ``,
+ * `[text](url)`), identical for every channel; each provider translates
+ * it into its own network's syntax at publish time. Nothing on the
+ * frontend needs to know what that syntax is — the toolbar draws a
+ * button per mark in `supportedMarks`, and that is the whole coupling.
+ */
+export type TextMark = 'BOLD' | 'ITALIC' | 'STRIKE' | 'CODE' | 'LINK';
+
 export interface ProviderCapabilities {
     maxCharacters: number;
     maxImages: number;
@@ -13,6 +27,8 @@ export interface ProviderCapabilities {
     maxFileSizeBytes: number;
     allowsMixedMedia: boolean;
     maxThreadLength: number | null;
+    /** Which format buttons the editor may offer for this network; empty means the network has no formatting and the toolbar is not rendered at all. */
+    supportedMarks: TextMark[];
     requiresAltText: boolean;
 }
 

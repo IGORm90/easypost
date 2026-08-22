@@ -117,6 +117,11 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
             maxFileSizeBytes: 1_000_000,
             allowsMixedMedia: false,
             maxThreadLength: null,
+            // Empty: an AT Protocol post carries plain text plus
+            // facets (byte-range annotations), and this provider does
+            // not build facets. Nothing here can render bold, so
+            // nothing is offered.
+            supportedMarks: [],
             requiresAltText: false,
         );
     }

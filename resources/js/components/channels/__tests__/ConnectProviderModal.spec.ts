@@ -33,6 +33,7 @@ const telegram: Provider = {
         maxFileSizeBytes: 0,
         allowsMixedMedia: true,
         maxThreadLength: null,
+        supportedMarks: [],
         requiresAltText: false,
     },
 };

@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import PreviewAvatar from './PreviewAvatar.vue';
 import PreviewText from './PreviewText.vue';
+import type { TextMark } from '../../stores/integrations';
 import type { PreviewSegment } from './types';
 
 /**
@@ -18,6 +19,16 @@ const props = defineProps<{ channelName: string; channelPicture: string | null; 
 const { t } = useI18n();
 
 const hasContent = computed(() => props.segments.some((segment) => segment.content.trim() !== ''));
+
+/**
+ * Which marks this network renders, mirroring its provider's
+ * `supportedMarks` (app/Social/Providers). None: a status is submitted as plain text, so markers reach the
+ * reader as characters.
+ *
+ * Living here is exactly right: `components/previews/` is the one place
+ * on the frontend allowed to know which provider is which.
+ */
+const MARKS: TextMark[] = [];
 </script>
 
 <template>
@@ -35,7 +46,7 @@ const hasContent = computed(() => props.segments.some((segment) => segment.conte
         <div v-else class="flex flex-col gap-3">
             <div v-for="(segment, index) in segments" :key="index" :class="index > 0 ? 'ml-4 border-l-2 border-border pl-3' : ''">
                 <p v-if="index > 0" class="mb-1 text-xs text-muted">{{ t('preview.mastodon.replyingToPrevious') }}</p>
-                <PreviewText class="text-sm text-text" :text="segment.content" />
+                <PreviewText class="text-sm text-text" :text="segment.content" :marks="MARKS" />
             </div>
         </div>
     </div>

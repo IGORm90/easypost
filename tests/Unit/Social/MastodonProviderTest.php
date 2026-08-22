@@ -467,3 +467,25 @@ it('never writes the cached mastodon client_secret to the cache store in plainte
         // "the connect flow silently stops working".
         ->and(json_decode(Crypt::decryptString($raw), true)['client_secret'])->toBe($secret);
 });
+
+// --- Block 3: no markup on a plain-text network ---------------------------
+
+it('declares no text marks and publishes markup characters verbatim', function () {
+    // Mastodon serves a status as HTML but accepts plain text on input,
+    // so there is nothing to translate. A body that happens to contain
+    // asterisks must reach the instance with them intact -- rewriting it
+    // would change a post the user never asked to change, and the
+    // preview (which shows the same literal text) would then be lying.
+    Http::fake([
+        'mastodon.social/api/v1/statuses' => Http::response(mastodonFixture('mastodon_status')),
+    ]);
+
+    $provider = app(ProviderRegistry::class)->get('mastodon');
+
+    expect($provider->capabilities()->supportedMarks)->toBe([]);
+
+    $provider->post(mastodonIntegration(), [new PostPayloadDto('a **bold** claim & 5 < 6')]);
+
+    Http::assertSent(fn ($request) => str_contains($request->url(), '/api/v1/statuses')
+        && $request['status'] === 'a **bold** claim & 5 < 6');
+});

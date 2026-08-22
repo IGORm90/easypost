@@ -55,6 +55,7 @@ function blueskyProvider(): Provider {
             maxFileSizeBytes: 5_000_000,
             allowsMixedMedia: false,
             maxThreadLength: 25,
+            supportedMarks: [],
             requiresAltText: false,
         },
     };
@@ -586,4 +587,21 @@ it('loads the comment thread of the group it opened', async () => {
     expect(get).toHaveBeenCalledWith('/posts/group-b/comments');
     expect(w.find('[data-test="comment-form"]').exists()).toBe(true);
     expect(w.text()).toContain(en.comments.title);
+});
+
+// --- Block 3: the shared field ------------------------------------------
+
+it('offers emoji on the shared text field but no format toolbar', async () => {
+    // The shared body is mirrored into channels whose supported marks
+    // differ, so a bold typed here would mean two different things on
+    // two tabs. Emoji mean the same thing everywhere.
+    const w = await mountReady();
+    await selectChannelAndType(w, 'hello');
+
+    expect(w.find('#common-content').exists()).toBe(true);
+    expect(w.findAll('[data-testid="emoji-trigger"]').length).toBeGreaterThan(0);
+    // The per-channel tab below does carry a toolbar when its network
+    // supports marks; this fixture's provider declares none, so the only
+    // thing proven here is that the shared field itself never gets one.
+    expect(w.find('[data-testid="format-toolbar"]').exists()).toBe(false);
 });

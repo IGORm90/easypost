@@ -13,6 +13,7 @@ use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
+use App\Social\Dto\TextMark;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
@@ -76,7 +77,7 @@ use InvalidArgumentException;
  */
 class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterface, SupportsMedia, SupportsOptions
 {
-    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles;
+    use BoundsHttpTimeouts, MapsHttpErrors, ReadsMediaFiles, TranslatesMarkup;
 
     private const string API_BASE = 'https://slack.com/api';
 
@@ -108,6 +109,11 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
             maxFileSizeBytes: 1024 * 1024 * 1024,
             allowsMixedMedia: true,
             maxThreadLength: null,
+            // All five, delivered as mrkdwn (*bold*, _italic_,
+            // ~strike~, `code`, <url|text>) -- Slack's own dialect,
+            // not Markdown, which is exactly why the translation lives
+            // in this provider. See TranslatesMarkup.
+            supportedMarks: TextMark::cases(),
             requiresAltText: false,
         );
     }
@@ -394,6 +400,15 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
         // not a byte of the caller's content changed when $payload->content
         // is non-empty.
         $text = $payload->content !== '' ? $payload->content : ' ';
+
+        // mrkdwn is on by default for chat.postMessage, so this is not
+        // "enabling" formatting -- it is translating the canonical form
+        // into the dialect Slack already interprets (*bold*, not
+        // **bold**; <url|text>, not [text](url)). Null means the body
+        // carried no markup, and then not one byte of it is touched:
+        // escaping every ampersand in every plain post would be a
+        // visible change to posts nobody asked to change.
+        $text = $this->markupAsMrkdwn($text) ?? $text;
 
         $body = $this->call(
             fn (): Response => $this->http()->withToken($token)->asForm()->post(self::API_BASE.'/chat.postMessage', array_filter([

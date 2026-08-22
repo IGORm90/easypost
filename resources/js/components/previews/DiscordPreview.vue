@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import PreviewAvatar from './PreviewAvatar.vue';
 import PreviewText from './PreviewText.vue';
+import type { TextMark } from '../../stores/integrations';
 import type { PreviewSegment } from './types';
 
 /**
@@ -22,6 +23,16 @@ const props = defineProps<{ channelName: string; channelPicture: string | null; 
 const { t } = useI18n();
 
 const hasContent = computed(() => props.segments.some((segment) => segment.content.trim() !== ''));
+
+/**
+ * Which marks this network renders, mirroring its provider's
+ * `supportedMarks` (app/Social/Providers). No LINK: Discord prints [text](url) verbatim in a normal message,
+ * so the preview has to print it verbatim too.
+ *
+ * Living here is exactly right: `components/previews/` is the one place
+ * on the frontend allowed to know which provider is which.
+ */
+const MARKS: TextMark[] = ['BOLD', 'ITALIC', 'STRIKE', 'CODE'];
 </script>
 
 <template>
@@ -36,7 +47,7 @@ const hasContent = computed(() => props.segments.some((segment) => segment.conte
                         <p class="truncate text-sm font-semibold text-text">{{ channelName }}</p>
                         <span class="rounded bg-surface px-1 py-0.5 text-[10px] font-medium text-muted">{{ t('preview.discord.kind') }}</span>
                     </div>
-                    <PreviewText class="text-sm text-text" :text="segment.content" />
+                    <PreviewText class="text-sm text-text" :text="segment.content" :marks="MARKS" />
                 </div>
             </div>
 

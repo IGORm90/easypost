@@ -33,6 +33,24 @@ it('lists registered providers with capabilities and auth_type', function () {
         ->and($fake['capabilities']['maxCharacters'])->toBe(4096);
 });
 
+it('exposes each provider\'s supported text marks as plain strings', function () {
+    // Block 3: this is how the editor learns which format buttons to
+    // draw for a channel. It must arrive as the enum's string values --
+    // the SPA's TextMark union type is those exact literals -- and a
+    // network with no formatting must send an empty array rather than
+    // omitting the key, or the toolbar cannot tell "none" from "the
+    // backend is older than this build".
+    actingAsMember(Organization::factory()->create());
+
+    $response = $this->getJson('/api/providers');
+
+    $response->assertOk();
+    $byIdentifier = collect((array) $response->json())->keyBy('identifier');
+
+    expect($byIdentifier['telegram']['capabilities']['supportedMarks'])->toContain('BOLD')
+        ->and($byIdentifier['mastodon']['capabilities']['supportedMarks'])->toBe([]);
+});
+
 it('reports auth_type manual for a ManualTokenAuth provider and oauth for a standard one', function () {
     // Deferred from Task 13: no ManualTokenAuth provider existed yet to
     // exercise the 'manual' branch of IntegrationController::providers().

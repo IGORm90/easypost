@@ -445,10 +445,38 @@
             "threadUnsupported": "This channel does not support threads — only a single message can be sent.",
             "threadTooLong": "A thread on this channel can have at most {max} messages.",
             "mediaLimits": "Up to {images} images and {videos} videos per message.",
-            "altTextRequired": "Images require alt text on this channel."
+            "altTextRequired": "Images require alt text on this channel.",
+            "marksUnsupported": "This channel has no formatting — markup will be published as plain characters."
         },
         "tabs": {
             "hasError": "This channel has a validation problem"
+        },
+        "emoji": {
+            "open": "Insert emoji",
+            "search": "Search emoji",
+            "empty": "No emoji match that search.",
+            "categories": {
+                "smileys": "Smileys",
+                "gestures": "Gestures",
+                "people": "People",
+                "nature": "Nature",
+                "food": "Food & drink",
+                "activity": "Activity",
+                "objects": "Objects",
+                "symbols": "Symbols",
+                "flags": "Flags"
+            }
+        },
+        "format": {
+            "label": "Formatting",
+            "bold": "Bold",
+            "italic": "Italic",
+            "strike": "Strikethrough",
+            "code": "Monospace",
+            "link": "Link",
+            "linkUrl": "Link address",
+            "linkApply": "Add link",
+            "linkCancel": "Cancel"
         }
     },
     "preview": {

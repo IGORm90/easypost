@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import PreviewAvatar from './PreviewAvatar.vue';
 import PreviewText from './PreviewText.vue';
+import type { TextMark } from '../../stores/integrations';
 import type { PreviewSegment } from './types';
 
 /**
@@ -23,6 +24,16 @@ const { t } = useI18n();
 const hasContent = computed(() => props.segments.some((segment) => segment.content.trim() !== ''));
 const root = computed(() => props.segments[0]);
 const replies = computed(() => props.segments.slice(1));
+
+/**
+ * Which marks this network renders, mirroring its provider's
+ * `supportedMarks` (app/Social/Providers). Everything: Slack's mrkdwn covers all five, and its provider
+ * translates the canonical form into it.
+ *
+ * Living here is exactly right: `components/previews/` is the one place
+ * on the frontend allowed to know which provider is which.
+ */
+const MARKS: TextMark[] = ['BOLD', 'ITALIC', 'STRIKE', 'CODE', 'LINK'];
 </script>
 
 <template>
@@ -35,7 +46,7 @@ const replies = computed(() => props.segments.slice(1));
         <p v-if="!hasContent" class="text-sm text-muted">{{ t('preview.empty') }}</p>
 
         <template v-else>
-            <PreviewText class="text-sm text-text" :text="root.content" />
+            <PreviewText class="text-sm text-text" :text="root.content" :marks="MARKS" />
 
             <div v-if="replies.length > 0" class="ml-4 flex flex-col gap-2 border-l-2 border-border pl-3">
                 <p class="text-xs font-medium text-muted">{{ t('preview.slack.thread') }} ·
@@ -50,7 +61,7 @@ const replies = computed(() => props.segments.slice(1));
                     {{ t('preview.slack.replies', { n: replies.length }, replies.length) }}</p>
                 <div v-for="(reply, index) in replies" :key="index" class="flex items-start gap-2">
                     <PreviewAvatar :name="channelName" :picture="channelPicture" shape="rounded" />
-                    <PreviewText class="text-sm text-text" :text="reply.content" />
+                    <PreviewText class="text-sm text-text" :text="reply.content" :marks="MARKS" />
                 </div>
             </div>
         </template>

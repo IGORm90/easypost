@@ -9,6 +9,7 @@ use App\Social\Dto\AuthUrlDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
+use App\Social\Dto\TextMark;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
@@ -79,6 +80,13 @@ class DiscordProvider implements SocialProviderInterface
             maxFileSizeBytes: 8 * 1024 * 1024,
             allowsMixedMedia: true,
             maxThreadLength: null,
+            // No LINK: Discord renders **bold**, *italic*, ~~strike~~
+            // and `code` natively in a webhook message, but NOT
+            // [text](url) -- in a normal (non-embed) message that
+            // prints verbatim, brackets and all. Offering the button
+            // would produce literal punctuation in the published post,
+            // so the capability says no and the toolbar never draws it.
+            supportedMarks: [TextMark::BOLD, TextMark::ITALIC, TextMark::STRIKE, TextMark::CODE],
             requiresAltText: false,
         );
     }
