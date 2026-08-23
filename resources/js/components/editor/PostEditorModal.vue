@@ -13,10 +13,11 @@ import ThreadEditor from './ThreadEditor.vue';
 import EmojiPicker from './EmojiPicker.vue';
 import { useCaretInsertion } from '../../composables/useCaretInsertion';
 import ScheduleControls from './ScheduleControls.vue';
+import PostSettingsFields from './PostSettingsFields.vue';
 import PreviewPane from '../previews/PreviewPane.vue';
 import ShareLinkModal from '../posts/ShareLinkModal.vue';
 import CommentThread from '../posts/CommentThread.vue';
-import { useIntegrationsStore, type ProviderCapabilities } from '../../stores/integrations';
+import { useIntegrationsStore, type ProviderCapabilities, type ProviderPostSettingField } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
 import { useMediaStore } from '../../stores/media';
 import { api } from '../../api/client';
@@ -185,6 +186,33 @@ const selectedIntegrations = computed(() =>
 const activeIntegration = computed(() => (activeChannelId.value ? integrationById(activeChannelId.value) : undefined));
 const activeCapabilities = computed(() => (activeIntegration.value ? providerCapabilities(activeIntegration.value.provider_identifier) : undefined));
 const activeDraft = computed(() => (activeChannelId.value ? channelDrafts[activeChannelId.value] : undefined));
+
+/**
+ * The per-post fields this channel's provider declares (Block 5.0.6) —
+ * read off the provider's own declaration, never off its identifier. A
+ * provider that needs nothing per post declares an empty list, and the
+ * form does not render at all.
+ */
+const activePostSettings = computed<ProviderPostSettingField[]>(() => {
+    const identifier = activeIntegration.value?.provider_identifier;
+    const provider = identifier ? integrations.providers.find((p) => p.identifier === identifier) : undefined;
+
+    return provider?.post_settings ?? [];
+});
+
+/**
+ * Writes the edited per-post settings back into this channel's draft.
+ * Replaces the map wholesale rather than merging key by key:
+ * PostSettingsFields already carries through the keys it does not own, so
+ * merging again here would resurrect a value the customer just cleared.
+ */
+function onPostSettingsUpdate(channelId: string, settings: Record<string, unknown>): void {
+    const draft = channelDrafts[channelId];
+
+    if (draft) {
+        draft.settings = settings;
+    }
+}
 
 const SIGNATURE_SEPARATOR = '\n\n';
 
@@ -750,6 +778,14 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                         </a>
                     </div>
                     <p v-if="loadedFromServer" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
+
+                    <PostSettingsFields
+                        v-if="activePostSettings.length > 0"
+                        :fields="activePostSettings"
+                        :integration-id="activeChannelId"
+                        :model-value="activeDraft.settings"
+                        @update:model-value="onPostSettingsUpdate(activeChannelId as string, $event)"
+                    />
 
                     <ThreadEditor
                         :model-value="activeDraft.segments"

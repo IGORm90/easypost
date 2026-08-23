@@ -48,7 +48,7 @@ it('still completes a connect for a user who kept ADMIN', function () {
 
     $state = app(OAuthStateService::class)->generate($organization, $user);
 
-    expect(app(OAuthStateService::class)->consume($state, $user)->id)->toBe($organization->id);
+    expect(app(OAuthStateService::class)->consume($state, $user)->organization->id)->toBe($organization->id);
 });
 
 it('completes a connect for a SUPERADMIN, since roles are hierarchical', function () {
@@ -58,5 +58,5 @@ it('completes a connect for a SUPERADMIN, since roles are hierarchical', functio
 
     $state = app(OAuthStateService::class)->generate($organization, $user);
 
-    expect(app(OAuthStateService::class)->consume($state, $user)->id)->toBe($organization->id);
+    expect(app(OAuthStateService::class)->consume($state, $user)->organization->id)->toBe($organization->id);
 });

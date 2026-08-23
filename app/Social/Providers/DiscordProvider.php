@@ -87,6 +87,7 @@ class DiscordProvider implements SocialProviderInterface
             // would produce literal punctuation in the published post,
             // so the capability says no and the toolbar never draws it.
             supportedMarks: [TextMark::BOLD, TextMark::ITALIC, TextMark::STRIKE, TextMark::CODE],
+            requiresMedia: false,
             requiresAltText: false,
         );
     }

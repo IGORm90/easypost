@@ -37,6 +37,7 @@ function capabilities(overrides: Partial<ProviderCapabilities> = {}): ProviderCa
         allowsMixedMedia: false,
         maxThreadLength: 25,
         supportedMarks: [],
+        requiresMedia: false,
         requiresAltText: false,
         ...overrides,
     };

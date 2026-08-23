@@ -448,6 +448,7 @@
             "threadTooLong": "A thread on this channel can have at most {max} messages.",
             "mediaLimits": "Up to {images} images and {videos} videos per message.",
             "altTextRequired": "Images require alt text on this channel.",
+            "mediaRequired": "This channel publishes nothing without an image or video.",
             "marksUnsupported": "This channel has no formatting — markup will be published as plain characters."
         },
         "tabs": {
@@ -492,6 +493,19 @@
             "until": "Repeat until",
             "hint": "Each repeat is scheduled only after the previous one has published, and counts as a post against your plan.",
             "needsEnd": "Choose when the repeat should stop before scheduling."
+        },
+        "postSettings": {
+            "intro": "This network needs a few details for every post.",
+            "choose": "Choose…",
+            "optionsError": "This list could not be loaded. The rest of the post is unaffected.",
+            "fields": {
+                "subreddit": "Subreddit",
+                "title": "Title",
+                "flair_id": "Flair",
+                "kind": "Post type",
+                "url": "Link",
+                "reply_settings": "Who can reply"
+            }
         }
     },
     "preview": {

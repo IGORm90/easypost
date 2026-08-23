@@ -120,6 +120,13 @@ class Media extends Model
             sizeBytes: $this->size_bytes,
             altText: $altText,
             originalFilename: $this->original_filename,
+            // Block 5.0.4: the URL-based networks (Instagram, Threads)
+            // publish by giving the Graph API a link it fetches itself.
+            // Built here, from the row's own disk, rather than inside a
+            // provider: `app/Social` must not know what a disk is, and
+            // this is the same URL the SPA already receives for the file
+            // (MediaResource::$url), so the two cannot drift apart.
+            publicUrl: $this->url(),
         );
     }
 }

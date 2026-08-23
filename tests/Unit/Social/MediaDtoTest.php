@@ -64,3 +64,48 @@ it('falls back to the path basename when no original filename is known', functio
 
     expect($media->filename())->toBe('publish-media-abc.png');
 });
+
+/*
+ * Block 5.0.4: Meta's networks (Instagram, Threads) do not accept an
+ * uploaded file at all — a post is created by handing the Graph API a URL
+ * the network fetches for itself. Every other provider in this app is
+ * handed BYTES, from a local temp copy, and never a link. So the DTO has
+ * to carry both: $path (what the eight byte-based providers read) and
+ * $publicUrl (what the URL-based ones read), with the second surviving
+ * the withPath() swap the publishing pipeline performs.
+ */
+it('carries a public url through the local-copy path swap', function () {
+    $dto = new MediaDto(
+        path: 'org/01ABC/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 2048,
+        publicUrl: 'https://cdn.example.test/media/org/01ABC/photo.jpg',
+    );
+
+    // PublishService swaps the storage key for a readable local file
+    // immediately before handing the DTO to a provider. If publicUrl were
+    // dropped there, Instagram would be handed a container request with
+    // no image_url and fail at publish time only.
+    $swapped = $dto->withPath('/tmp/publish-media-XYZ.jpg');
+
+    expect($swapped->path)->toBe('/tmp/publish-media-XYZ.jpg');
+    expect($swapped->publicUrl)->toBe('https://cdn.example.test/media/org/01ABC/photo.jpg');
+});
+
+it('carries a public url through the upload-handle swap', function () {
+    $dto = new MediaDto(
+        path: '/tmp/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 2048,
+        publicUrl: 'https://cdn.example.test/media/photo.jpg',
+    );
+
+    expect($dto->withRemoteId('media-99')->publicUrl)->toBe('https://cdn.example.test/media/photo.jpg');
+});
+
+it('defaults the public url to null for a hand-built dto', function () {
+    // Providers that read bytes must be able to build a DTO without
+    // knowing anything about object storage — their own unit tests do
+    // exactly that.
+    expect((new MediaDto(path: '/tmp/a.jpg', mimeType: 'image/jpeg'))->publicUrl)->toBeNull();
+});

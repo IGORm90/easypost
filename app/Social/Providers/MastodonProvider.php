@@ -110,6 +110,7 @@ class MastodonProvider implements DeclaresAuthFields, SocialProviderInterface, S
             // (no content_type on vanilla Mastodon). Offering bold
             // here would publish literal asterisks.
             supportedMarks: [],
+            requiresMedia: false,
             requiresAltText: false,
         );
     }

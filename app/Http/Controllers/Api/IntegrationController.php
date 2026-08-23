@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ConnectIntegrationRequest;
+use App\Http\Requests\ProviderOptionsRequest;
 use App\Http\Requests\UpdateIntegrationRequest;
 use App\Http\Resources\IntegrationResource;
 use App\Models\Integration;
@@ -13,6 +14,7 @@ use App\Services\Integrations\Exceptions\InvalidOAuthStateException;
 use App\Services\Integrations\IntegrationService;
 use App\Services\Integrations\OAuthStateService;
 use App\Social\Contracts\DeclaresAuthFields;
+use App\Social\Contracts\DeclaresPostSettings;
 use App\Social\Contracts\DeclaresUpdatableSettings;
 use App\Social\Contracts\ManualTokenAuth;
 use App\Social\Contracts\SocialProviderInterface;
@@ -66,6 +68,7 @@ class IntegrationController extends Controller
                 'auth_type' => $provider instanceof ManualTokenAuth ? 'manual' : 'oauth',
                 'auth_fields' => $provider instanceof DeclaresAuthFields ? $provider->authFields() : [],
                 'settings_fields' => $this->settingsFields($provider),
+                'post_settings' => $this->postSettings($provider),
             ],
             array_values($this->providers->all()),
         );
@@ -110,6 +113,37 @@ class IntegrationController extends Controller
     }
 
     /**
+     * The per-post fields a provider declares (Block 5.0.6), stripped of
+     * their validation rules.
+     *
+     * `rules` is the one key deliberately withheld: it is a list of
+     * Laravel rule strings, and publishing it invites the editor to
+     * enforce them client-side — at which point there are two validators
+     * for one contract, and they disagree the first time a provider
+     * changes a rule. The editor renders the field and marks it required;
+     * whether a value is acceptable is decided in exactly one place,
+     * PostValidationService, which is also the place that already decides
+     * it identically at scheduling time and at publish time.
+     *
+     * @return list<array{key: string, type: string, required: bool, option?: string, dependsOn?: string}>
+     */
+    private function postSettings(SocialProviderInterface $provider): array
+    {
+        if (! $provider instanceof DeclaresPostSettings) {
+            return [];
+        }
+
+        return array_map(
+            function (array $field): array {
+                unset($field['rules']);
+
+                return $field;
+            },
+            $provider->postSettings(),
+        );
+    }
+
+    /**
      * Eager-loads `timeSlots` so `IntegrationResource::time_slots` is
      * actually populated here (its `whenLoaded()` would otherwise omit
      * the key entirely) — the channels page (Task 17) has no other way
@@ -145,12 +179,21 @@ class IntegrationController extends Controller
         $state = $this->states->generate($this->currentOrganization(), $this->currentUser());
         $authUrl = $providerInstance->generateAuthUrl($state, $this->redirectUri(), $request->all());
 
-        // `extra` (Task 14 review, Finding 3) must round-trip back to the
-        // frontend: it's the provider's own AuthUrlDto docblock contract
-        // ("the caller must persist... and hand back on the callback"),
-        // e.g. Mastodon's chosen instance host, which the frontend must
-        // resupply on `callback()` since this controller has no session/
-        // storage of its own to remember it across the redirect.
+        // Block 5.0.2: `extra` is now remembered SERVER SIDE, against the
+        // state it belongs to. It used to travel to the SPA and come back
+        // in the callback body, which was fine while its only content was
+        // Mastodon's instance host — but the networks added in Block 5
+        // put a PKCE `code_verifier` there, and a secret the browser
+        // holds is a secret the browser can also replace. `callback()`
+        // now layers this copy over the request body, so the stored value
+        // is the one that reaches the provider.
+        $this->states->remember($state, $authUrl->extra);
+
+        // Still returned to the SPA, unchanged: `ConnectProviderModal`
+        // persists it and `Callback.vue` posts it back, and both keep
+        // working exactly as before — those keys are simply no longer
+        // trusted. Removing it from the response would break any tab that
+        // started a connect before this deploy, for no gain.
         return response()->json(['url' => $authUrl->url, 'state' => $state, 'extra' => $authUrl->extra]);
     }
 
@@ -166,13 +209,25 @@ class IntegrationController extends Controller
         $providerInstance = $this->resolveProvider($provider);
 
         try {
-            $organization = $this->states->consume((string) $request->validated('state'), $this->currentUser());
+            $state = $this->states->consume((string) $request->validated('state'), $this->currentUser());
         } catch (InvalidOAuthStateException $e) {
             return response()->json(['message' => $e->getMessage()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $organization = $state->organization;
+
+        // Block 5.0.2: the server's own copy of what the provider asked
+        // to remember is applied ON TOP of the request body, so a browser
+        // cannot substitute a `code_verifier`, a Mastodon instance or a
+        // page id for the one this app issued. `state` is stripped
+        // afterwards because the stored extra may legitimately contain it
+        // (FakeProvider returns exactly that) and `authenticate()`'s
+        // contract has never included it.
+        $params = [...$request->except('state'), ...$state->extra];
+        unset($params['state']);
+
         try {
-            $auth = $providerInstance->authenticate($request->except('state'), $this->redirectUri());
+            $auth = $providerInstance->authenticate($params, $this->redirectUri());
         } catch (ProviderAuthException|ProviderPermanentException) {
             // Both mean "this attempt cannot succeed as submitted" — a
             // rejected credential (bad Telegram bot token/chat id, a
@@ -254,7 +309,7 @@ class IntegrationController extends Controller
      * when the provider doesn't implement the capability, or doesn't
      * recognise the option name.
      */
-    public function options(string $id, string $option): JsonResponse
+    public function options(ProviderOptionsRequest $request, string $id, string $option): JsonResponse
     {
         $integration = $this->findAuthorized($id, 'view');
         $providerInstance = $this->resolveProvider($integration->provider_identifier);
@@ -264,7 +319,12 @@ class IntegrationController extends Controller
         }
 
         try {
-            $options = $providerInstance->options($integration, $option);
+            // Block 5.0.6: `context` is what makes a dependent list
+            // answerable (a flair list exists per subreddit, not per
+            // account). Passed through verbatim and un-interpreted — this
+            // controller does not know what any key means, which is the
+            // point; the request class guarantees only its shape.
+            $options = $providerInstance->options($integration, $option, $request->context());
         } catch (UnknownProviderOptionException) {
             throw new NotFoundHttpException;
         }

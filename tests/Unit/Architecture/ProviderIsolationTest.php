@@ -73,7 +73,29 @@ it('has no provider-specific branching outside app/Social/Providers', function (
     expect(is_dir($root))->toBeTrue("search root [{$root}] does not exist — the guard cannot have run");
 
     $hits = [];
-    foreach (['telegram', 'mastodon', 'bluesky', 'discord', 'slack'] as $p) {
+    // Block 5 adds eight networks. Their names go here the moment the
+    // provider exists — a name missing from this list is a provider the
+    // guard silently does not protect, which is indistinguishable from a
+    // clean run. 'linkedin' also matches 'linkedin-page' and 'instagram'
+    // also matches 'instagram-standalone'; that overlap is wanted, not a
+    // false positive.
+    //
+    // Two identifiers are deliberately not the network's plain name,
+    // because this guard matches a name ANYWHERE inside a quoted string
+    // and the plain name collides with vocabulary the app already owns:
+    //   - X is 'twitter', because 'x' appears inside almost every quoted
+    //     string in the codebase (and, on the frontend, inside almost
+    //     every file path — 'PreviewText.vue');
+    //   - Threads is 'meta-threads', because 'threads' is a substring of
+    //     PostValidationService's 'threads_not_supported' error code,
+    //     which is generic capability vocabulary and predates the
+    //     network.
+    // Neither identifier is ever shown to a user: the SPA renders
+    // Provider::name(), which is 'X' and 'Threads'.
+    foreach ([
+        'telegram', 'mastodon', 'bluesky', 'discord', 'slack',
+        'twitter', 'linkedin', 'reddit', 'facebook-page', 'instagram', 'meta-threads',
+    ] as $p) {
         $command = sprintf(
             'grep -rniE %s %s --include=%s',
             // The name anywhere inside a quoted string, not only when the

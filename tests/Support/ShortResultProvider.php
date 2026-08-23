@@ -52,6 +52,7 @@ class ShortResultProvider implements SocialProviderInterface
             allowsMixedMedia: true,
             maxThreadLength: null,
             supportedMarks: [],
+            requiresMedia: false,
         );
     }
 

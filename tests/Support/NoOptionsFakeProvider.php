@@ -44,6 +44,7 @@ class NoOptionsFakeProvider implements SocialProviderInterface
             allowsMixedMedia: false,
             maxThreadLength: null,
             supportedMarks: [],
+            requiresMedia: false,
         );
     }
 

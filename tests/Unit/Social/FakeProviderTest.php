@@ -175,6 +175,7 @@ it('lets tests override capabilities, including the newly required fields', func
         allowsMixedMedia: false,
         maxThreadLength: 1,
         supportedMarks: [],
+        requiresMedia: false,
         requiresAltText: true,
     );
 

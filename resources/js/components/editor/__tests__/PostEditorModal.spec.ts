@@ -45,6 +45,7 @@ function blueskyProvider(): Provider {
         auth_type: 'oauth',
         auth_fields: [],
         settings_fields: [],
+        post_settings: [],
         capabilities: {
             maxCharacters: 300,
             maxImages: 4,
@@ -56,6 +57,7 @@ function blueskyProvider(): Provider {
             allowsMixedMedia: false,
             maxThreadLength: 25,
             supportedMarks: [],
+            requiresMedia: false,
             requiresAltText: false,
         },
     };
@@ -680,4 +682,44 @@ it('refuses to schedule a repeating post with no end date', async () => {
     const schedule = w.findAll('button').find((b) => b.text() === 'Schedule');
     expect((schedule!.element as HTMLButtonElement).disabled).toBe(true);
     expect(w.text()).toContain('when the repeat should stop');
+});
+
+/*
+ * Block 5.0.6: a provider that needs per-post choices gets a form for
+ * them on its own channel tab, rendered from the declaration alone.
+ */
+it('renders a channel\'s declared per-post settings on its tab, and sends them with the post', async () => {
+    const provider = blueskyProvider();
+    provider.post_settings = [{ key: 'title', type: 'text', required: true }];
+    get.mockImplementation((url: string) => {
+        if (url === '/providers') return Promise.resolve({ data: [provider] });
+        if (url === '/integrations') return Promise.resolve({ data: [bluesky()] });
+        if (url === '/tags') return Promise.resolve({ data: [] });
+        if (url === '/sets') return Promise.resolve({ data: [] });
+        if (url === '/signatures') return Promise.resolve({ data: [] });
+        if (url === '/media') return Promise.resolve({ data: { data: [], meta: { current_page: 1, last_page: 1 } } });
+        return Promise.resolve({ data: [] });
+    });
+
+    const w = await mountReady();
+    await selectChannelAndType(w, 'body text');
+
+    const title = w.find('[data-field="title"]');
+    expect(title.exists()).toBe(true);
+    await title.setValue('a headline');
+    await flushPromises();
+
+    post.mockResolvedValueOnce({ data: { id: 'g1', state: 'DRAFT', publish_date: null, error: null, share_token: null, tags: [], posts: [] } });
+    await w.findAll('button').find((b) => b.text() === 'Publish now')!.trigger('click');
+    await flushPromises();
+
+    const body = post.mock.calls.at(-1)?.[1] as { posts: Array<{ settings: Record<string, unknown> }> };
+    expect(body.posts[0].settings).toMatchObject({ title: 'a headline' });
+});
+
+it('renders no per-post settings block for a provider that declares none', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'body text');
+
+    expect(w.find('[data-testid="post-settings"]').exists()).toBe(false);
 });

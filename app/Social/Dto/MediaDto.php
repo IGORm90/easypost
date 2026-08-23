@@ -26,6 +26,7 @@ final readonly class MediaDto
      * @param  string|null  $altText  Accessibility description, when the network supports it.
      * @param  string|null  $remoteId  Provider-assigned handle returned by SupportsMedia::uploadMedia(), referenced when the post is created. Null before upload / for providers that don't pre-upload media.
      * @param  string|null  $originalFilename  The name the customer uploaded the file under (`media.original_filename`, already sanitized at upload time). Providers must send THIS as the attachment filename — see filename(). Null means "no better name known", and filename() falls back to the path's basename.
+     * @param  string|null  $publicUrl  A URL the NETWORK can fetch this file from itself, for the providers that accept no upload at all (Block 5: Instagram and Threads create a post by handing the Graph API an `image_url`/`video_url`). Every other provider ignores this and reads the bytes at $path. Two properties of this value that the reading provider cannot see and must not assume away: it is PERMANENT and UNSIGNED — the `media` disk is `visibility: public`, so whoever holds the link can read the file forever, which is the trade this app already made for `MediaResource::$url`; and it is only reachable if `AWS_URL` points at a publicly routable endpoint, which the local MinIO default (`http://localhost:9000/media`) is not. Null means "no such URL is known", never "the file has no URL": a hand-built DTO in a provider's unit test has none, and a URL-based provider must treat null as a permanent failure rather than posting without media.
      */
     public function __construct(
         public string $path,
@@ -34,6 +35,7 @@ final readonly class MediaDto
         public ?string $altText = null,
         public ?string $remoteId = null,
         public ?string $originalFilename = null,
+        public ?string $publicUrl = null,
     ) {}
 
     /**
@@ -79,7 +81,7 @@ final readonly class MediaDto
      */
     public function withRemoteId(string $remoteId): self
     {
-        return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId, $this->originalFilename);
+        return new self($this->path, $this->mimeType, $this->sizeBytes, $this->altText, $remoteId, $this->originalFilename, $this->publicUrl);
     }
 
     /**
@@ -93,6 +95,6 @@ final readonly class MediaDto
      */
     public function withPath(string $path): self
     {
-        return new self($path, $this->mimeType, $this->sizeBytes, $this->altText, $this->remoteId, $this->originalFilename);
+        return new self($path, $this->mimeType, $this->sizeBytes, $this->altText, $this->remoteId, $this->originalFilename, $this->publicUrl);
     }
 }

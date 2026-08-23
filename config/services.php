@@ -51,6 +51,69 @@ return [
         'client_secret' => env('DISCORD_CLIENT_SECRET'),
     ],
 
+    /*
+     * Block 5's eight networks. Every one of them is a standard OAuth 2.0
+     * client credential pair, registered per deployment — see README.md
+     * for how to obtain each. The redirect URI is the same for all of
+     * them (`services.integrations_redirect_url`): the SPA receives the
+     * provider's redirect and posts the code back, so a provider never
+     * needs a URL of its own.
+     *
+     * Machine identifiers, not brand names: X is 'twitter' and Threads is
+     * 'meta-threads' because the guard in
+     * tests/Unit/Architecture/ProviderIsolationTest.php matches a
+     * provider's name as a substring of any quoted string, and 'x' /
+     * 'threads' collide with vocabulary this app already owns. The names
+     * users see come from each provider's name().
+     */
+    'twitter' => [
+        'client_id' => env('TWITTER_CLIENT_ID'),
+        'client_secret' => env('TWITTER_CLIENT_SECRET'),
+    ],
+
+    'linkedin' => [
+        'client_id' => env('LINKEDIN_CLIENT_ID'),
+        'client_secret' => env('LINKEDIN_CLIENT_SECRET'),
+    ],
+
+    'reddit' => [
+        'client_id' => env('REDDIT_CLIENT_ID'),
+        'client_secret' => env('REDDIT_CLIENT_SECRET'),
+        /*
+         * Reddit blocks on User-Agent harder than on request rate, and a
+         * generic or absent one is refused outright. It must identify the
+         * app and a contact account, e.g.
+         * 'easypost/1.0 by /u/your-account'.
+         */
+        'user_agent' => env('REDDIT_USER_AGENT'),
+    ],
+
+    /*
+     * One Meta app serves Facebook Page, both Instagram providers and
+     * Threads, but they are configured separately: a deployment may hold
+     * review approval for one and not the others, and sharing one env
+     * pair would make that indistinguishable from a misconfiguration.
+     */
+    'facebook_page' => [
+        'client_id' => env('FACEBOOK_PAGE_CLIENT_ID'),
+        'client_secret' => env('FACEBOOK_PAGE_CLIENT_SECRET'),
+    ],
+
+    'instagram' => [
+        'client_id' => env('INSTAGRAM_CLIENT_ID'),
+        'client_secret' => env('INSTAGRAM_CLIENT_SECRET'),
+    ],
+
+    'instagram_standalone' => [
+        'client_id' => env('INSTAGRAM_STANDALONE_CLIENT_ID'),
+        'client_secret' => env('INSTAGRAM_STANDALONE_CLIENT_SECRET'),
+    ],
+
+    'meta_threads' => [
+        'client_id' => env('META_THREADS_CLIENT_ID'),
+        'client_secret' => env('META_THREADS_CLIENT_SECRET'),
+    ],
+
     'github' => [
         'client_id' => env('GITHUB_CLIENT_ID'),
         'client_secret' => env('GITHUB_CLIENT_SECRET'),

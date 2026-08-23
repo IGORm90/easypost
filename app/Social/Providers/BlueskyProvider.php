@@ -122,6 +122,7 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
             // not build facets. Nothing here can render bold, so
             // nothing is offered.
             supportedMarks: [],
+            requiresMedia: false,
             requiresAltText: false,
         );
     }

@@ -205,6 +205,7 @@ it('rejects a chain longer than the network max thread length', function () {
         allowsMixedMedia: false,
         maxThreadLength: 2,
         supportedMarks: [],
+        requiresMedia: false,
     ));
 
     $model = makeIntegration('fake');
@@ -231,6 +232,7 @@ it('rejects a media attachment missing required alt text', function () {
         allowsMixedMedia: true,
         maxThreadLength: null,
         supportedMarks: [],
+        requiresMedia: false,
         requiresAltText: true,
     ));
 
@@ -324,4 +326,182 @@ it('treats an unknown file size as a validation failure, not a silent pass', fun
     expect($errors[0]['code'])->toBe('file_size_unknown');
     expect($errors[0]['limit'])->toBe(40 * 1024 * 1024);
     expect($errors[0]['actual'])->toBe('unknown');
+});
+
+/*
+ * Block 5.0.5: `requiresMedia`. Instagram cannot publish a post without a
+ * picture at all. Before this capability existed, such a post passed
+ * scheduling, sat in the queue, and only then collected a rejection from
+ * the network and an ERROR state — the failure surfaced hours after the
+ * customer could still have fixed it. The rule belongs where every other
+ * "may this content go to this channel" rule already lives.
+ */
+it('rejects a text-only segment on a network that requires media', function () {
+    fakeProvider()->withCapabilities(new ProviderCapabilities(
+        maxCharacters: 2200,
+        maxImages: 10,
+        maxVideos: 1,
+        supportsThreads: false,
+        supportsScheduling: false,
+        allowedMimeTypes: ['image/jpeg'],
+        maxFileSizeBytes: 8 * 1024 * 1024,
+        allowsMixedMedia: false,
+        maxThreadLength: null,
+        supportedMarks: [],
+        requiresMedia: true,
+    ));
+
+    $model = makeIntegration('fake');
+    $chain = [new PostPayloadDto(content: 'a caption with nothing to caption')];
+
+    $errors = service()->validate($model, $chain);
+
+    $error = collect($errors)->firstWhere('code', 'media_required');
+    expect($error)->not->toBeNull();
+    expect($error['post_index'])->toBe(0);
+    expect($error['limit'])->toBe(1);
+    expect($error['actual'])->toBe(0);
+    expect($error['message'])->toBeString();
+});
+
+it('accepts a segment carrying media on a network that requires it', function () {
+    fakeProvider()->withCapabilities(new ProviderCapabilities(
+        maxCharacters: 2200,
+        maxImages: 10,
+        maxVideos: 1,
+        supportsThreads: false,
+        supportsScheduling: false,
+        allowedMimeTypes: ['image/jpeg'],
+        maxFileSizeBytes: 8 * 1024 * 1024,
+        allowsMixedMedia: false,
+        maxThreadLength: null,
+        supportedMarks: [],
+        requiresMedia: true,
+    ));
+
+    $model = makeIntegration('fake');
+    $chain = [new PostPayloadDto(content: 'a real caption', media: [
+        new MediaDto(path: '/tmp/img.jpg', mimeType: 'image/jpeg', sizeBytes: 2048),
+    ])];
+
+    expect(service()->validate($model, $chain))->toBe([]);
+});
+
+it('reports media_required on every segment of a thread that lacks media', function () {
+    // The check is per segment, like every other segment-level rule. A
+    // network could support threads and still require media on each post;
+    // scoping the rule to "the first segment" would be a guess about the
+    // networks we happen to have.
+    fakeProvider()->withCapabilities(new ProviderCapabilities(
+        maxCharacters: 500,
+        maxImages: 4,
+        maxVideos: 1,
+        supportsThreads: true,
+        supportsScheduling: false,
+        allowedMimeTypes: ['image/jpeg'],
+        maxFileSizeBytes: 8 * 1024 * 1024,
+        allowsMixedMedia: false,
+        maxThreadLength: null,
+        supportedMarks: [],
+        requiresMedia: true,
+    ));
+
+    $model = makeIntegration('fake');
+    $chain = [
+        new PostPayloadDto(content: 'one', media: [
+            new MediaDto(path: '/tmp/img.jpg', mimeType: 'image/jpeg', sizeBytes: 2048),
+        ]),
+        new PostPayloadDto(content: 'two'),
+    ];
+
+    $errors = service()->validate($model, $chain);
+
+    expect(array_column($errors, 'code'))->toBe(['media_required']);
+    expect($errors[0]['post_index'])->toBe(1);
+});
+
+it('does not report media_required on a network that does not require media', function () {
+    $integration = makeIntegration('mastodon');
+
+    expect(service()->validate($integration, [new PostPayloadDto(content: 'just text')]))->toBe([]);
+});
+
+/*
+ * Block 5.0.6: per-post settings. A provider declares which keys a post
+ * to its network must carry (Reddit: a subreddit and a title); this
+ * service is where that declaration becomes a verdict, for the same
+ * reason every other capability rule lives here — scheduling and
+ * publishing must reach the same answer, and only this class is called by
+ * both.
+ */
+it('rejects a post missing a setting the network requires', function () {
+    $model = makeIntegration('post-settings-fake');
+    $chain = [new PostPayloadDto(content: 'body', settings: ['title' => 'hi'])];
+
+    $errors = service()->validate($model, $chain);
+
+    $error = collect($errors)->firstWhere('code', 'post_setting_required');
+    expect($error)->not->toBeNull();
+    expect($error['post_index'])->toBe(0);
+    // The key names the field, so the editor can put the message on it
+    // instead of at the top of the form.
+    expect($error['limit'])->toBe('topic');
+});
+
+it('treats a blank string as a missing required setting', function () {
+    // An empty text input posts '', not absence. Accepting it would send
+    // Reddit a submission with an empty title, which it rejects — later,
+    // and with its own wording.
+    $model = makeIntegration('post-settings-fake');
+    $chain = [new PostPayloadDto(content: 'body', settings: ['topic' => 'jazz', 'title' => '   '])];
+
+    $errors = service()->validate($model, $chain);
+
+    expect(collect($errors)->firstWhere('limit', 'title')['code'])->toBe('post_setting_required');
+});
+
+it('rejects a setting value that fails the provider rules', function () {
+    $model = makeIntegration('post-settings-fake');
+    $chain = [new PostPayloadDto(content: 'body', settings: [
+        'topic' => 'jazz',
+        'title' => 'far too long for the declared limit',
+    ])];
+
+    $errors = service()->validate($model, $chain);
+
+    $error = collect($errors)->firstWhere('code', 'post_setting_invalid');
+    expect($error)->not->toBeNull();
+    expect($error['limit'])->toBe('title');
+});
+
+it('accepts a post carrying every required setting', function () {
+    $model = makeIntegration('post-settings-fake');
+    $chain = [new PostPayloadDto(content: 'body', settings: ['topic' => 'jazz', 'title' => 'ok'])];
+
+    expect(service()->validate($model, $chain))->toBe([]);
+});
+
+it('ignores settings entirely for a provider that declares none', function () {
+    // Settings have been a free-form pass-through since Task 20, and
+    // several posts in the wild carry keys nothing reads. Declaring the
+    // contract must not retroactively make those posts invalid.
+    $integration = makeIntegration('mastodon');
+    $chain = [new PostPayloadDto(content: 'body', settings: ['anything' => 'at all'])];
+
+    expect(service()->validate($integration, $chain))->toBe([]);
+});
+
+it('checks required settings on every segment of a thread', function () {
+    $model = makeIntegration('post-settings-fake');
+    $chain = [
+        new PostPayloadDto(content: 'one', settings: ['topic' => 'jazz', 'title' => 'ok']),
+        new PostPayloadDto(content: 'two', settings: ['topic' => 'jazz', 'title' => 'ok']),
+    ];
+
+    $errors = service()->validate($model, $chain);
+
+    // This provider does not support threads, so the chain is rejected
+    // for that reason — and NOT additionally for settings, which are
+    // present on both segments.
+    expect(array_column($errors, 'code'))->toBe(['threads_not_supported']);
 });

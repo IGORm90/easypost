@@ -26,6 +26,7 @@ final readonly class ProviderCapabilities
      * @param  bool  $allowsMixedMedia  Whether images and video may appear together in the same post. No universal default — varies enough across networks that every provider must state it explicitly.
      * @param  int|null  $maxThreadLength  Max number of segments in a thread (the $chain passed to post()); null = unbounded. No default for the same reason as $allowsMixedMedia: silently assuming "unbounded" for a network that actually caps it would let Task 19 pass through content that publishing then rejects.
      * @param  list<TextMark>  $supportedMarks  Which inline marks (bold, italic, ...) this network can actually render, and therefore which buttons the editor's format toolbar may offer for it. An empty list is a real, valid answer — the network has no formatting at all (a post's body reaches it as plain text) — but it must be stated: no default here, for the same reason as $allowsMixedMedia and $maxThreadLength. A silent "probably none" would leave a network that does support bold quietly formatting-free, with nothing failing anywhere to say so. Declaring a mark also commits the provider to actually delivering it — see App\Social\Providers\TranslatesMarkup; declaring one and publishing the raw markers is worse than declaring none, because the editor then promises formatting the reader never sees.
+     * @param  bool  $requiresMedia  Whether the network refuses a post that carries no media at all. No default, for the same reason as $allowsMixedMedia: a silent "probably optional" is exactly wrong for the networks where it is not (Instagram publishes nothing without a picture), and the cost of getting it wrong is paid late — the post passes scheduling, waits in the queue, and only the publish attempt discovers it was never postable. Stating it here moves that discovery to the moment the customer is still looking at the editor.
      * @param  bool  $requiresAltText  Whether the network requires alt text on every media attachment. Defaults to false: the overwhelming majority of networks treat it as optional, so providers only need to override this when their network genuinely enforces it.
      */
     public function __construct(
@@ -39,6 +40,7 @@ final readonly class ProviderCapabilities
         public bool $allowsMixedMedia,
         public ?int $maxThreadLength,
         public array $supportedMarks,
+        public bool $requiresMedia,
         public bool $requiresAltText = false,
     ) {}
 }

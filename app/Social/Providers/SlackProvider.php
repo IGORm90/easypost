@@ -114,6 +114,7 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
             // not Markdown, which is exactly why the translation lives
             // in this provider. See TranslatesMarkup.
             supportedMarks: TextMark::cases(),
+            requiresMedia: false,
             requiresAltText: false,
         );
     }
@@ -215,9 +216,14 @@ class SlackProvider implements DeclaresUpdatableSettings, SocialProviderInterfac
      * selection is a runtime option here rather than fixed at connect
      * time.
      *
+     * $context is accepted (the interface passes it for dependent
+     * lists) and deliberately unread: neither list this provider offers
+     * depends on another choice.
+     *
+     * @param  array<string, string>  $context
      * @return array<int, array{value: string, label: string}>
      */
-    public function options(Integration $integration, string $option): array
+    public function options(Integration $integration, string $option, array $context = []): array
     {
         if ($option !== 'channels') {
             throw UnknownProviderOptionException::forOption($this->identifier(), $option);

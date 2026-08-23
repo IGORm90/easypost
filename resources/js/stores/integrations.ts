@@ -29,6 +29,8 @@ export interface ProviderCapabilities {
     maxThreadLength: number | null;
     /** Which format buttons the editor may offer for this network; empty means the network has no formatting and the toolbar is not rendered at all. */
     supportedMarks: TextMark[];
+    /** Whether the network refuses a post carrying no media at all (Instagram). Mirrors `ProviderCapabilities::$requiresMedia`. */
+    requiresMedia: boolean;
     requiresAltText: boolean;
 }
 
@@ -36,6 +38,22 @@ export interface ProviderCapabilities {
 export interface ProviderAuthField {
     key: string;
     type: 'text' | 'password';
+}
+
+/**
+ * One per-post field a provider declares (Block 5.0.6) — `posts.settings`
+ * finally has a contract. Mirrors `DeclaresPostSettings::postSettings()`
+ * minus its `rules`, which the server deliberately keeps to itself: two
+ * validators for one contract drift apart the moment either side changes.
+ */
+export interface ProviderPostSettingField {
+    key: string;
+    type: 'text' | 'textarea' | 'select';
+    required: boolean;
+    /** For `select`: the SupportsOptions list the value is picked from. */
+    option?: string;
+    /** Another field's key whose value this field's option list depends on. */
+    dependsOn?: string;
 }
 
 /** A setting whose value the user picks from a server-provided list rather than typing: `key` is the settings key, `option` names the list to fetch from `/integrations/{id}/options/{option}`. */
@@ -51,6 +69,7 @@ export interface Provider {
     auth_type: ProviderAuthType;
     auth_fields: ProviderAuthField[];
     settings_fields: ProviderSettingField[];
+    post_settings: ProviderPostSettingField[];
 }
 
 export interface ProviderOption {
@@ -121,9 +140,22 @@ export const useIntegrationsStore = defineStore('integrations', {
          * provider's own `settings_fields` declaration, so nothing here
          * knows what any particular list contains or which providers have
          * one.
+         *
+         * `context` (Block 5.0.6) is how a DEPENDENT list is asked for: a
+         * flair list exists per subreddit, not per account, so the parent
+         * field's value travels with the request. Empty for every
+         * independent list, which is every list that existed before.
          */
-        async fetchOptions(id: string, option: string): Promise<ProviderOption[]> {
-            const { data } = await api.get<{ options: ProviderOption[] }>(`/integrations/${id}/options/${option}`);
+        async fetchOptions(id: string, option: string, context: Record<string, string> = {}): Promise<ProviderOption[]> {
+            // The config argument is omitted entirely for an independent
+            // list, rather than passed with `params: undefined`: every
+            // caller that existed before this parameter should produce
+            // byte-identical requests.
+            const url = `/integrations/${id}/options/${option}`;
+            const { data } =
+                Object.keys(context).length > 0
+                    ? await api.get<{ options: ProviderOption[] }>(url, { params: { context } })
+                    : await api.get<{ options: ProviderOption[] }>(url);
 
             return data.options;
         },

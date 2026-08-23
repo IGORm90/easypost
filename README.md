@@ -167,6 +167,68 @@ member still cannot connect or remove a channel end to end.
   messages, and put its client id/secret in
   `SLACK_INTEGRATION_CLIENT_ID`/`SLACK_INTEGRATION_CLIENT_SECRET`.
 
+## Obtaining credentials for the eight Block 5 networks
+
+All eight are OAuth 2.0 client pairs registered per deployment, and all
+eight use the same redirect URI — `INTEGRATIONS_REDIRECT_URL` — because
+the SPA, not the backend, receives the provider's redirect and posts the
+code back. Leaving a pair empty only means that channel cannot be
+connected here; nothing else is affected.
+
+**Apply for app review on day one.** Publishing on behalf of a user
+requires an approved app on Meta (Facebook, Instagram, Threads), X and
+LinkedIn, and approval takes weeks of calendar time. Development against
+your own test accounts does not wait for it; acceptance does.
+
+- **X** — register at the [X Developer Portal](https://developer.x.com).
+  Enable OAuth 2.0 with PKCE, request `tweet.read`, `tweet.write`,
+  `users.read` and `offline.access` (the last one is what makes a refresh
+  token exist at all — without it the channel breaks two hours after
+  connecting), and set `TWITTER_CLIENT_ID`/`TWITTER_CLIENT_SECRET`.
+  **Check the current API tier before relying on this channel**: writing
+  is not available on the free tier, so a deployment without a paid plan
+  can connect the channel and still fail to publish.
+- **LinkedIn (profile)** — register at the
+  [LinkedIn Developer Portal](https://www.linkedin.com/developers/apps).
+  Request `openid`, `profile` and `w_member_social`; set
+  `LINKEDIN_CLIENT_ID`/`LINKEDIN_CLIENT_SECRET`.
+- **LinkedIn Page** — the same app, plus the `w_organization_social`
+  scope and the Community Management API product. It is a separate
+  channel in this app (different author URN, different permissions), and
+  the organization to post as is chosen in the channel's settings after
+  connecting.
+- **Reddit** — create a **web app** at
+  [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps). Set
+  `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, and also
+  `REDDIT_USER_AGENT` — Reddit refuses generic or absent user agents
+  outright, so use something like `easypost/1.0 by /u/your-account`. The
+  connect flow asks for `duration=permanent`; without it Reddit issues no
+  refresh token and the channel dies within the hour.
+- **Facebook Page** — register at
+  [developers.facebook.com](https://developers.facebook.com/apps). Request
+  `pages_show_list`, `pages_manage_posts` and `pages_read_engagement`; set
+  `FACEBOOK_PAGE_CLIENT_ID`/`FACEBOOK_PAGE_CLIENT_SECRET`. The page to
+  post as is chosen in the channel's settings after connecting; only the
+  long-lived user token is stored, and the page token is fetched at
+  publish time.
+- **Instagram (Business)** — the same Meta app plus `instagram_basic` and
+  `instagram_content_publish`; the Instagram account must be linked to a
+  Facebook Page. Set
+  `INSTAGRAM_CLIENT_ID`/`INSTAGRAM_CLIENT_SECRET`.
+- **Instagram (Standalone)** — Instagram Login, for accounts with no
+  Facebook Page. Set
+  `INSTAGRAM_STANDALONE_CLIENT_ID`/`INSTAGRAM_STANDALONE_CLIENT_SECRET`.
+- **Threads** — the Threads API product on a Meta app, scopes
+  `threads_basic` and `threads_content_publish`; set
+  `META_THREADS_CLIENT_ID`/`META_THREADS_CLIENT_SECRET`.
+
+> **Instagram and Threads need media your storage serves publicly.** Both
+> publish by handing Meta a URL it fetches for itself, never an upload, so
+> `AWS_URL` must point at a publicly routable endpoint. The local default
+> (`http://localhost:9000/media`, MinIO) is not reachable from Meta, which
+> means these two channels cannot be accepted on a local stack — only on a
+> deployment with real object storage.
+
 ## Running the tests
 
 Backend (inside the `php` container):

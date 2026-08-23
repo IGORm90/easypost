@@ -31,9 +31,25 @@ interface SupportsOptions
      * recognise $option — the controller turns that into a 404, never a
      * leaked exception/class name.
      *
+     * $context (Block 5.0.6) carries the values a DEPENDENT list needs:
+     * some option lists are not a property of the account at all but of
+     * another choice already made on the same post — Reddit's post flairs
+     * exist per subreddit, so `flairs` is unanswerable without knowing
+     * which subreddit. It arrives from `?context[...]` on
+     * `GET /api/integrations/{id}/options/{option}`, validated to a flat
+     * map of strings and otherwise untouched: the controller does not
+     * know what any key means. It is user-controlled input that providers
+     * usually put in an outbound URL — treat it as such.
+     *
+     * An implementation that cannot answer without a context key it was
+     * not given should return an empty list, not throw: the editor
+     * requests a dependent list as soon as it renders the field, which is
+     * before the customer has chosen the value it depends on.
+     *
+     * @param  array<string, string>  $context
      * @return array<int, array{value: string, label: string}>
      */
-    public function options(Integration $integration, string $option): array;
+    public function options(Integration $integration, string $option, array $context = []): array;
 
     /**
      * Maps a settings key this provider declares as updatable (see

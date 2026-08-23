@@ -96,6 +96,7 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
             // messages that actually carry markup, so a plain post
             // goes out exactly as it did before formatting existed.
             supportedMarks: TextMark::cases(),
+            requiresMedia: false,
             requiresAltText: false,
         );
     }

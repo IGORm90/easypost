@@ -94,6 +94,47 @@ class OAuthStateService
     }
 
     /**
+     * Attaches provider-supplied values to an already-minted state, so
+     * they come back — unaltered and un-substitutable — at consume()
+     * time (Block 5.0.2).
+     *
+     * This exists because AuthUrlDto::$extra used to be handed to the
+     * SPA, kept in sessionStorage across the provider redirect, and
+     * posted back with the callback. For Mastodon's instance host that
+     * was merely roundabout. For PKCE it is wrong: the `code_verifier`
+     * is the secret half of the proof that the authorization code
+     * belongs to this attempt, and a browser that holds it can also
+     * replace it. The state record is already server-side, already
+     * single-use and already what the callback's trust rests on.
+     *
+     * Deliberately writes into the EXISTING entry (and does nothing if
+     * there is none) rather than creating one: a state is minted by
+     * generate() alone, under the org+user binding, and nothing else may
+     * bring one into existence.
+     *
+     * Re-writing the entry restarts the full TTL, which is why this is
+     * documented as an authUrl()-time call and nothing else: it runs in
+     * the same request as generate(), microseconds later. Calling it on
+     * an old state later on would hand that state a fresh ten minutes of
+     * life, and the TTL is precisely what bounds a leaked one.
+     *
+     * @param  array<string, mixed>  $extra
+     */
+    public function remember(string $state, array $extra): void
+    {
+        $key = self::key($state);
+        $payload = Cache::get($key);
+
+        if (! is_array($payload)) {
+            return;
+        }
+
+        $payload['extra'] = $extra;
+
+        Cache::put($key, $payload, self::TTL_SECONDS);
+    }
+
+    /**
      * Resolves and single-use-consumes $state, returning the Organization
      * it was minted for. Throws InvalidOAuthStateException if $state is
      * unknown, expired, already consumed, or was minted for a different
@@ -112,7 +153,7 @@ class OAuthStateService
      * as a distinct error, since from the caller's perspective both mean
      * "this connection request could not be completed."
      */
-    public function consume(string $state, User $user): Organization
+    public function consume(string $state, User $user): OAuthStateResult
     {
         $lock = Cache::lock(self::lockKey($state), self::LOCK_TTL_SECONDS);
 
@@ -123,7 +164,7 @@ class OAuthStateService
         }
     }
 
-    private function consumeLocked(string $state, User $user): Organization
+    private function consumeLocked(string $state, User $user): OAuthStateResult
     {
         $key = self::key($state);
         $payload = Cache::get($key);
@@ -151,7 +192,10 @@ class OAuthStateService
 
         Cache::forget($key);
 
-        return $organization;
+        /** @var array<string, mixed> $extra */
+        $extra = is_array($payload['extra'] ?? null) ? $payload['extra'] : [];
+
+        return new OAuthStateResult($organization, $extra);
     }
 
     private static function key(string $state): string

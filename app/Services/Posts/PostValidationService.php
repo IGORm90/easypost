@@ -3,10 +3,12 @@
 namespace App\Services\Posts;
 
 use App\Models\Integration;
+use App\Social\Contracts\DeclaresPostSettings;
 use App\Social\Dto\MediaDto;
 use App\Social\Dto\PostPayloadDto;
 use App\Social\Dto\ProviderCapabilities;
 use App\Social\ProviderRegistry;
+use Illuminate\Support\Facades\Validator;
 
 /**
  * Decides whether a $chain of PostPayloadDto may be scheduled/published
@@ -113,7 +115,14 @@ final class PostValidationService
      */
     public function validate(Integration $integration, array $chain): array
     {
-        $capabilities = $this->providers->get($integration->provider_identifier)->capabilities();
+        $provider = $this->providers->get($integration->provider_identifier);
+        $capabilities = $provider->capabilities();
+
+        // Block 5.0.6: a provider may also declare fields the POST itself
+        // must carry (a subreddit, a title). Resolved here, once, exactly
+        // like capabilities — and, exactly like capabilities, read as a
+        // declaration rather than by asking who the provider is.
+        $postSettings = $provider instanceof DeclaresPostSettings ? $provider->postSettings() : [];
 
         $errors = [
             ...$this->validateChainShape($capabilities, $chain),
@@ -121,6 +130,78 @@ final class PostValidationService
 
         foreach ($chain as $index => $segment) {
             $errors = [...$errors, ...$this->validateSegment($capabilities, $index, $segment)];
+            $errors = [...$errors, ...$this->validatePostSettings($postSettings, $index, $segment)];
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Enforces a provider's declared per-post settings against one
+     * segment.
+     *
+     * Two error codes rather than one, because they send the customer to
+     * different places: `post_setting_required` means a field was left
+     * empty, `post_setting_invalid` means it was filled in with something
+     * the network will not take. Both carry the field's key in `limit`,
+     * which is what lets the editor put the message under the field
+     * instead of in a list at the top of the form.
+     *
+     * The rules are run through Laravel's validator rather than
+     * interpreted here: they are declared as ordinary rule strings, and
+     * reimplementing even a subset of them ('max:300', 'url',
+     * 'required_if') would be a second, worse validator that drifts from
+     * the first.
+     *
+     * @param  list<array{key: string, type: string, required: bool, rules: list<string>, option?: string, dependsOn?: string}>  $postSettings
+     * @return list<array{post_index: int, code: string, message: string, limit: int|string|null, actual: int|string|null}>
+     */
+    private function validatePostSettings(array $postSettings, int $index, PostPayloadDto $segment): array
+    {
+        if ($postSettings === []) {
+            return [];
+        }
+
+        $errors = [];
+
+        foreach ($postSettings as $field) {
+            $key = $field['key'];
+            $value = $segment->settings[$key] ?? null;
+
+            // A blank string is absence wearing a costume: an empty text
+            // input posts '', and passing that on means the network
+            // rejects the post later, in its own words, on its own
+            // schedule.
+            $missing = $value === null || (is_string($value) && trim($value) === '');
+
+            if ($missing) {
+                if ($field['required']) {
+                    $errors[] = $this->error(
+                        $index,
+                        'post_setting_required',
+                        "This network requires \"{$key}\" to be set on every post.",
+                        limit: $key,
+                        actual: null,
+                    );
+                }
+
+                // An optional field left empty is finished with: there is
+                // nothing to run rules against, and running them anyway
+                // would turn 'string' into a de facto required.
+                continue;
+            }
+
+            $validator = Validator::make([$key => $value], [$key => $field['rules']]);
+
+            if ($validator->fails()) {
+                $errors[] = $this->error(
+                    $index,
+                    'post_setting_invalid',
+                    "The value given for \"{$key}\" is not accepted by this network.",
+                    limit: $key,
+                    actual: is_scalar($value) ? (string) $value : 'invalid',
+                );
+            }
         }
 
         return $errors;
@@ -189,6 +270,23 @@ final class PostValidationService
                 'Post has no text content and no media attached.',
                 limit: 'non-empty text or at least one media attachment',
                 actual: 'empty',
+            );
+        }
+
+        // Block 5.0.5: a network that publishes nothing without an
+        // attachment (Instagram) must say so here rather than at publish
+        // time. Deliberately separate from empty_content above: a segment
+        // with real text and no picture is not empty, it is unpostable to
+        // THIS network, and telling the customer "post has no content"
+        // about a post they can see they wrote would send them looking in
+        // the wrong place.
+        if ($capabilities->requiresMedia && $segment->media === []) {
+            $errors[] = $this->error(
+                $index,
+                'media_required',
+                'This network requires at least one image or video on every post.',
+                limit: 1,
+                actual: 0,
             );
         }
 

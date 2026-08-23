@@ -25,6 +25,7 @@ const capabilities = {
     allowsMixedMedia: true,
     maxThreadLength: null,
     supportedMarks: [],
+    requiresMedia: false,
     requiresAltText: false,
 };
 
@@ -36,6 +37,7 @@ function provider(overrides: Partial<Provider> = {}): Provider {
         capabilities,
         auth_fields: [],
         settings_fields: [{ key: 'channel_id', option: 'channels' }],
+        post_settings: [],
         ...overrides,
     };
 }

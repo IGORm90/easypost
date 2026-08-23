@@ -118,6 +118,7 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
             // The fake network renders everything -- tests that need a
             // formatting-free channel call withCapabilities().
             supportedMarks: TextMark::cases(),
+            requiresMedia: false,
         );
     }
 
@@ -486,9 +487,14 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
      * hardcodes 'rooms' anywhere) while still exercising both the happy
      * path and the "provider doesn't recognise this option" 404 path.
      *
+     * $context is accepted (the interface passes it for dependent
+     * lists) and deliberately unread: neither list this provider offers
+     * depends on another choice.
+     *
+     * @param  array<string, string>  $context
      * @return array<int, array{value: string, label: string}>
      */
-    public function options(Integration $integration, string $option): array
+    public function options(Integration $integration, string $option, array $context = []): array
     {
         if ($option !== 'rooms') {
             throw UnknownProviderOptionException::forOption($this->identifier(), $option);

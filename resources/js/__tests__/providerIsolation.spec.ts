@@ -21,7 +21,40 @@ import { globSync } from 'glob'
  * not become a precedent for `v-if="provider === 'telegram'"` creeping
  * into a parent component later.
  */
-const PROVIDERS = ['telegram', 'mastodon', 'bluesky', 'discord', 'slack'];
+/**
+ * Block 5's eight networks are listed here from the moment each provider
+ * exists. Two of them do not carry the network's plain name, and the
+ * reason lives in this very file: PROVIDER_FILENAME_PATTERN matches an
+ * identifier as a bare substring of a FILE PATH, with no word boundary
+ * and no case sensitivity.
+ *
+ *  - X is 'twitter'. With 'x' in this list, `PreviewText.vue`,
+ *    `ContentTextarea.vue` and every other path containing the letter
+ *    would be reported as a provider-named module, and `['"`]x['"`]`
+ *    would fire on any single-character string in the codebase.
+ *  - Threads is 'meta-threads'. Its backend counterpart explains why
+ *    ('threads_not_supported' is generic capability vocabulary); the
+ *    two lists are kept in step so a violation cannot be green on one
+ *    side and red on the other.
+ *
+ * Consequence worth knowing before adding a file: no source file outside
+ * components/previews/ may have any of these names in its PATH. That
+ * rules out, say, `components/editor/InstagramCarousel.vue` — which is
+ * the point, since such a file is per-provider behaviour by definition.
+ */
+const PROVIDERS = [
+    'telegram',
+    'mastodon',
+    'bluesky',
+    'discord',
+    'slack',
+    'twitter',
+    'linkedin',
+    'reddit',
+    'facebook-page',
+    'instagram',
+    'meta-threads',
+];
 /**
  * Final review, Important 10: this used to require the identifier to be
  * QUOTED, which made the guard blind to exactly the shape the violation

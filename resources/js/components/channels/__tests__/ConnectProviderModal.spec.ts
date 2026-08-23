@@ -23,6 +23,7 @@ const telegram: Provider = {
         { key: 'chat_id', type: 'text' },
     ],
     settings_fields: [],
+    post_settings: [],
     capabilities: {
         maxCharacters: 1000,
         maxImages: 10,
@@ -34,6 +35,7 @@ const telegram: Provider = {
         allowsMixedMedia: true,
         maxThreadLength: null,
         supportedMarks: [],
+        requiresMedia: false,
         requiresAltText: false,
     },
 };
