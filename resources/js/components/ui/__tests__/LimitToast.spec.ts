@@ -28,7 +28,8 @@ function zIndexOf(el: Element | null): number {
 }
 
 // Round 1 re-review, residual 1: Modal.vue teleports to <body> as `fixed
-// inset-0 z-50` with a 40%-opacity scrim. LimitToast.vue used to stay
+// inset-0 z-50` with a scrim (`bg-overlay`; it was `bg-text/40` until the
+// opacity modifier turned out to compile to nothing). LimitToast.vue used to stay
 // inside AppLayout's own tree at the SAME z-50 — later in DOM order, the
 // modal's scrim painted over it, so a 402 raised from inside a modal
 // (ConnectProviderModal, or MediaUploader inside MediaPicker) left only a
@@ -45,7 +46,7 @@ it('sits at a higher z-index than Modal.vue\'s scrim, so an open modal never pai
     await flushPromises();
 
     const toastWrapper = document.body.querySelector('[role="status"]')?.closest('.fixed') ?? null;
-    const modalScrimWrapper = document.body.querySelector('.bg-text\\/40')?.closest('.fixed') ?? null;
+    const modalScrimWrapper = document.body.querySelector('.bg-overlay')?.closest('.fixed') ?? null;
 
     expect(zIndexOf(toastWrapper)).toBeGreaterThan(zIndexOf(modalScrimWrapper));
 });

@@ -11,6 +11,7 @@ export default {
                 border: 'var(--border)',
                 text: 'var(--text)',
                 muted: 'var(--muted)',
+                overlay: 'var(--overlay)',
                 primary: { DEFAULT: 'var(--primary)', hover: 'var(--primary-hover)', soft: 'var(--primary-soft)' },
                 'on-primary': 'var(--on-primary)',
                 accent: { DEFAULT: 'var(--accent)', soft: 'var(--accent-soft)' },

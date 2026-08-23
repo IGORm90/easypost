@@ -13,10 +13,66 @@
  * exactly one page.
  */
 const stack: symbol[] = [];
+
+/**
+ * How many modals are currently holding the page still, and what the
+ * page's own inline styles were before the first of them took over.
+ *
+ * A count, not a boolean: ShareLinkModal opens from inside
+ * PostEditorModal, and if each instance simply cleared the lock on close,
+ * dismissing the little dialog would hand scrolling back to a page that
+ * is still covered by the composer.
+ *
+ * Module-level for the same reason as `stack` above — `<script setup>`
+ * runs once per instance, and a per-instance count is a count of one.
+ */
+let locks = 0;
+let restoreBodyStyle: { overflow: string; paddingRight: string; rootOverflow: string } | null = null;
+
+function lockBodyScroll(): void {
+    if (locks++ > 0) {
+        return;
+    }
+
+    restoreBodyStyle = {
+        overflow: document.body.style.overflow,
+        paddingRight: document.body.style.paddingRight,
+        // <html> as well as <body>: this app scrolls the document
+        // element (`document.scrollingElement` is HTML), and body's
+        // overflow only propagates to the viewport under conditions that
+        // are easy to lose. Setting both is what actually holds the page.
+        rootOverflow: document.documentElement.style.overflow,
+    };
+
+    // Hiding the scrollbar narrows the viewport, and the page underneath
+    // reflows sideways the instant the modal opens. Padding by exactly
+    // the width the scrollbar occupied keeps it still.
+    const gutter = window.innerWidth - document.documentElement.clientWidth;
+
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+
+    if (gutter > 0) {
+        document.body.style.paddingRight = `${gutter}px`;
+    }
+}
+
+function unlockBodyScroll(): void {
+    if (locks === 0 || --locks > 0) {
+        return;
+    }
+
+    // Restored to whatever the page had, not blindly cleared to '' —
+    // the app may legitimately be styling the body itself.
+    document.documentElement.style.overflow = restoreBodyStyle?.rootOverflow ?? '';
+    document.body.style.overflow = restoreBodyStyle?.overflow ?? '';
+    document.body.style.paddingRight = restoreBodyStyle?.paddingRight ?? '';
+    restoreBodyStyle = null;
+}
 </script>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 /**
@@ -36,13 +92,33 @@ import { useI18n } from 'vue-i18n';
  * keyboard equivalent of the close button. Every one of those is fixed
  * below, and none of it changes what a mouse user sees.
  */
-const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean }>(), {
+const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean; size?: 'md' | 'full' }>(), {
     open: false,
     title: undefined,
     ignoreBackdropClick: false,
+    size: 'md',
 });
 
 const emit = defineEmits<{ close: [] }>();
+
+/**
+ * `md` was `max-w-md` — 448px — for every caller, including the post
+ * composer, which is a whole workspace (channel picker, thread editor,
+ * preview, schedule, comments) and was unusable at that width.
+ *
+ * `full` gives up being a card in the middle of the page: it is bounded
+ * only by the wrapper's own p-4 gutter, capped at 90vh, and column-flexed
+ * so the header stays put while the body scrolls inside it.
+ *
+ * Whole class strings, never `max-w-${size}` — Tailwind scans source text
+ * and cannot see a class that only exists after interpolation.
+ */
+const SIZES: Record<'md' | 'full', string> = {
+    md: 'max-w-3xl',
+    full: 'max-w-none max-h-[90vh] flex flex-col',
+};
+
+const sizeClass = computed(() => SIZES[props.size]);
 
 /** This instance's place in the shared `stack` above. */
 const identity = Symbol('modal');
@@ -53,6 +129,16 @@ const titleId = useId();
 const dialog = ref<HTMLElement | null>(null);
 /** The element that had focus when this modal opened, so closing can hand it back. */
 let restoreFocusTo: HTMLElement | null = null;
+/**
+ * Whether THIS instance is one of the modals currently holding the page
+ * still, so that closing and then unmounting cannot decrement the shared
+ * count twice and unfreeze a page other modals are still covering.
+ *
+ * Declared here, above the `watch(..., { immediate: true })` that reads
+ * it — a `let` further down the file is in its temporal dead zone when
+ * that watcher fires during setup.
+ */
+let holdsLock = false;
 
 function onBackdropClick(): void {
     if (!props.ignoreBackdropClick) {
@@ -118,6 +204,8 @@ watch(
         if (open) {
             restoreFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             stack.push(identity);
+            holdsLock = true;
+            lockBodyScroll();
             document.addEventListener('keydown', onKeydown);
             await nextTick();
             (focusables()[0] ?? dialog.value)?.focus();
@@ -126,12 +214,20 @@ watch(
         }
 
         leaveStack();
+        releaseLock();
         document.removeEventListener('keydown', onKeydown);
         restoreFocusTo?.focus();
         restoreFocusTo = null;
     },
     { immediate: true },
 );
+
+function releaseLock(): void {
+    if (holdsLock) {
+        holdsLock = false;
+        unlockBodyScroll();
+    }
+}
 
 function leaveStack(): void {
     const index = stack.lastIndexOf(identity);
@@ -146,6 +242,9 @@ onBeforeUnmount(() => {
     // which would otherwise leave a dead entry on top of the stack and
     // silence Escape for everything underneath it, permanently.
     leaveStack();
+    // Same reason as the stack entry: a modal can be torn down while
+    // still open, and a leaked lock leaves the whole app unscrollable.
+    releaseLock();
     document.removeEventListener('keydown', onKeydown);
 });
 </script>
@@ -153,16 +252,17 @@ onBeforeUnmount(() => {
 <template>
     <Teleport to="body">
         <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div class="absolute inset-0 bg-text/40" @click="onBackdropClick" />
+            <div class="absolute inset-0 bg-overlay" @click="onBackdropClick" />
             <div
                 ref="dialog"
                 role="dialog"
                 aria-modal="true"
                 :aria-labelledby="title ? titleId : undefined"
                 tabindex="-1"
-                class="relative w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-lg"
+                class="relative w-full rounded-xl border border-border bg-surface p-6 shadow-lg"
+                :class="sizeClass"
             >
-                <div class="mb-4 flex items-center justify-between gap-2">
+                <div class="mb-4 flex shrink-0 items-center justify-between gap-2">
                     <h2 v-if="title" :id="titleId" class="text-base font-semibold text-text">{{ title }}</h2>
                     <!--
                         Header actions (Task 1.1's "Share"). Deliberately

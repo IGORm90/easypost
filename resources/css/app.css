@@ -9,6 +9,14 @@
     --border: #DBE5DD;
     --text: #0B1F17;
     --muted: #5A7267;
+    /*
+     * The modal scrim. The alpha is baked into the token because the
+     * Tailwind mapping is a bare `var(--token)` with no <alpha-value>
+     * placeholder, so `bg-overlay/65` would be silently dropped by
+     * Tailwind 3 and dim nothing at all — which is exactly what the old
+     * `bg-text/40` did.
+     */
+    --overlay: #0B1F17A6;
     --primary: #0F726B;
     --primary-hover: #0C5B55;
     --on-primary: #FFFFFF;
@@ -33,6 +41,9 @@
     --border: #1E332B;
     --text: #E4EFE9;
     --muted: #8AA598;
+    /* Deliberately darker than the light theme's: --text here is nearly
+       white, so reusing it would wash the page out instead of dimming it. */
+    --overlay: #07110EBF;
     --primary: #2DD4BF;
     --primary-hover: #5EEAD4;
     --on-primary: #032620;

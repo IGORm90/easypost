@@ -1,6 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import PostEditorModal from '../PostEditorModal.vue';
+import Modal from '../../ui/Modal.vue';
 import { useAuthStore } from '../../../stores/auth';
 import type { Integration, Provider } from '../../../stores/integrations';
 import type { PostGroupApi } from '../types';
@@ -722,4 +723,19 @@ it('renders no per-post settings block for a provider that declares none', async
     await selectChannelAndType(w, 'body text');
 
     expect(w.find('[data-testid="post-settings"]').exists()).toBe(false);
+});
+
+// The composer is a workspace, not a confirmation box: channel picker,
+// thread editor, live preview, schedule controls and comments all at
+// once. At the shared default width they were stacked into a 448px
+// column; `full` hands it the screen and lets the body scroll inside a
+// dialog whose header stays put.
+it('asks the shared Modal for the full-screen size', async () => {
+    const w = await mountReady();
+    const modal = w.getComponent(Modal);
+
+    expect(modal.props('size')).toBe('full');
+    // Still not dismissable by a stray click — a multi-minute
+    // composition may only be closed deliberately.
+    expect(modal.props('ignoreBackdropClick')).toBe(true);
 });

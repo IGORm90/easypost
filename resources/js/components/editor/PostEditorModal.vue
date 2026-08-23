@@ -679,14 +679,20 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
 </script>
 
 <template>
-    <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" @close="emit('close')">
+    <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" size="full" @close="emit('close')">
         <template v-if="canShare" #actions>
             <Button variant="secondary" @click="shareOpen = true">{{ t('calendar.share.menuItem') }}</Button>
         </template>
 
         <div v-if="loading" class="py-8 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
 
-        <div v-else class="flex max-h-[75vh] flex-col gap-4 overflow-y-auto">
+        <!--
+            The height now belongs to Modal (max-h-[90vh] on a column-flexed
+            dialog); `min-h-0 flex-1` is what lets this body take the leftover
+            space and scroll inside it instead of stretching the dialog past
+            the viewport, which is what a flex child does by default.
+        -->
+        <div v-else class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
             <!-- variant="muted", not "warning" (color.md §3.8, final review
                  Important 9): this screen renders accent-tinted channel
                  avatars, and --warning here would be the third unrelated

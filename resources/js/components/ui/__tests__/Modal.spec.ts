@@ -1,5 +1,15 @@
-import { mount } from '@vue/test-utils';
+import { enableAutoUnmount, mount } from '@vue/test-utils';
 import Modal from '../Modal.vue';
+
+/**
+ * Modal keeps module-level state that outlives a single instance — the
+ * Escape `stack`, and now the body-scroll lock count. A wrapper left
+ * mounted at the end of a test therefore leaks an open modal into every
+ * test after it, which would make the scroll-lock assertions below pass
+ * or fail depending on file order. Unmounting after each test is what
+ * makes them mean anything.
+ */
+enableAutoUnmount(afterEach);
 
 function mountModal(props: Record<string, unknown> = {}) {
     return mount(Modal, {
@@ -157,4 +167,81 @@ it('hands Escape back to the one underneath once the topmost closes', async () =
     await bottom.vm.$nextTick();
 
     expect(bottom.emitted('close')).toBeTruthy();
+});
+
+// The composer is a full workspace — channels, thread editor, preview,
+// schedule controls — and it was being squeezed into max-w-md (448px).
+it('is wide by default, and effectively full-screen at size="full"', () => {
+    const dialog = mountModal().get('[role="dialog"]');
+
+    expect(dialog.classes()).toContain('max-w-3xl');
+    expect(dialog.classes()).not.toContain('max-w-md');
+
+    const full = mountModal({ size: 'full' }).get('[role="dialog"]');
+
+    expect(full.classes()).toContain('max-w-none');
+    expect(full.classes()).toContain('max-h-[90vh]');
+    // The header stays put and the body scrolls inside it, rather than
+    // the whole dialog growing past the viewport.
+    expect(full.classes()).toContain('flex-col');
+});
+
+// `bg-text/40` produced NO css at all: tailwind.config.js maps every
+// token to a bare `var(--token)` with no <alpha-value> placeholder, and
+// Tailwind 3 drops an opacity modifier it cannot apply. The backdrop was
+// catching clicks while dimming nothing. `--overlay` bakes the alpha into
+// the token itself, and is a deliberate dark wash in BOTH themes —
+// `--text` in the dark theme is near-white and would have washed the page
+// out in light, not dimmed it.
+it('dims the page with the overlay token, not with an opacity modifier that Tailwind silently drops', () => {
+    const backdrop = mountModal().get('.fixed > .absolute');
+
+    expect(backdrop.classes()).toContain('bg-overlay');
+    expect(backdrop.classes().some((c) => c.includes('/'))).toBe(false);
+});
+
+it('freezes the page behind it while open, and hands scrolling back on close', async () => {
+    document.body.style.overflow = 'auto';
+
+    const w = mount(Modal, { props: { open: false, title: 'Title' }, global: { stubs: { teleport: true } } });
+
+    expect(document.body.style.overflow).toBe('auto');
+
+    await w.setProps({ open: true });
+    expect(document.body.style.overflow).toBe('hidden');
+    // <html> too: it is the element that actually scrolls in this app.
+    expect(document.documentElement.style.overflow).toBe('hidden');
+
+    await w.setProps({ open: false });
+    // Restored to what it was, not blindly cleared to ''.
+    expect(document.body.style.overflow).toBe('auto');
+
+    document.body.style.overflow = '';
+});
+
+// ShareLinkModal opens from inside PostEditorModal. If each instance
+// simply cleared the lock on close, dismissing the small dialog would
+// unfreeze the page while the composer was still covering it.
+it('keeps the page frozen until the last of a stack of modals closes', async () => {
+    const bottom = mountModal();
+    const top = mountModal();
+
+    expect(document.body.style.overflow).toBe('hidden');
+
+    await top.setProps({ open: false });
+    expect(document.body.style.overflow).toBe('hidden');
+
+    await bottom.setProps({ open: false });
+    expect(document.body.style.overflow).toBe('');
+    expect(document.documentElement.style.overflow).toBe('');
+});
+
+it('releases the lock when an open modal is torn down with its page', () => {
+    const w = mountModal();
+
+    expect(document.body.style.overflow).toBe('hidden');
+
+    w.unmount();
+
+    expect(document.body.style.overflow).toBe('');
 });
