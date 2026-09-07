@@ -115,6 +115,24 @@ final class PostValidationService
      */
     public function validate(Integration $integration, array $chain): array
     {
+        // A channel can outlive the network it was connected to: a
+        // provider removed from this install leaves its Integration rows
+        // behind, and ProviderRegistry::get() answers those with an
+        // UnknownProviderException — an InvalidArgumentException, so
+        // nothing in the request pipeline maps it to anything but a 500.
+        // A 500 tells the customer nothing and cannot be acted on; one
+        // validation error names the real problem and lands on the
+        // segment that carries it, exactly like every other code here.
+        if (! $this->providers->has($integration->provider_identifier)) {
+            return [$this->error(
+                0,
+                'provider_unavailable',
+                'This channel\'s network is no longer available. Delete the channel, or reconnect it on a network this installation still supports.',
+                limit: null,
+                actual: null,
+            )];
+        }
+
         $provider = $this->providers->get($integration->provider_identifier);
         $capabilities = $provider->capabilities();
 

@@ -162,7 +162,6 @@
             "connect": "Connect",
             "back": "Back",
             "fields": {
-                "instance": "Mastodon server (e.g. mastodon.social)",
                 "botToken": "Bot token",
                 "chatId": "Chat/channel id",
                 "handle": "Handle (e.g. user.bsky.social)",
@@ -518,21 +517,9 @@
         "telegram": {
             "kind": "Telegram channel"
         },
-        "mastodon": {
-            "kind": "Toot",
-            "replyingToPrevious": "Replying to the previous post"
-        },
         "bluesky": {
             "kind": "Post",
             "reply": "Reply"
-        },
-        "discord": {
-            "kind": "Discord message",
-            "unlinked": "This channel does not support threading — each message below is sent separately, not linked."
-        },
-        "slack": {
-            "thread": "Thread",
-            "replies": "{n} reply in thread | {n} replies in thread"
         }
     },
     "integrations": {

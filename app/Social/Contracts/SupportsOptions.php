@@ -8,24 +8,26 @@ use App\Social\Exceptions\UnknownProviderOptionException;
 /**
  * Optional capability: implement this on a provider whose network exposes
  * a dynamic, per-account list the user must pick from before (or after)
- * connecting a channel — e.g. Slack's list of channels the bot can post
- * to, Reddit's list of subreddits the account moderates, Pinterest's list
- * of boards. Providers with nothing to pick from simply don't implement
- * it.
+ * connecting a channel — a workspace's list of rooms, Reddit's list of
+ * subreddits the account moderates, Pinterest's list of boards.
+ * Providers with nothing to pick from simply don't implement it.
  *
  * This is the single generic hook behind `GET
  * /api/integrations/{id}/options/{option}` (Task 13): the controller
  * knows nothing about what "channels" or "boards" mean, only that it may
  * ask a provider for named lists of selectable options. `$option` is an
  * opaque string the frontend and the provider agree on (e.g. 'channels');
- * the controller never branches on it. Task 15 is the first real
- * consumer, for Slack.
+ * the controller never branches on it. No shipped provider implements
+ * this today — the one that did was removed with its network — so the
+ * behaviour is pinned by Tests\Support\FakeProvider and
+ * Tests\Support\UpdatableSettingsFakeProvider until Block 5's page and
+ * subreddit pickers arrive.
  */
 interface SupportsOptions
 {
     /**
      * Returns the selectable values for $option on this connected
-     * integration (e.g. $option = 'channels' for Slack).
+     * integration (e.g. $option = 'channels').
      *
      * Throws UnknownProviderOptionException if this provider does not
      * recognise $option — the controller turns that into a 404, never a
@@ -60,8 +62,9 @@ interface SupportsOptions
      * so the settings UI can render a picker for exactly those settings
      * that have one, driven by a declared capability rather than by
      * matching on a provider identifier — which the frontend is forbidden
-     * from doing outside its preview/registry layer, and which is why
-     * Slack's `channel_id` had no UI at all and every Slack post failed.
+     * from doing outside its preview/registry layer. Without this map a
+     * required setting has no UI at all, and every post to that channel
+     * fails; that is exactly what happened before it existed.
      *
      * An option a user never picks a setting from (a list shown for some
      * other purpose entirely) simply is not listed here.

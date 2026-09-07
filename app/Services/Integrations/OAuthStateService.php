@@ -100,8 +100,8 @@ class OAuthStateService
      *
      * This exists because AuthUrlDto::$extra used to be handed to the
      * SPA, kept in sessionStorage across the provider redirect, and
-     * posted back with the callback. For Mastodon's instance host that
-     * was merely roundabout. For PKCE it is wrong: the `code_verifier`
+     * posted back with the callback. For an instance host that was
+     * merely roundabout. For PKCE it is wrong: the `code_verifier`
      * is the secret half of the proof that the authorization code
      * belongs to this attempt, and a browser that holds it can also
      * replace it. The state record is already server-side, already

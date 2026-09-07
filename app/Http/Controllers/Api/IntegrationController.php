@@ -166,8 +166,8 @@ class IntegrationController extends Controller
      * Everything the caller sent beyond the implicit state/redirect
      * (query string or JSON body -- `$request->all()` merges both) is
      * forwarded verbatim to `generateAuthUrl()`'s `$params` (Task 14):
-     * e.g. Mastodon needs the user-chosen instance host before it can
-     * build an authorize URL at all. This controller has no idea what
+     * e.g. a federated network needs the user-chosen instance host
+     * before it can build an authorize URL at all. This controller has no idea what
      * shape that data takes for any given provider (same rule as
      * `callback()` passing `$request->except('state')` through to
      * `authenticate()` below) -- it only knows how to hand the request
@@ -181,9 +181,9 @@ class IntegrationController extends Controller
 
         // Block 5.0.2: `extra` is now remembered SERVER SIDE, against the
         // state it belongs to. It used to travel to the SPA and come back
-        // in the callback body, which was fine while its only content was
-        // Mastodon's instance host — but the networks added in Block 5
-        // put a PKCE `code_verifier` there, and a secret the browser
+        // in the callback body, which was fine while its only content
+        // was an instance host — but the networks added in Block 5 put a
+        // PKCE `code_verifier` there, and a secret the browser
         // holds is a secret the browser can also replace. `callback()`
         // now layers this copy over the request body, so the stored value
         // is the one that reaches the provider.
@@ -218,7 +218,7 @@ class IntegrationController extends Controller
 
         // Block 5.0.2: the server's own copy of what the provider asked
         // to remember is applied ON TOP of the request body, so a browser
-        // cannot substitute a `code_verifier`, a Mastodon instance or a
+        // cannot substitute a `code_verifier`, an instance host or a
         // page id for the one this app issued. `state` is stripped
         // afterwards because the stored extra may legitimately contain it
         // (FakeProvider returns exactly that) and `authenticate()`'s
@@ -231,8 +231,8 @@ class IntegrationController extends Controller
         } catch (ProviderAuthException|ProviderPermanentException) {
             // Both mean "this attempt cannot succeed as submitted" — a
             // rejected credential (bad Telegram bot token/chat id, a
-            // revoked Bluesky app password, Mastodon's OAuth code
-            // exchange rejected, ...) or a malformed/permanently-invalid
+            // revoked Bluesky app password, a rejected OAuth code
+            // exchange, ...) or a malformed/permanently-invalid
             // request the provider will never accept by retrying. Task
             // 17 review, Important finding: previously uncaught here,
             // so the single most likely user error in the connect flow

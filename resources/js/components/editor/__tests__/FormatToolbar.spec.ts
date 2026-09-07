@@ -18,7 +18,7 @@ function toolbar(marks: TextMark[]) {
 
 it('renders nothing at all when the network has no formatting', () => {
     // Not "renders disabled buttons": a greyed-out bold button on a
-    // Mastodon tab promises something that will never happen.
+    // channel's tab promises something that will never happen.
     const wrapper = toolbar([]);
 
     expect(wrapper.find('[data-testid="format-toolbar"]').exists()).toBe(false);
@@ -36,7 +36,8 @@ it('renders exactly the marks it was given, in a stable order', () => {
 });
 
 it('draws no link button for a network that would print the brackets', () => {
-    // Discord's exact case, expressed without naming Discord.
+    // A network that renders four marks but not links: offering the
+    // button would publish literal brackets.
     const wrapper = toolbar(['BOLD', 'ITALIC', 'STRIKE', 'CODE']);
 
     expect(wrapper.find('[data-testid="format-LINK"]').exists()).toBe(false);

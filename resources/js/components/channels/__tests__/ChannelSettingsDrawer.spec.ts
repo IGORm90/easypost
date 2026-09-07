@@ -174,7 +174,7 @@ it('omits settings entirely for a provider that declares no picker, and asks for
 });
 
 it('leaves the rest of the form usable when the option list cannot be loaded', async () => {
-    get.mockRejectedValueOnce(new Error('slack is down'));
+    get.mockRejectedValueOnce(new Error('the network is down'));
 
     const w = await mountDrawer([provider()], integration());
 

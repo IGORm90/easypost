@@ -7,13 +7,11 @@ import type { TextMark } from '../../stores/integrations';
 import type { PreviewSegment } from './types';
 
 /**
- * A Bluesky post and its reply chain. Like Mastodon (and unlike
- * Telegram/Slack), BlueskyProvider's threading is a genuine linked
- * list — each segment replies to the one before it — so it gets the
- * same nested-under-a-rail treatment as MastodonPreview, just with
- * Bluesky's own terminology ("Reply" rather than "toot") and a circular
- * avatar (Bluesky's own convention) instead of Mastodon's slightly
- * squarer one.
+ * A Bluesky post and its reply chain. BlueskyProvider's threading is a
+ * genuine linked list — each segment replies to the one before it, not
+ * to the root — so every reply is drawn nested under a rail rather than
+ * as a flat run of messages. The circular avatar is Bluesky's own
+ * convention.
  */
 const props = defineProps<{ channelName: string; channelPicture: string | null; segments: PreviewSegment[] }>();
 

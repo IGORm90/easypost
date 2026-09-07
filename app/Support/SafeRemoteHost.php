@@ -6,11 +6,12 @@ use App\Support\Exceptions\UnsafeRemoteHostException;
 
 /**
  * SSRF guard for any feature that makes a server-side HTTP request to a
- * host supplied (directly or indirectly) by a user: today, the Mastodon
- * instance host an org admin types in when connecting a channel; Task 27
- * ("upload media by URL") will need exactly the same check. Built here
- * as shared infrastructure rather than a private method on
- * MastodonProvider so the second caller doesn't have to reinvent it (or
+ * host supplied (directly or indirectly) by a user: today, the URL an
+ * org member hands to "upload media by URL". It was written for a
+ * provider that let an admin type its instance host, and deliberately
+ * built as shared infrastructure rather than a private method on that
+ * provider — which is why it outlived it, and why the next provider
+ * that resolves a caller-named host does not have to reinvent it (or,
  * worse, half-remember to).
  *
  * What it rejects: resolves the host (or accepts it directly if it's
@@ -82,17 +83,17 @@ use App\Support\Exceptions\UnsafeRemoteHostException;
  * different claims and only the second one matters:
  *
  *   - MediaUploadService::download() — every hop of the redirect chain.
- *   - MastodonProvider — the user-supplied instance host, connect-time and
- *     every publish.
- *   - DiscordProvider — the stored webhook url.
- *   - SlackProvider — the upload url Slack's own API returns.
+ *     Currently the only such call site: the provider legs that used to
+ *     be listed here (a user-typed instance host, a stored webhook url,
+ *     an upload url a network handed back) went with their networks.
  *
- * The four networks with FIXED API hosts (api.telegram.org, bsky.social,
- * discord.com's and slack.com's API legs) deliberately do NOT pin: they
- * never resolve through this class in the first place, so pinning them
- * would mean ADDING a mandatory DNS lookup — a new failure mode for hosts
- * no caller can influence. Their redirect exposure is closed by
- * BoundsHttpTimeouts instead.
+ * Networks with FIXED API hosts (api.telegram.org, bsky.social)
+ * deliberately do NOT pin: they never resolve through this class in the
+ * first place, so pinning them would mean ADDING a mandatory DNS lookup
+ * — a new failure mode for hosts no caller can influence. Their redirect
+ * exposure is closed by BoundsHttpTimeouts instead. A future provider
+ * that DOES take a host from the caller belongs in the list above, with
+ * a test in PinnedRequestTest, on the day it is written.
  *
  * A caller that only calls assertSafeHost() and does not pin still
  * carries the window; that is a property of the CALL SITE, not of this
@@ -129,8 +130,8 @@ final class SafeRemoteHost
     /**
      * Validates a full URL: scheme must be in $allowedSchemes (default
      * `['https']`, preserving every pre-Task-27 caller's behaviour
-     * unchanged -- Mastodon's/Discord's URLs are always built or stored
-     * as https), the URL must carry no userinfo, and the host must pass
+     * unchanged -- provider URLs were always built or stored as https),
+     * the URL must carry no userinfo, and the host must pass
      * assertSafeHost(). Returns the (lowercased) host on success so
      * callers don't have to re-parse the URL themselves.
      *
@@ -188,11 +189,12 @@ final class SafeRemoteHost
         $parts = parse_url($url);
 
         // Deliberately does NOT embed $url in the exception (review
-        // finding on Task 15): unlike Mastodon's bare instance host (the
-        // only caller when this method was first written), Discord's
-        // webhook url IS the credential -- a malformed/tampered stored
-        // value could still contain it verbatim even though it fails to
-        // parse as a URL at all, and this is the one branch here that
+        // finding on Task 15): unlike a bare instance host (the only
+        // caller when this method was first written), a whole URL can BE
+        // the credential -- a webhook url is the canonical case, and a
+        // malformed/tampered stored value could still contain it
+        // verbatim even though it fails to parse as a URL at all. This
+        // is the one branch here that
         // had direct access to the raw, unparsed input rather than an
         // already-extracted host/scheme. Every other branch below only
         // ever embeds a value parse_url() or DNS resolution already

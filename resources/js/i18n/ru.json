@@ -162,7 +162,6 @@
             "connect": "Подключить",
             "back": "Назад",
             "fields": {
-                "instance": "Сервер Mastodon (например, mastodon.social)",
                 "botToken": "Токен бота",
                 "chatId": "ID чата/канала",
                 "handle": "Хендл (например, user.bsky.social)",
@@ -518,21 +517,9 @@
         "telegram": {
             "kind": "Telegram-канал"
         },
-        "mastodon": {
-            "kind": "Тут",
-            "replyingToPrevious": "Ответ на предыдущий пост"
-        },
         "bluesky": {
             "kind": "Пост",
             "reply": "Ответ"
-        },
-        "discord": {
-            "kind": "Сообщение в Discord",
-            "unlinked": "Этот канал не поддерживает треды — каждое сообщение ниже отправляется отдельно, без связи с остальными."
-        },
-        "slack": {
-            "thread": "Тред",
-            "replies": "Ответов в треде: {n}"
         }
     },
     "integrations": {

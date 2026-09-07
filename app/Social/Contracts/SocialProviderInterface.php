@@ -48,13 +48,13 @@ interface SocialProviderInterface
      *
      * $params carries whatever the frontend supplied on
      * `POST /api/integrations/{provider}/auth-url` beyond the implicit
-     * state/redirect — e.g. Mastodon's user-chosen instance host, which
-     * must be known before an authorize URL (and, for Mastodon
-     * specifically, a per-instance OAuth app registration) can be built
-     * at all. Added in Task 14 once a real provider needed it: Task 11's
-     * original two-argument signature had no channel for this, and
-     * bending Mastodon around that gap (e.g. smuggling the host through
-     * $state) would have been worse than widening the contract. Optional
+     * state/redirect — e.g. a user-chosen instance host, which a
+     * federated network must know before an authorize URL (and its
+     * per-instance OAuth app registration) can be built at all. Added in
+     * Task 14 once a real provider needed it: Task 11's original
+     * two-argument signature had no channel for this, and bending that
+     * provider around the gap (e.g. smuggling the host through $state)
+     * would have been worse than widening the contract. Optional
      * and empty by default so providers with nothing to configure ahead
      * of the redirect (every provider before Task 14, ManualTokenAuth
      * providers like Telegram) are unaffected. Providers that need a key
@@ -70,10 +70,10 @@ interface SocialProviderInterface
      * connect to, a URL to fetch) from it without first checking that
      * target through App\Support\SafeRemoteHost — an admin-controlled
      * value reaching an outbound HTTP call is exactly the shape of an
-     * SSRF primitive (see MastodonProvider's instance-host handling for
-     * the reference implementation: validated both when first accepted
-     * from $params AND again every time a previously-accepted, now-stored
-     * value is reused, since DNS answers change).
+     * SSRF primitive. The rule such a provider must follow: validate the
+     * host both when first accepted from $params AND again every time a
+     * previously-accepted, now-stored value is reused, since DNS answers
+     * change between the two.
      *
      * @param  array<string, mixed>  $params
      */

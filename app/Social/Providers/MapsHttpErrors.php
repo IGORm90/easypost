@@ -17,8 +17,8 @@ use App\Social\Exceptions\ProviderTransientException;
  * works". What DOES vary by network -- how to detect that condition in
  * the first place (Telegram reports errors as `{"ok": false, ...}` with
  * its own `error_code` inside a 200 or a matching HTTP status, encodes
- * the rate-limit wait in `parameters.retry_after`; Mastodon uses plain
- * HTTP status codes and a `Retry-After` header) -- stays in each
+ * the rate-limit wait in `parameters.retry_after`; another network uses
+ * plain HTTP status codes and a `Retry-After` header) -- stays in each
  * provider, which computes a status code and a retry-after value in
  * whatever way its network actually reports them and hands both to
  * exceptionForStatus() here. Keeping that split (shared decision table,

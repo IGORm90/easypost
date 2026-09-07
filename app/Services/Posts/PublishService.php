@@ -571,10 +571,10 @@ class PublishService
         // What is deliberately NOT relaxed by doing the work early:
         // nothing here publishes anything. A pre-upload for a run that
         // then loses the lock, or whose generation has been superseded,
-        // leaves an unreferenced attachment on the network (Mastodon
-        // expires unused media, Bluesky garbage-collects unreferenced
-        // blobs, and Slack's uploadMedia() stops before the share step
-        // that would make a file visible) — never a visible post. The
+        // leaves an unreferenced attachment on the network (Bluesky
+        // garbage-collects unreferenced blobs; networks that pre-upload
+        // generally expire media nothing ever referenced) — never a
+        // visible post. The
         // decision to publish is still made entirely inside the
         // transaction, under the same locks and the same re-checks as
         // before.
@@ -758,6 +758,20 @@ class PublishService
                 return [false, null];
             }
 
+            // Settled here, under the same row locks as the missing-channel
+            // case above, and for the same reason: ProviderRegistry::get()
+            // would throw UnknownProviderException, which is NOT a
+            // ProviderException and so would sail past every catch arm
+            // below, fail the job, and leave these rows in QUEUE for the
+            // queue to redeliver until it gives up. A network removed from
+            // this install is a permanent failure of this channel, not a
+            // failure of the run.
+            if (! $this->registry->has($integration->provider_identifier)) {
+                $this->markAllError($pending, 'This channel\'s network is no longer available on this installation.');
+
+                return [false, null];
+            }
+
             $provider = $this->registry->get($integration->provider_identifier);
 
             // Re-read INSIDE this transaction, after the row lock above
@@ -831,8 +845,8 @@ class PublishService
                 // Important 4. ProviderRateLimitException::$retryAfterSeconds
                 // is a non-nullable int and every provider defaults it to
                 // 0 when the Retry-After header or the equivalent response
-                // field is absent, which Slack, Mastodon and Bluesky 429s
-                // frequently are. Normalising it to null HERE, at the only
+                // field is absent, which a Bluesky 429 frequently is.
+                // Normalising it to null HERE, at the only
                 // layer that knows the difference between "wait zero
                 // seconds" and "no figure was given", is what stops it
                 // from (a) winning publishGroup()'s min() across channels
@@ -914,6 +928,15 @@ class PublishService
             return [null, null];
         }
 
+        // A channel whose network this install no longer ships gets the
+        // same treatment as a missing one here: no provider, so no media
+        // preparation. publishLockedChannel() re-reads the integration
+        // under the row locks and owns the outcome, exactly as for the
+        // null case above — this method still decides nothing.
+        if (! $this->registry->has($integration->provider_identifier)) {
+            return [$integration, null];
+        }
+
         return [$integration, $this->registry->get($integration->provider_identifier)];
     }
 
@@ -928,13 +951,13 @@ class PublishService
      *     (`MediaTempFiles`) and point the DTO at THAT path. Every
      *     provider reads its bytes from the path — `file_get_contents()`,
      *     `filesize()`, `basename()` — and `Media::$path` is an S3/MinIO
-     *     key, so before this step Telegram and Discord were sending
-     *     zero-byte attachments.
+     *     key, so before this step Telegram was sending zero-byte
+     *     attachments.
      *  2. If the provider implements `SupportsMedia`, pre-upload it and
      *     keep the returned DTO (with its `$remoteId`), because
-     *     Mastodon/Bluesky/Slack reference an already-uploaded handle
-     *     from the post body and refuse — permanently — to publish a
-     *     media DTO without one. Nothing in `app/` had ever made this
+     *     Bluesky (and every other network that pre-uploads) references
+     *     an already-uploaded handle from the post body and refuses —
+     *     permanently — to publish a media DTO without one. Nothing in `app/` had ever made this
      *     call; `SupportsMedia`'s docblock claimed the editor did, and no
      *     such call existed anywhere.
      *

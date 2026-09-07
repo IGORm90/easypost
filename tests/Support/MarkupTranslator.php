@@ -22,9 +22,4 @@ class MarkupTranslator
     {
         return $this->markupAsHtml($content);
     }
-
-    public function mrkdwn(string $content): ?string
-    {
-        return $this->markupAsMrkdwn($content);
-    }
 }

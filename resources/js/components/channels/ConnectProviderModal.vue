@@ -152,7 +152,7 @@ async function submit(): Promise<void> {
         const { url, state, extra } = await store.connect(provider.identifier, { ...values.value, ...reconnectParams });
 
         // Round-tripped generically: whatever `extra` the backend
-        // returned (Mastodon's `{ instance }`, or nothing for providers
+        // returned (an `{ instance }` host, or nothing for providers
         // that don't need any) is stashed as opaque data and handed back
         // untouched by pages/Integrations/Callback.vue — this component
         // never inspects what's inside it.

@@ -8,7 +8,6 @@ use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\PublishService;
 use App\Support\OrganizationContext;
-use App\Support\SafeRemoteHost;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 
@@ -66,16 +65,9 @@ beforeEach(function () {
         'throw' => true,
     ]]);
 
-    SafeRemoteHost::fake([
-        'mastodon.social' => ['198.51.100.10'],
-        'discord.com' => ['198.51.100.11'],
-        'slack.com' => ['198.51.100.12'],
-        'files.slack.com' => ['198.51.100.13'],
-    ]);
 });
 
 afterEach(function () {
-    SafeRemoteHost::stopFaking();
     OrganizationContext::clear();
 
     $root = publishMediaRoot();
@@ -173,35 +165,6 @@ it('publishes media to telegram with the real file bytes', function () {
     assertFileBytesWereSent();
 });
 
-it('publishes media to discord with the real file bytes', function () {
-    Http::fake(['discord.com/*' => Http::response(['id' => '999'])]);
-
-    [$group, $post] = publishableMediaPost(
-        'discord',
-        ['channel_id' => 'C1'],
-        'https://discord.com/api/webhooks/1/secret',
-    );
-
-    app(PublishService::class)->publishGroup($group->id);
-
-    expect($post->fresh()->state)->toBe(PostState::PUBLISHED);
-    assertFileBytesWereSent();
-});
-
-it('publishes media to mastodon with the real file bytes', function () {
-    Http::fake([
-        'mastodon.social/api/v2/media' => Http::response(['id' => '42']),
-        'mastodon.social/api/v1/statuses' => Http::response(['id' => '7', 'url' => 'https://mastodon.social/@a/7']),
-    ]);
-
-    [$group, $post] = publishableMediaPost('mastodon', ['instance' => 'mastodon.social']);
-
-    app(PublishService::class)->publishGroup($group->id);
-
-    expect($post->fresh()->state)->toBe(PostState::PUBLISHED);
-    assertFileBytesWereSent();
-});
-
 it('publishes media to bluesky with the real file bytes', function () {
     Http::fake([
         'bsky.social/xrpc/com.atproto.repo.uploadBlob' => Http::response(['blob' => ['$type' => 'blob', 'ref' => ['$link' => 'abc'], 'mimeType' => 'image/png', 'size' => 10]]),
@@ -209,22 +172,6 @@ it('publishes media to bluesky with the real file bytes', function () {
     ]);
 
     [$group, $post] = publishableMediaPost('bluesky', ['handle' => 'a.bsky.social']);
-
-    app(PublishService::class)->publishGroup($group->id);
-
-    expect($post->fresh()->state)->toBe(PostState::PUBLISHED);
-    assertFileBytesWereSent();
-});
-
-it('publishes media to slack with the real file bytes', function () {
-    Http::fake([
-        'slack.com/api/files.getUploadURLExternal' => Http::response(['ok' => true, 'upload_url' => 'https://files.slack.com/upload/v1', 'file_id' => 'F1']),
-        'files.slack.com/*' => Http::response('OK'),
-        'slack.com/api/chat.postMessage' => Http::response(['ok' => true, 'ts' => '1700000000.000100']),
-        'slack.com/api/files.completeUploadExternal' => Http::response(['ok' => true]),
-    ]);
-
-    [$group, $post] = publishableMediaPost('slack', ['channel_id' => 'C0001']);
 
     app(PublishService::class)->publishGroup($group->id);
 
@@ -261,7 +208,11 @@ it('sends the customer\'s own filename, not the temp copy\'s name', function () 
     // Re-review finding 6: providers derived the multipart filename from
     // basename($media->path), which — once the pipeline started handing
     // them a temp copy — meant every attachment reached the network named
-    // `publish-media-XXXXXX.png`. Slack shows that name to users.
+    // `publish-media-XXXXXX.png`, which is what a reader would then see
+    // under the post. Telegram is the only provider left that sends a
+    // multipart part at all (Bluesky uploads a raw blob body), so the
+    // dataset that used to run this across four networks is gone with
+    // them rather than restated over one.
     Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
     [$group] = publishableMediaPost('telegram', ['chat_id' => '-100123']);
@@ -276,49 +227,18 @@ it('sends the customer\'s own filename, not the temp copy\'s name', function () 
         ->toBe(0, 'the temp copy\'s name leaked to the network');
 });
 
-it('sends the customer\'s own filename on every provider that attaches files', function (string $provider, array $settings, string $token) {
-    // Re-review round 2: only Telegram was asserted, so the same mutation
-    // in the other three broke nothing.
-    Http::fake([
-        'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]]),
-        'discord.com/*' => Http::response(['id' => '1']),
-        'mastodon.social/api/v2/media' => Http::response(['id' => '42']),
-        'mastodon.social/api/v1/statuses' => Http::response(['id' => '7']),
-        'slack.com/api/files.getUploadURLExternal' => Http::response(['ok' => true, 'upload_url' => 'https://files.slack.com/upload/v1', 'file_id' => 'F1']),
-        'files.slack.com/*' => Http::response('OK'),
-        'slack.com/api/chat.postMessage' => Http::response(['ok' => true, 'ts' => '1.1']),
-        'slack.com/api/files.completeUploadExternal' => Http::response(['ok' => true]),
-    ]);
-
-    [$group] = publishableMediaPost($provider, $settings, $token);
-
-    app(PublishService::class)->publishGroup($group->id);
-
-    $bodies = collect(Http::recorded())->map(fn (array $pair): string => (string) $pair[0]->body());
-
-    expect($bodies->filter(fn (string $b): bool => str_contains($b, 'filename="attachment.png"'))->count())
-        ->toBeGreaterThan(0, "[{$provider}] never sent the original filename")
-        ->and($bodies->filter(fn (string $b): bool => str_contains($b, 'publish-media-'))->count())
-        ->toBe(0, "[{$provider}] leaked the temp copy's name");
-})->with([
-    ['telegram', ['chat_id' => '-100'], 'bot-token'],
-    ['discord', [], 'https://discord.com/api/webhooks/1/secret'],
-    ['mastodon', ['instance' => 'mastodon.social'], 'access-token'],
-    ['slack', ['channel_id' => 'C1'], 'xoxb-token'],
-]);
-
 it('cannot be made to inject extra parameters into the multipart header via the filename', function () {
     // Re-review round 2, finding 1, demonstrated on the wire by the
     // reviewer: Guzzle builds `form-data; name="%s"; filename="%s"` with
     // sprintf and no escaping, so a quote in a customer-supplied filename
     // appends attacker-chosen parameters to that header.
-    Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
+    Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
     [$group] = publishableMediaPost(
-        'discord',
-        [],
-        'https://discord.com/api/webhooks/1/secret',
-        'a.png"; name="payload_json"; x="',
+        'telegram',
+        ['chat_id' => '-100123'],
+        'bot-token',
+        'a.png"; name="chat_id"; x="',
     );
 
     app(PublishService::class)->publishGroup($group->id);
@@ -326,19 +246,19 @@ it('cannot be made to inject extra parameters into the multipart header via the 
     $body = (string) collect(Http::recorded())->first()[0]->body();
 
     // Exactly one `name=` parameter per part, and the file part is still
-    // the one Discord expects.
-    expect(substr_count($body, 'name="payload_json"'))->toBe(1)
-        ->and($body)->toContain('name="files[0]"; filename="a.png; name=payload_json; x="')
-        ->and(substr_count($body, 'name="files[0]"'))->toBe(1);
+    // the one Telegram expects.
+    expect(substr_count($body, 'name="chat_id"'))->toBe(1)
+        ->and($body)->toContain('name="photo"; filename="a.png; name=chat_id; x="')
+        ->and(substr_count($body, 'name="photo"'))->toBe(1);
 });
 
 it('sends the part content type from the stored mime, not from the customer\'s filename', function () {
     // Re-review round 2, finding 2: Guzzle infers a part's Content-Type
     // from the FILENAME when the caller supplies none, so a genuine PNG
     // uploaded as `photo.txt` used to go out as text/plain.
-    Http::fake(['discord.com/*' => Http::response(['id' => '1'])]);
+    Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
-    [$group] = publishableMediaPost('discord', [], 'https://discord.com/api/webhooks/1/secret', 'photo.txt');
+    [$group] = publishableMediaPost('telegram', ['chat_id' => '-100123'], 'bot-token', 'photo.txt');
 
     app(PublishService::class)->publishGroup($group->id);
 

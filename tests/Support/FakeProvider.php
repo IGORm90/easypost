@@ -149,13 +149,21 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     }
 
     /**
+     * Echoes whatever the caller passed back through `extra`, and only
+     * when there is something to echo, so the controller's generic
+     * params pass-through (POST auth-url body -> generateAuthUrl) can be
+     * asserted end to end. A network needing a value up front — a
+     * user-chosen instance host, a workspace — is the reason that
+     * pass-through exists; the fake stands in for one so the guarantee
+     * survives the removal of any particular provider.
+     *
      * @param  array<string, mixed>  $params
      */
     public function generateAuthUrl(string $state, string $redirectUri, array $params = []): AuthUrlDto
     {
         return new AuthUrlDto(
             url: "https://fake.test/oauth/authorize?state={$state}&redirect_uri=".urlencode($redirectUri),
-            extra: ['state' => $state],
+            extra: $params === [] ? ['state' => $state] : ['state' => $state, 'params' => $params],
         );
     }
 

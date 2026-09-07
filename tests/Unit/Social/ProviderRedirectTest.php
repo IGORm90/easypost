@@ -31,9 +31,7 @@ use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
     SafeRemoteHost::fake([
-        'mastodon.social' => ['198.51.100.10'],
-        'discord.com' => ['198.51.100.11'],
-        'slack.com' => ['198.51.100.12'],
+        'bsky.social' => ['198.51.100.10'],
     ]);
 });
 
@@ -82,19 +80,6 @@ it('refuses a redirect from telegram instead of following it', function () {
         ->post($integration, [new PostPayloadDto(content: 'hello')]));
 });
 
-it('refuses a redirect from mastodon instead of following it', function () {
-    Http::fake(['mastodon.social/*' => redirectToMetadata()]);
-
-    $integration = Integration::factory()->create([
-        'provider_identifier' => 'mastodon',
-        'token' => 'access-token',
-        'settings' => ['instance' => 'mastodon.social'],
-    ]);
-
-    assertRefusedRedirect(fn () => app(ProviderRegistry::class)->get('mastodon')
-        ->post($integration, [new PostPayloadDto(content: 'hello')]));
-});
-
 it('refuses a redirect from bluesky instead of following it', function () {
     Http::fake(['bsky.social/*' => redirectToMetadata()]);
 
@@ -108,38 +93,13 @@ it('refuses a redirect from bluesky instead of following it', function () {
         ->post($integration, [new PostPayloadDto(content: 'hello')]));
 });
 
-it('refuses a redirect from discord instead of following it', function () {
-    Http::fake(['discord.com/*' => redirectToMetadata()]);
-
-    $integration = Integration::factory()->create([
-        'provider_identifier' => 'discord',
-        'token' => 'https://discord.com/api/webhooks/1/secret',
-    ]);
-
-    assertRefusedRedirect(fn () => app(ProviderRegistry::class)->get('discord')
-        ->post($integration, [new PostPayloadDto(content: 'hello')]));
-});
-
-it('refuses a redirect from slack instead of following it', function () {
-    Http::fake(['slack.com/*' => redirectToMetadata()]);
-
-    $integration = Integration::factory()->create([
-        'provider_identifier' => 'slack',
-        'token' => 'xoxb-token',
-        'settings' => ['channel_id' => 'C1'],
-    ]);
-
-    assertRefusedRedirect(fn () => app(ProviderRegistry::class)->get('slack')
-        ->post($integration, [new PostPayloadDto(content: 'hello')]));
-});
-
 it('builds every provider request with redirect-following switched off', function () {
     // The refusals above prove the RESPONSE side. This proves the
     // REQUEST side: even a client that would otherwise follow silently
     // (a future Guzzle default, a redirect on a status this codebase
     // does not enumerate) is told not to, so there is no second request
     // for anything downstream to have to catch.
-    $provider = app(ProviderRegistry::class)->get('slack');
+    $provider = app(ProviderRegistry::class)->get('bluesky');
 
     foreach (['http', 'uploadHttp'] as $builder) {
         $method = new ReflectionMethod($provider, $builder);

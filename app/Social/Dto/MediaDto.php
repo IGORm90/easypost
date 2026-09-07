@@ -11,8 +11,8 @@ namespace App\Social\Dto;
  * $remoteId null. If the provider implements SupportsMedia,
  * uploadMedia() pre-uploads the file and returns a new MediaDto (via
  * withRemoteId()) carrying the network's handle for the uploaded
- * attachment — Mastodon's media-attachment id, a Bluesky blob
- * reference, a completed Slack file id, etc. That returned MediaDto is
+ * attachment — a Bluesky blob reference, a media-attachment id, a
+ * completed file id, etc. That returned MediaDto is
  * what belongs in the eventual PostPayloadDto::$media; post() reads
  * $remoteId to reference the already-uploaded file instead of
  * re-uploading it inline.
@@ -43,8 +43,8 @@ final readonly class MediaDto
      * used to derive this from `basename($media->path)`, which — once the
      * publishing pipeline started handing them a LOCAL TEMP COPY — meant
      * every attachment reached the customer's timeline named
-     * `publish-media-XXXXXX.png`. Slack in particular shows that name to
-     * users. The stored `original_filename` is what belongs there; the
+     * `publish-media-XXXXXX.png`, and some networks show that name to
+     * readers. The stored `original_filename` is what belongs there; the
      * basename fallback keeps a hand-built DTO (a provider's own unit
      * test, say) working.
      */

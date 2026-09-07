@@ -113,13 +113,13 @@ it('fetchProviders() populates providers from GET /providers', async () => {
 
 it('connect() requests an auth-url/state for the given provider identifier, generically', async () => {
   const { useIntegrationsStore } = await import('../integrations')
-  post.mockResolvedValueOnce({ data: { url: 'https://mastodon.social/oauth/authorize', state: 's1', extra: { instance: 'mastodon.social' } } })
+  post.mockResolvedValueOnce({ data: { url: 'https://social.test/oauth/authorize', state: 's1', extra: { instance: 'social.test' } } })
 
   const store = useIntegrationsStore()
-  const result = await store.connect('mastodon', { instance: 'mastodon.social' })
+  const result = await store.connect('fake', { instance: 'social.test' })
 
-  expect(post).toHaveBeenCalledWith('/integrations/mastodon/auth-url', { instance: 'mastodon.social' })
-  expect(result).toEqual({ url: 'https://mastodon.social/oauth/authorize', state: 's1', extra: { instance: 'mastodon.social' } })
+  expect(post).toHaveBeenCalledWith('/integrations/fake/auth-url', { instance: 'social.test' })
+  expect(result).toEqual({ url: 'https://social.test/oauth/authorize', state: 's1', extra: { instance: 'social.test' } })
 })
 
 it('completeCallback() posts to the provider callback and adds the returned channel to list', async () => {

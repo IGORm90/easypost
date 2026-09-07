@@ -1,9 +1,6 @@
 import { previewRegistry, resolvePreview } from '../registry';
 import TelegramPreview from '../TelegramPreview.vue';
-import MastodonPreview from '../MastodonPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
-import DiscordPreview from '../DiscordPreview.vue';
-import SlackPreview from '../SlackPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 
 /**
@@ -16,10 +13,7 @@ import GenericPreview from '../GenericPreview.vue';
 it('exposes every known provider identifier in the registry map', () => {
     expect(previewRegistry).toEqual({
         telegram: TelegramPreview,
-        mastodon: MastodonPreview,
         bluesky: BlueskyPreview,
-        discord: DiscordPreview,
-        slack: SlackPreview,
     });
 });
 
@@ -27,24 +21,20 @@ it('resolvePreview("telegram") returns TelegramPreview', () => {
     expect(resolvePreview('telegram')).toBe(TelegramPreview);
 });
 
-it('resolvePreview("mastodon") returns MastodonPreview', () => {
-    expect(resolvePreview('mastodon')).toBe(MastodonPreview);
-});
-
 it('resolvePreview("bluesky") returns BlueskyPreview', () => {
     expect(resolvePreview('bluesky')).toBe(BlueskyPreview);
 });
 
-it('resolvePreview("discord") returns DiscordPreview', () => {
-    expect(resolvePreview('discord')).toBe(DiscordPreview);
-});
-
-it('resolvePreview("slack") returns SlackPreview', () => {
-    expect(resolvePreview('slack')).toBe(SlackPreview);
-});
-
 it('resolvePreview() defaults to GenericPreview for an unknown identifier', () => {
     expect(resolvePreview('some-future-network')).toBe(GenericPreview);
+});
+
+it('resolvePreview() falls back to GenericPreview for a network this build no longer ships', () => {
+    // Channels connected before a network was removed still exist in the
+    // database and still have to render — the fallback is what makes the
+    // calendar and the editor survive them instead of blowing up on a
+    // missing component.
+    expect(resolvePreview('mastodon')).toBe(GenericPreview);
 });
 
 it('resolvePreview() defaults to GenericPreview for an empty identifier', () => {

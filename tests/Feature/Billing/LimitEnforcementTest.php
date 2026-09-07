@@ -125,7 +125,7 @@ it('only treats integration_id as a reconnect target when it also belongs to the
     $org = Organization::factory()->create(['plan' => 'free']);
     actingAsMember($org);
     $broken = Integration::factory()->for($org)->create(['provider_identifier' => 'fake', 'refresh_needed' => true]);
-    Integration::factory()->for($org)->create(['provider_identifier' => 'discord']);
+    Integration::factory()->for($org)->create(['provider_identifier' => 'bluesky']);
     // Org is now at 2/2 (free plan) across both providers combined —
     // channelCount() is not scoped to any one provider.
 

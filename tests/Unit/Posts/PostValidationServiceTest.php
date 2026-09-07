@@ -25,17 +25,18 @@ use Illuminate\Support\Str;
  * why reading the disk was rejected). This stays a true Unit test (no
  * RefreshDatabase): Integration instances below are plain `new
  * Integration([...])`, never persisted, and ProviderRegistry resolves
- * real provider classes (Bluesky/Mastodon/Discord) through the
+ * real provider classes (Telegram/Bluesky) through the
  * container without touching the database — see
  * tests/Unit/Posts/PostStateMachineTest.php's docblock for why an ad hoc
  * uses(RefreshDatabase::class) in tests/Unit is off the table.
  *
- * Real providers (not FakeProvider) are used for the brief's four
- * required scenarios so the exact numbers (Bluesky 300 chars, Mastodon 4
- * images, Discord no threads) are pinned against the real capability
- * declarations reviewed under Task 11/14. Referencing 'bluesky',
- * 'mastodon', 'discord' by name is fine here — ProviderIsolationTest only
- * greps app/, not tests/.
+ * Real providers (not FakeProvider) are used wherever the point is to
+ * pin an exact number against a shipped capability declaration (Bluesky:
+ * 300 characters, 4 images, no mixed media, a 1 MB file cap). Capability
+ * combinations no shipped network has — threads unsupported, alt text
+ * required — go through FakeProvider instead. Referencing 'telegram' and
+ * 'bluesky' by name is fine here — ProviderIsolationTest only greps
+ * app/, not tests/.
  */
 function makeIntegration(string $providerIdentifier): Integration
 {
@@ -87,8 +88,8 @@ it('counts multibyte Cyrillic and emoji characters, not bytes', function () {
     expect(service()->validate($integration, $chain))->toBe([]);
 });
 
-it('rejects too many images for Mastodon', function () {
-    $integration = makeIntegration('mastodon');
+it('rejects too many images for Bluesky', function () {
+    $integration = makeIntegration('bluesky');
     $images = array_map(
         fn (int $i) => new MediaDto(path: "/tmp/img{$i}.jpg", mimeType: 'image/jpeg', sizeBytes: 1024),
         range(1, 5),
@@ -109,7 +110,7 @@ it('checks image/video quotas per segment, never summed across the thread', func
     // the chain that would be 6 > 4 and wrongly fail; checked per
     // segment (3 <= 4 twice) it must pass. A regression that started
     // summing across the thread would turn this red.
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $threeImages = array_map(
         fn (int $i) => new MediaDto(path: "/tmp/img{$i}.jpg", mimeType: 'image/jpeg', sizeBytes: 1024),
         range(1, 3),
@@ -123,7 +124,24 @@ it('checks image/video quotas per segment, never summed across the thread', func
 });
 
 it('rejects a thread for a network that does not support threads', function () {
-    $integration = makeIntegration('discord');
+    // No shipped network refuses threads any more (both Telegram and
+    // Bluesky chain), so the capability is exercised through the fake
+    // rather than by picking a provider that happens to say false.
+    fakeProvider()->withCapabilities(new ProviderCapabilities(
+        maxCharacters: 1000,
+        maxImages: 4,
+        maxVideos: 1,
+        supportsThreads: false,
+        supportsScheduling: false,
+        allowedMimeTypes: ['image/jpeg'],
+        maxFileSizeBytes: 1_000_000,
+        allowsMixedMedia: true,
+        maxThreadLength: null,
+        supportedMarks: [],
+        requiresMedia: false,
+    ));
+
+    $integration = makeIntegration('fake');
     $chain = [
         new PostPayloadDto(content: 'first'),
         new PostPayloadDto(content: 'second'),
@@ -157,7 +175,7 @@ it('accepts empty text content when media is attached', function () {
 });
 
 it('returns no errors for a valid single-segment post', function () {
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $chain = [new PostPayloadDto(content: 'A perfectly normal post.', media: [
         new MediaDto(path: '/tmp/img.jpg', mimeType: 'image/jpeg', sizeBytes: 1024),
     ])];
@@ -179,7 +197,24 @@ it('returns no errors for a valid thread on a thread-supporting network', functi
 // nothing else in the codebase covers them (see task brief). ---
 
 it('rejects mixing images and video when the network forbids mixed media', function () {
-    $integration = makeIntegration('mastodon');
+    // Through the fake, not Bluesky: Bluesky forbids mixed media AND
+    // rejects video outright, so a real mixed attachment there would
+    // trip three codes at once and stop proving this one.
+    fakeProvider()->withCapabilities(new ProviderCapabilities(
+        maxCharacters: 1000,
+        maxImages: 4,
+        maxVideos: 1,
+        supportsThreads: true,
+        supportsScheduling: false,
+        allowedMimeTypes: ['image/jpeg', 'video/mp4'],
+        maxFileSizeBytes: 1_000_000,
+        allowsMixedMedia: false,
+        maxThreadLength: null,
+        supportedMarks: [],
+        requiresMedia: false,
+    ));
+
+    $integration = makeIntegration('fake');
     $chain = [new PostPayloadDto(content: 'mixed', media: [
         new MediaDto(path: '/tmp/img.jpg', mimeType: 'image/jpeg', sizeBytes: 1024),
         new MediaDto(path: '/tmp/vid.mp4', mimeType: 'video/mp4', sizeBytes: 1024),
@@ -250,7 +285,7 @@ it('rejects a media attachment missing required alt text', function () {
 });
 
 it('rejects an unsupported mime type', function () {
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $chain = [new PostPayloadDto(content: 'bad file', media: [
         new MediaDto(path: '/tmp/doc.pdf', mimeType: 'application/pdf', sizeBytes: 1024),
     ])];
@@ -266,10 +301,10 @@ it('does not count a non-image/video mime type toward the image quota', function
     // An attachment of a kind ProviderCapabilities has no bucket for
     // (e.g. audio) must not be silently folded into imageCount -- that
     // would both consume a quota it doesn't belong to and produce a
-    // wrong `actual` on a resulting too_many_images error. Mastodon
+    // wrong `actual` on a resulting too_many_images error. Bluesky
     // allows up to 4 images; 4 real images plus 1 unsupported audio
     // file must trip unsupported_mime only, not too_many_images.
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $images = array_map(
         fn (int $i) => new MediaDto(path: "/tmp/img{$i}.jpg", mimeType: 'image/jpeg', sizeBytes: 1024),
         range(1, 4),
@@ -285,25 +320,25 @@ it('does not count a non-image/video mime type toward the image quota', function
 });
 
 it('rejects a file over the max file size', function () {
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
 
     $chain = [new PostPayloadDto(content: 'big file', media: [
-        new MediaDto(path: '/tmp/big.jpg', mimeType: 'image/jpeg', sizeBytes: 41 * 1024 * 1024),
+        new MediaDto(path: '/tmp/big.jpg', mimeType: 'image/jpeg', sizeBytes: 1_000_001),
     ])];
 
     $errors = service()->validate($integration, $chain);
 
     expect($errors)->toHaveCount(1);
     expect($errors[0]['code'])->toBe('file_too_large');
-    expect($errors[0]['limit'])->toBe(40 * 1024 * 1024);
-    expect($errors[0]['actual'])->toBe(41 * 1024 * 1024);
+    expect($errors[0]['limit'])->toBe(1_000_000);
+    expect($errors[0]['actual'])->toBe(1_000_001);
 });
 
 it('accepts a file at exactly the max file size', function () {
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
 
     $chain = [new PostPayloadDto(content: 'exact size', media: [
-        new MediaDto(path: '/tmp/exact.jpg', mimeType: 'image/jpeg', sizeBytes: 40 * 1024 * 1024),
+        new MediaDto(path: '/tmp/exact.jpg', mimeType: 'image/jpeg', sizeBytes: 1_000_000),
     ])];
 
     expect(service()->validate($integration, $chain))->toBe([]);
@@ -315,7 +350,7 @@ it('treats an unknown file size as a validation failure, not a silent pass', fun
     // locally-stat-able file, e.g. once media lives in S3/MinIO). A
     // MediaDto built without a $sizeBytes is therefore its own explicit
     // error, not something that silently reads as "fine".
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $chain = [new PostPayloadDto(content: 'no known size', media: [
         new MediaDto(path: '/tmp/mystery.jpg', mimeType: 'image/jpeg', sizeBytes: null),
     ])];
@@ -324,7 +359,7 @@ it('treats an unknown file size as a validation failure, not a silent pass', fun
 
     expect($errors)->toHaveCount(1);
     expect($errors[0]['code'])->toBe('file_size_unknown');
-    expect($errors[0]['limit'])->toBe(40 * 1024 * 1024);
+    expect($errors[0]['limit'])->toBe(1_000_000);
     expect($errors[0]['actual'])->toBe('unknown');
 });
 
@@ -421,7 +456,7 @@ it('reports media_required on every segment of a thread that lacks media', funct
 });
 
 it('does not report media_required on a network that does not require media', function () {
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
 
     expect(service()->validate($integration, [new PostPayloadDto(content: 'just text')]))->toBe([]);
 });
@@ -485,7 +520,7 @@ it('ignores settings entirely for a provider that declares none', function () {
     // Settings have been a free-form pass-through since Task 20, and
     // several posts in the wild carry keys nothing reads. Declaring the
     // contract must not retroactively make those posts invalid.
-    $integration = makeIntegration('mastodon');
+    $integration = makeIntegration('bluesky');
     $chain = [new PostPayloadDto(content: 'body', settings: ['anything' => 'at all'])];
 
     expect(service()->validate($integration, $chain))->toBe([]);
@@ -504,4 +539,25 @@ it('checks required settings on every segment of a thread', function () {
     // for that reason — and NOT additionally for settings, which are
     // present on both segments.
     expect(array_column($errors, 'code'))->toBe(['threads_not_supported']);
+});
+
+/*
+ * Soft degradation for a channel whose network this install no longer
+ * ships. `ProviderRegistry::get()` throws UnknownProviderException (an
+ * InvalidArgumentException, deliberately NOT a ProviderException), so
+ * before this branch existed a single stored Integration pointing at a
+ * removed provider turned every scheduling request that touched it into
+ * a 500. The customer cannot fix a 500; they can read "this network is
+ * no longer available" and delete the channel.
+ */
+it('reports the network as unavailable instead of throwing when the provider is no longer registered', function () {
+    $integration = makeIntegration('network-removed-from-this-install');
+    $chain = [new PostPayloadDto(content: 'hello')];
+
+    $errors = service()->validate($integration, $chain);
+
+    expect($errors)->toHaveCount(1)
+        ->and($errors[0]['code'])->toBe('provider_unavailable')
+        ->and($errors[0]['post_index'])->toBe(0)
+        ->and($errors[0]['message'])->toBeString();
 });

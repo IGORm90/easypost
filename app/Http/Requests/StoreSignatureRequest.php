@@ -7,7 +7,7 @@ use Illuminate\Foundation\Http\FormRequest;
 /**
  * Validates POST /api/signatures. `content` is capped at 1000 characters
  * — a generic sanity limit, not tied to any one provider's per-post
- * character limit (those range from Bluesky's 300 to Slack's 40000, see
+ * character limit (those range from Bluesky's 300 to Telegram's 4096, see
  * ProviderCapabilities in app/Social/Providers/*). The signature is
  * appended to post content on the FRONTEND (Task 25), never here, so
  * that it visibly counts against whichever provider's remaining budget

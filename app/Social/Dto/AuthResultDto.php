@@ -20,7 +20,7 @@ final readonly class AuthResultDto
      * @param  string|null  $refreshToken  Refresh token, when the network issues one.
      * @param  CarbonImmutable|null  $expiresAt  When $token expires, if the network says. Null means "does not expire" or "unknown", not "expired".
      * @param  string|null  $picture  URL of the connected account's avatar/profile picture, if available.
-     * @param  array<string, mixed>  $settings  Provider-specific extra state to persist verbatim on the Integration (e.g. a Slack channel id chosen during connect).
+     * @param  array<string, mixed>  $settings  Provider-specific extra state to persist verbatim on the Integration (e.g. a workspace channel id chosen during connect).
      */
     public function __construct(
         public string $internalId,

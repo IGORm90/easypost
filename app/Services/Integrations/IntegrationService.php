@@ -161,8 +161,8 @@ class IntegrationService
      * keys the channel's own provider declares updatable
      * (`DeclaresUpdatableSettings`), so a whole-blob assignment here
      * would delete every key the connect flow wrote and this request did
-     * not happen to mention — e.g. saving a Slack channel choice would
-     * wipe the workspace settings alongside it. Merging is what makes
+     * not happen to mention — e.g. saving a chosen room would wipe the
+     * workspace settings alongside it. Merging is what makes
      * "only the declared keys are writable" true of the stored row, not
      * just of the request payload.
      *

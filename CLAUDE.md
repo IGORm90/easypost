@@ -1,8 +1,7 @@
 # CLAUDE.md — EasyPost
 
-EasyPost is a multi-tenant social-post scheduler. You connect Telegram, Mastodon, Bluesky, Discord
-and Slack channels, compose a post (with per-channel variations and threads), schedule it, and watch
-it publish. **Laravel 13 REST API + a separate Vue 3 SPA** — no Inertia; the SPA talks to the API
+EasyPost is a multi-tenant social-post scheduler. You connect Telegram and Bluesky channels,
+compose a post (with per-channel variations and threads), schedule it, and watch it publish. **Laravel 13 REST API + a separate Vue 3 SPA** — no Inertia; the SPA talks to the API
 over axios with Sanctum cookie auth, and everything is scoped to an `Organization`.
 
 ## The project guide

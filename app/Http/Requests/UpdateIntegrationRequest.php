@@ -47,11 +47,10 @@ class UpdateIntegrationRequest extends FormRequest
      * Per-provider `settings` validation — final-review batch 2,
      * Important 4. This used to be `['sometimes','nullable','array']`,
      * written straight through by `IntegrationService::update()`, which
-     * meant one PUT could repoint a connected Mastodon channel's instance
-     * host at any server (the cheapest possible entry into this batch's
-     * two SSRF findings, with the whole OAuth connect flow skipped) or
-     * rewrite a Slack/Telegram target so a stored credential posted into
-     * a different room.
+     * meant one PUT could repoint a connected channel's instance host at
+     * any server (the cheapest possible entry into this batch's two SSRF
+     * findings, with the whole OAuth connect flow skipped) or rewrite a
+     * chat target so a stored credential posted into a different room.
      *
      * The allowed keys come from the provider that owns this channel, via
      * `DeclaresUpdatableSettings` — never a list written here, because

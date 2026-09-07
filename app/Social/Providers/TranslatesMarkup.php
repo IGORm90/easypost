@@ -39,9 +39,7 @@ use App\Social\Dto\TextMark;
  *    publishes with its asterisks, rather than swallowing them and
  *    bolding the rest of the post.
  *  - Underscores are not markup in the canonical form at all, so
- *    `snake_case_name` is never at risk. (Slack's own dialect uses them
- *    for italics — which is precisely why the translation to it happens
- *    here rather than by asking users to type mrkdwn.)
+ *    `snake_case_name` is never at risk.
  *  - Markup inside `code` is text.
  *  - A link's URL must be http/https. Anything else (javascript:,
  *    data:, a bare word) leaves the whole `[text](url)` as literal
@@ -68,22 +66,6 @@ trait TranslatesMarkup
         }
 
         return $this->renderHtml($nodes);
-    }
-
-    /**
-     * Slack's mrkdwn — *bold*, _italic_, ~strike~, `code`, <url|text>.
-     * Its own dialect, not Markdown: one asterisk, not two, and links
-     * are angle-bracketed rather than parenthesised.
-     */
-    protected function markupAsMrkdwn(string $content): ?string
-    {
-        $nodes = $this->parseMarkup($content);
-
-        if (! $this->carriesMarks($nodes)) {
-            return null;
-        }
-
-        return $this->renderMrkdwn($nodes);
     }
 
     /**
@@ -286,34 +268,6 @@ trait TranslatesMarkup
         return $out;
     }
 
-    /**
-     * @param  list<MarkupNode>  $nodes
-     */
-    private function renderMrkdwn(array $nodes): string
-    {
-        $out = '';
-
-        foreach ($nodes as $node) {
-            if ($node->mark === null) {
-                $out .= $this->escapeMrkdwn($node->text);
-
-                continue;
-            }
-
-            $inner = $this->renderMrkdwn($node->children);
-
-            $out .= match ($node->mark) {
-                TextMark::BOLD => "*{$inner}*",
-                TextMark::ITALIC => "_{$inner}_",
-                TextMark::STRIKE => "~{$inner}~",
-                TextMark::CODE => "`{$inner}`",
-                TextMark::LINK => '<'.$this->escapeMrkdwn((string) $node->href)."|{$inner}>",
-            };
-        }
-
-        return $out;
-    }
-
     private function escapeHtml(string $text): string
     {
         // ENT_NOQUOTES, not ENT_QUOTES: an apostrophe in a sentence is
@@ -323,14 +277,5 @@ trait TranslatesMarkup
         // matchLink() rejects any URL containing whitespace or ')', and
         // the only attribute emitted is that href.
         return htmlspecialchars($text, ENT_NOQUOTES, 'UTF-8');
-    }
-
-    private function escapeMrkdwn(string $text): string
-    {
-        // The three characters Slack documents as needing escaping in
-        // message text -- and only those: mrkdwn has no entity for
-        // anything else, so escaping more would publish literal
-        // backslashes.
-        return str_replace(['&', '<', '>'], ['&amp;', '&lt;', '&gt;'], $text);
     }
 }

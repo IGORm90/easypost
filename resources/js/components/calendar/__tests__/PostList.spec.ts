@@ -81,7 +81,7 @@ it('shows the channel names and the comment count', () => {
             comments_count: 3,
             channels: [
                 { id: 'int-1', provider_identifier: 'telegram', name: 'Team channel', picture: null },
-                { id: 'int-2', provider_identifier: 'mastodon', name: 'Public feed', picture: null },
+                { id: 'int-2', provider_identifier: 'bluesky', name: 'Public feed', picture: null },
             ],
         }),
     ]);

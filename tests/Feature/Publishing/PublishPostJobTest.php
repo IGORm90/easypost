@@ -735,3 +735,31 @@ it('does not dispatch anything for a draft group', function () {
 
     Queue::assertNotPushed(PublishPostJob::class);
 });
+
+/*
+ * Soft degradation, publish side. A channel can outlive the provider
+ * that served it (a network removed from this install), and
+ * `ProviderRegistry::get()` answers that with an
+ * UnknownProviderException — not a ProviderException, so none of the
+ * catch arms below the provider lookup would ever see it. Before this
+ * branch, that exception escaped publishChannel(), failed the job, and
+ * left the post sitting in QUEUE forever while the queue burned its
+ * attempts. It is settled exactly like the neighbouring "channel no
+ * longer exists" case: this channel errors, siblings still publish.
+ */
+it('errors a channel whose network is no longer registered, instead of failing the whole job', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [$integration, $posts] = publishableChannel($org, $group, ['orphaned channel']);
+    [, $healthy] = publishableChannel($org, $group, ['healthy channel']);
+
+    $integration->forceFill(['provider_identifier' => 'network-removed-from-this-install'])->save();
+
+    app(PublishService::class)->publishGroup($group->id);
+
+    expect($posts[0]->fresh()->state)->toBe(PostState::ERROR)
+        ->and($posts[0]->fresh()->error)->toBeString()
+        ->and($posts[0]->fresh()->release_id)->toBeNull()
+        ->and($healthy[0]->fresh()->state)->toBe(PostState::PUBLISHED)
+        ->and($group->fresh()->state)->toBe(PostState::ERROR);
+});

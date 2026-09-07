@@ -36,7 +36,7 @@ beforeEach(() => {
     setActivePinia(createPinia());
     i18n.global.locale.value = 'en';
     post.mockReset();
-    sessionStorage.setItem('channel_connect_pending', JSON.stringify({ provider: 'mastodon', state: 'the-state', extra: {} }));
+    sessionStorage.setItem('channel_connect_pending', JSON.stringify({ provider: 'fake', state: 'the-state', extra: {} }));
 });
 
 // Task 36 fix round 1, Minor 5: a 402 from the callback request already

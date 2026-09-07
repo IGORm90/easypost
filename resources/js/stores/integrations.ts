@@ -171,7 +171,7 @@ export const useIntegrationsStore = defineStore('integrations', {
          * ConnectProviderModal.vue). `params` is forwarded verbatim to
          * `POST /integrations/{provider}/auth-url`, exactly like
          * IntegrationController::authUrl() forwards it to
-         * `generateAuthUrl()` — e.g. Mastodon's `{ instance }`. The
+         * `generateAuthUrl()` — e.g. a federated network's `{ instance }`. The
          * response's `extra` must be carried by the caller through the
          * redirect (see pages/Integrations/Callback.vue) and handed back
          * to `completeCallback()` — this store has no session/storage of

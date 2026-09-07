@@ -22,8 +22,8 @@ use Illuminate\Support\Facades\Http;
  * with, sends the request, and the client then quietly repeats that
  * request wherever the remote host points it — the reviewer confirmed a
  * cross-host redirect to a loopback port being followed by this
- * project's own client. An org admin who connects a Mastodon channel on
- * a host they control needs only a 302 from `/api/v1/statuses` to
+ * project's own client. An org admin who connects a channel on a host
+ * they control needs only a 302 from the publish endpoint to
  * `http://169.254.169.254/…` to turn every scheduled publish into a
  * request against internal infrastructure — and the answer is not blind:
  * a provider's `errorFor()` puts the remote body into the exception
@@ -56,9 +56,9 @@ use Illuminate\Support\Facades\Http;
  * and `PublishService::publishChannel()` holds a database transaction —
  * including row locks on the segments being sent — open across the whole
  * provider call. A remote host that simply stops responding therefore
- * costs the full timeout per call, and Slack's media path alone is FOUR
- * HTTP calls per segment (`getUploadURLExternal`, the upload itself,
- * `completeUploadExternal`, `chat.postMessage`). At the 30-second
+ * costs the full timeout per call, and a media path can be several HTTP
+ * calls per segment (ask for an upload url, upload, complete the upload,
+ * post the message). At the 30-second
  * default, a single slow segment blows past the worker timeout, the
  * worker is SIGALRM-killed mid-transaction, and — before
  * `REDIS_QUEUE_RETRY_AFTER` was raised to 300 — a second worker was

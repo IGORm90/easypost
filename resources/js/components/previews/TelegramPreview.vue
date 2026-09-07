@@ -9,7 +9,7 @@ import type { PreviewSegment } from './types';
 /**
  * A Telegram channel post. `capabilities.supportsThreads` is true for
  * Telegram (TelegramProvider::capabilities()), but a channel is a feed
- * of stacked posts, not a reply-chain UI the way Mastodon/Bluesky render
+ * of stacked posts, not a reply-chain UI the way Bluesky renders
  * one — so each segment is shown as its own consecutive post in the
  * feed, connected by a thin rail rather than drawn as nested replies.
  * That IS the real Telegram rendering, not a simplification of it.

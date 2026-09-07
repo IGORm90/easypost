@@ -13,9 +13,9 @@ use RuntimeException;
  *
  * Deliberately does NOT implement App\Social\Exceptions\ProviderException
  * -- this is an infrastructure-level guard shared by anything that makes
- * an outbound request to a user-supplied host (Mastodon's instance host
- * today; Task 27's "upload media by URL" next), not a live-provider-call
- * outcome. Callers inside app/Social/Providers catch this and translate
+ * an outbound request to a user-supplied host ("upload media by URL"
+ * today; any future provider that lets a customer name its host), not a
+ * live-provider-call outcome. Callers inside app/Social/Providers catch this and translate
  * it into whichever ProviderException fits their context (e.g.
  * InvalidArgumentException for bad connect-time input,
  * ProviderPermanentException for an already-connected channel whose
@@ -39,7 +39,7 @@ class UnsafeRemoteHostException extends RuntimeException
      * Distinct from forHost(): used only when the input couldn't even be
      * parsed into a scheme/host, meaning SafeRemoteHost::assertSafeUrl()
      * is holding nothing but the raw, unparsed input -- which for a
-     * credential-bearing URL (e.g. a Discord webhook url) may still
+     * credential-bearing URL (a webhook url is the canonical case) may still
      * contain the credential itself even though it isn't a valid URL.
      * Deliberately does not echo that input back.
      */

@@ -178,14 +178,17 @@ it('allows the same media id reused across two different channels in one request
     $org = Organization::factory()->create();
     actingAsMember($org);
     $telegram = Integration::factory()->for($org)->create(['provider_identifier' => 'telegram']);
-    $mastodon = Integration::factory()->for($org)->create(['provider_identifier' => 'mastodon']);
-    $media = Media::factory()->for($org)->create(['mime_type' => 'image/jpeg']);
+    $bluesky = Integration::factory()->for($org)->create(['provider_identifier' => 'bluesky']);
+    // An explicit size: MediaFactory's default is comfortably over
+    // Bluesky's 1MB cap, and this test is about sharing one media id
+    // across channels, not about the size rule.
+    $media = Media::factory()->for($org)->create(['mime_type' => 'image/jpeg', 'size_bytes' => 1024]);
 
     $response = $this->postJson('/api/posts', [
         'type' => 'draft',
         'posts' => [
             ['integration_id' => $telegram->id, 'value' => [['content' => 'A', 'media_ids' => [$media->id]]]],
-            ['integration_id' => $mastodon->id, 'value' => [['content' => 'B', 'media_ids' => [$media->id]]]],
+            ['integration_id' => $bluesky->id, 'value' => [['content' => 'B', 'media_ids' => [$media->id]]]],
         ],
     ]);
 
@@ -235,10 +238,10 @@ it('rejects a media id that does not exist at all with 422', function () {
     expect(PostGroup::count())->toBe(0);
 });
 
-it('rejects 5 images for Mastodon, which caps at 4', function () {
+it('rejects 5 images for Bluesky, which caps at 4', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
-    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'mastodon']);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'bluesky']);
     $media = Media::factory()->for($org)->count(5)->create(['mime_type' => 'image/jpeg']);
 
     $response = $this->postJson('/api/posts', [
@@ -256,8 +259,8 @@ it('rejects 5 images for Mastodon, which caps at 4', function () {
 it('accepts a post with valid, owned media within provider limits', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
-    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'mastodon']);
-    // Mastodon: maxImages 4, maxFileSizeBytes 40MB -- comfortably inside
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'bluesky']);
+    // Bluesky: maxImages 4, maxFileSizeBytes 1MB -- comfortably inside
     // both, and MediaFactory always sets a real size_bytes, proving
     // file_size_unknown is reachable-but-not-triggered by real media.
     $media = Media::factory()->for($org)->count(2)->create(['mime_type' => 'image/jpeg', 'size_bytes' => 1024]);
@@ -276,9 +279,9 @@ it('accepts a post with valid, owned media within provider limits', function () 
 it('rejects an oversized file against the provider file-size limit, using the stored size_bytes', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
-    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'mastodon']);
-    // Mastodon's cap is 40MB.
-    $media = Media::factory()->for($org)->create(['mime_type' => 'image/jpeg', 'size_bytes' => 41 * 1024 * 1024]);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'bluesky']);
+    // Bluesky's cap is 1MB.
+    $media = Media::factory()->for($org)->create(['mime_type' => 'image/jpeg', 'size_bytes' => 1_000_001]);
 
     $response = $this->postJson('/api/posts', [
         'type' => 'draft',

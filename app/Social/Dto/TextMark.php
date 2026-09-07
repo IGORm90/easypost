@@ -20,7 +20,7 @@ namespace App\Social\Dto;
  * the way into the database, so a draft reopened later reads back
  * exactly as it was written. Turning that canonical form into whatever
  * a given network actually accepts on the wire (Telegram's parse_mode
- * HTML, Slack's mrkdwn, or nothing at all) happens inside the provider
+ * HTML, or nothing at all) happens inside the provider
  * at publish time — see App\Social\Providers\TranslatesMarkup. That is
  * not a stylistic choice: the knowledge "this network writes bold with
  * one asterisk" is provider-specific behaviour, and the project's

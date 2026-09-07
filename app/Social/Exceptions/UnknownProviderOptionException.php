@@ -6,7 +6,7 @@ use InvalidArgumentException;
 
 /**
  * A `SupportsOptions::options()` implementation was asked for an
- * `$option` name it doesn't recognise (e.g. Slack asked for
+ * `$option` name it doesn't recognise (e.g. a chat provider asked for
  * 'subreddits'). Like UnknownProviderException, this is a caller/config
  * bug discovered before any network call is attempted, not a live
  * provider-call failure — it deliberately does NOT implement

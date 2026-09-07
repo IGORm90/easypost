@@ -5,9 +5,11 @@ use Tests\Support\MarkupTranslator;
 /*
  * Block 3: the canonical Markdown subset stored in `posts.content`
  * (**bold**, *italic*, ~~strike~~, `code`, [text](url)) translated into
- * what a network actually accepts on the wire. The trait is exercised
- * directly here rather than through a provider, so a failure points at
- * the parser instead of at whichever provider happened to call it.
+ * what a network actually accepts on the wire. One dialect is left —
+ * Telegram's HTML — because removing the Slack provider took its mrkdwn
+ * renderer with it. The trait is exercised directly here rather than
+ * through a provider, so a failure points at the parser instead of at
+ * whichever provider happened to call it.
  *
  * The two properties that matter most are at the bottom of this file:
  * content WITHOUT markup must come back as null (the provider then
@@ -50,16 +52,6 @@ it('does not parse markup inside code', function () {
     expect(markup()->html('`**not bold**`'))->toBe('<code>**not bold**</code>');
 });
 
-// --- Slack mrkdwn ----------------------------------------------------------
-
-it('renders every mark as slack mrkdwn', function () {
-    expect(markup()->mrkdwn('**bold**'))->toBe('*bold*')
-        ->and(markup()->mrkdwn('*italic*'))->toBe('_italic_')
-        ->and(markup()->mrkdwn('~~gone~~'))->toBe('~gone~')
-        ->and(markup()->mrkdwn('`x = 1`'))->toBe('`x = 1`')
-        ->and(markup()->mrkdwn('[site](https://example.test)'))->toBe('<https://example.test|site>');
-});
-
 // --- escaping --------------------------------------------------------------
 
 it('escapes html-special characters inside translated content', function () {
@@ -68,10 +60,6 @@ it('escapes html-special characters inside translated content', function () {
     // simply fails to publish, which is the failure this prevents.
     expect(markup()->html('**a < b & c**'))->toBe('<b>a &lt; b &amp; c</b>')
         ->and(markup()->html('plain < text with **bold**'))->toBe('plain &lt; text with <b>bold</b>');
-});
-
-it('escapes slack-special characters inside translated content', function () {
-    expect(markup()->mrkdwn('**a < b & c**'))->toBe('*a &lt; b &amp; c*');
 });
 
 it('escapes the link text and url it emits', function () {
@@ -85,23 +73,20 @@ it('leaves a non-http link as literal text', function () {
     // A javascript: or data: href is rejected by the networks anyway;
     // keeping the literal text means the post still publishes, carrying
     // exactly what the user typed, instead of failing on send.
-    expect(markup()->html('[tap](javascript:alert(1))'))->toBeNull()
-        ->and(markup()->mrkdwn('[tap](javascript:alert(1))'))->toBeNull();
+    expect(markup()->html('[tap](javascript:alert(1))'))->toBeNull();
 });
 
 // --- content that must not change -----------------------------------------
 
 it('returns null for content that carries no markup', function () {
-    expect(markup()->html('just a normal post'))->toBeNull()
-        ->and(markup()->mrkdwn('just a normal post'))->toBeNull();
+    expect(markup()->html('just a normal post'))->toBeNull();
 });
 
 it('returns null for unmarked content that contains html-special characters', function () {
     // The whole point of the null: a provider must keep sending this
     // byte-for-byte as it did before Block 3 existed, unescaped and
     // without a parse mode.
-    expect(markup()->html('5 < 6 && 7 > 6'))->toBeNull()
-        ->and(markup()->mrkdwn('5 < 6 && 7 > 6'))->toBeNull();
+    expect(markup()->html('5 < 6 && 7 > 6'))->toBeNull();
 });
 
 it('treats an unpaired marker as ordinary text', function () {

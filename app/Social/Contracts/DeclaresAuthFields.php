@@ -16,8 +16,7 @@ namespace App\Social\Contracts;
  *    (an instance host).
  *
  * Why this exists (final review, Important 10): the connect modal carried
- * its own hardcoded `{ mastodon: [...] }` / `{ telegram: [...],
- * bluesky: [...] }` field maps — a per-provider behaviour map living
+ * its own hardcoded `{ telegram: [...], bluesky: [...] }` field maps — a per-provider behaviour map living
  * outside the preview/registry layer, which the frontend's
  * provider-isolation guard was blind to only because the object keys were
  * unquoted. The shape of a provider's credential form is the provider's

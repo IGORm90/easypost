@@ -1,9 +1,0 @@
-{
-    "id": "12345",
-    "name": "EasyPost Scheduler",
-    "website": "https://easypost.example",
-    "redirect_uri": "https://easypost.example/oauth/callback",
-    "client_id": "TWFzdG9kb25DbGllbnRJZEV4YW1wbGUxMjM0NTY3ODkw",
-    "client_secret": "TWFzdG9kb25DbGllbnRTZWNyZXRFeGFtcGxlMDk4NzY1NDMyMQ",
-    "vapid_key": "BCk-QqERU0q-CfYZjcuB6lnyyOYfJ2AifKqfeGIm7Z-HiTU5T9eTG5GxVA0_OH5mMlI4UkoFB3-vjfeHYs9WQq0="
-}

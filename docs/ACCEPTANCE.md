@@ -75,23 +75,21 @@ Confirm this both by the UI hiding/disabling the controls and, if you want
 to be thorough, by hitting `DELETE /api/integrations/{id}` directly as the
 `USER` member and confirming a 403.
 
-### 3. Each of the five providers actually connects and actually publishes
+### 3. Each provider actually connects and actually publishes
 
 Needs real credentials — see [README.md](../README.md)'s "Obtaining
-credentials for the five providers" section for how to get each one (a bot
-token for Telegram, an app password for Bluesky, OAuth apps registered with
-Discord/Slack, no pre-registration for Mastodon).
+credentials" section for how to get each one (a bot token for Telegram, an
+app password for Bluesky).
 
-For **each** of Telegram, Mastodon, Bluesky, Discord, and Slack:
+For **each** of Telegram and Bluesky:
 
 1. Settings → Channels → Connect → pick the provider, complete its flow.
 2. Compose a short post targeting only that channel, publish immediately
    (or schedule ~1 minute out).
-3. Confirm the message actually appears on the real channel (open Telegram/
-   the Mastodon profile/Bluesky profile/Discord channel/Slack channel
-   directly).
+3. Confirm the message actually appears on the real channel (open the
+   Telegram channel or the Bluesky profile directly).
 
-Expected: all five succeed independently. Do this one provider at a time —
+Expected: both succeed independently. Do this one provider at a time —
 a failure on one should not be read as a failure of the others.
 
 ### 4. One post, three channels, per-channel variation, threaded, at a scheduled time
@@ -171,7 +169,7 @@ post takes.
 
 1. Take a connected channel and invalidate its credential on the provider's
    side (e.g. revoke the Telegram bot's access to the channel, or revoke the
-   Discord/Slack OAuth grant from that platform's own settings).
+   Bluesky app password).
 2. Wait for (or manually trigger) the scheduler's token-refresh sweep, or
    attempt to publish through that channel.
 3. Check the channel's status in Settings → Channels.
@@ -337,8 +335,8 @@ pass should exercise them by hand.
   application's own wiring, never a real provider call or a real worker.
 - **What a network does with the markup we send it.** Block 3's provider
   tests assert the request body under `Http::fake` — that Telegram gets
-  `<b>` with `parse_mode=HTML`, that Slack gets `*bold*` as mrkdwn, that a
-  post with no markup goes out byte-identical. That is our side of the
+  `<b>` with `parse_mode=HTML`, and that a post with no markup goes out
+  byte-identical. That is our side of the
   contract only. Whether Telegram accepts that exact HTML, and whether
   what the reader sees matches the preview, no CI job can know: it takes a
   real token and a real message (§5b).

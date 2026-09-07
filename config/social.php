@@ -1,9 +1,6 @@
 <?php
 
 use App\Social\Providers\BlueskyProvider;
-use App\Social\Providers\DiscordProvider;
-use App\Social\Providers\MastodonProvider;
-use App\Social\Providers\SlackProvider;
 use App\Social\Providers\TelegramProvider;
 
 return [
@@ -17,8 +14,10 @@ return [
     | class listed here must implement App\Social\Contracts\SocialProviderInterface.
     | This is the ONLY place provider identifiers are wired to their
     | implementation — App\Social\ProviderRegistry itself has no knowledge of
-    | any specific network. Real providers (Telegram, Mastodon, Bluesky,
-    | Discord, Slack) are added here starting Task 14.
+    | any specific network. The networks this install ships are listed
+    | below, and that list is the whole of it: an Integration row naming
+    | anything else is treated as a channel whose network is gone (see
+    | PostValidationService and PublishService), never as an error here.
     |
     | This file ships to production, so it deliberately contains no
     | reference to Tests\Support\FakeProvider (an autoload-dev-only
@@ -29,10 +28,7 @@ return [
     */
     'providers' => [
         'telegram' => TelegramProvider::class,
-        'mastodon' => MastodonProvider::class,
         'bluesky' => BlueskyProvider::class,
-        'discord' => DiscordProvider::class,
-        'slack' => SlackProvider::class,
     ],
 
 ];

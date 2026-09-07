@@ -19,10 +19,11 @@ use League\Flysystem\FilesystemException;
  * `(string) false` is `''`, and a ZERO-BYTE attachment was uploaded, with
  * no error anywhere. The other three refused to publish at all. Nothing
  * in `app/` had ever called `SupportsMedia::uploadMedia()`, so media
- * worked on exactly none of the five networks.
+ * worked on exactly none of the networks shipped at the time.
  *
  * `readStream()` + a chunked copy, not `get()`: a customer's video can be
- * up to `ProviderCapabilities::$maxFileSizeBytes` (1 GB on Slack), and
+ * up to `ProviderCapabilities::$maxFileSizeBytes`, which some networks
+ * put in the gigabytes, and
  * pulling that through a PHP string in a queue worker is how a publish
  * run OOMs. Streaming keeps peak memory at one chunk regardless of file
  * size, and gives providers a path they can `attach()`/`filesize()`

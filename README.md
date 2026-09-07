@@ -1,8 +1,8 @@
 # EasyPost
 
-A small social-scheduler MVP: connect Telegram, Mastodon, Bluesky, Discord and
-Slack channels, compose a post (with per-channel variations and threads),
-schedule it, and watch it publish. Multi-tenant (organizations), Laravel 13
+A small social-scheduler MVP: connect Telegram and Bluesky channels, compose
+a post (with per-channel variations and threads), schedule it, and watch it
+publish. Multi-tenant (organizations), Laravel 13
 API + Vue 3 SPA (Inertia-less, plain API + SPA), Postgres, Redis/Horizon for
 queues, MinIO (S3-compatible) for media.
 
@@ -79,7 +79,7 @@ purpose:
 |---|---|
 | `SESSION_DRIVER`, `SESSION_LIFETIME`, `SESSION_ENCRYPT`, `SESSION_DOMAIN` | The SPA authenticates via Sanctum's stateful-SPA cookie session, not API tokens. |
 | `SANCTUM_STATEFUL_DOMAINS` | Must include every host the SPA is served from (`localhost:8080` via nginx, `localhost:5173` via the Vite dev server) or auth requests won't be recognised as first-party. |
-| `CACHE_STORE` | Redis in dev/prod; Mastodon's per-instance dynamically-registered OAuth app id/secret is cached here (see `MastodonProvider`). |
+| `CACHE_STORE` | Redis in dev/prod. Also where a provider caches whatever it must not re-derive per request (a dynamically-registered OAuth app's id/secret, for instance). |
 | `QUEUE_CONNECTION` | Redis, consumed by Horizon. `PublishPostJob` (the job that actually calls out to a provider) is dispatched here, delayed until `publish_date`. |
 | `REDIS_CLIENT`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | The actual Redis connection details. Mandatory, not optional — `SESSION_DRIVER`, `CACHE_STORE`, and `QUEUE_CONNECTION` are all `redis` above, so without these all three silently point at `127.0.0.1` instead of the `redis` container. |
 
@@ -106,28 +106,27 @@ purpose:
 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI`, and
 `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`OIDC_REDIRECT_URI`/`OIDC_BASE_URL` are
 optional Socialite providers for signing **into** the app itself. They are
-unrelated to the five publishing providers below.
+unrelated to the publishing providers below.
 
-### Publishing channels (the five providers)
+### Publishing channels
 
 | Variable | Purpose |
 |---|---|
-| `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | OAuth2 app credentials for connecting a Discord channel. |
-| `SLACK_INTEGRATION_CLIENT_ID`, `SLACK_INTEGRATION_CLIENT_SECRET` | OAuth2 app credentials for connecting a Slack workspace/channel. Distinct from `SLACK_BOT_USER_OAUTH_TOKEN`/`SLACK_BOT_USER_DEFAULT_CHANNEL` below, which are this app's *own* ops alert channel, not a user-facing feature. |
 | `OAUTH_SPA_REDIRECT_URL` | The SPA's own base URL, used as the default login-callback destination. |
-| `INTEGRATIONS_REDIRECT_URL` | The SPA page (`/integrations/callback` by default) that receives Discord/Slack/Mastodon's OAuth redirect and forwards `code`/`state` to the backend. |
+| `INTEGRATIONS_REDIRECT_URL` | The SPA page (`/integrations/callback` by default) that receives an OAuth provider's redirect and forwards `code`/`state` to the backend. |
 
-Telegram and Bluesky need no app-level credentials at all — see "Obtaining
-provider credentials" below.
+The two shipped networks — Telegram and Bluesky — need no app-level
+credentials at all; both are manual-token flows. See "Obtaining
+credentials" below.
 
 ### Ops (optional)
 
 | Variable | Purpose |
 |---|---|
-| `SLACK_BOT_USER_OAUTH_TOKEN`, `SLACK_BOT_USER_DEFAULT_CHANNEL` | If set, this app posts its own operational alerts (e.g. failed-publish digests) to a Slack channel via Laravel's `slack` log/notification channel. Unrelated to end users connecting Slack as a publishing channel. |
+| `SLACK_BOT_USER_OAUTH_TOKEN`, `SLACK_BOT_USER_DEFAULT_CHANNEL` | If set, this app posts its own operational alerts (e.g. failed-publish digests) to a Slack channel via Laravel's `slack` log/notification channel. This is the app talking to its operators — Slack is not a publishing channel here. |
 | `POSTMARK_API_KEY`, `RESEND_API_KEY` | Alternative transactional-mail drivers, if not using SMTP/Mailpit. |
 
-## Obtaining credentials for the five providers
+## Obtaining credentials
 
 Each is connected per-organization from **Settings → Channels** in the app
 (`POST /api/integrations/{provider}/auth-url` to start the flow, then
@@ -145,28 +144,10 @@ member still cannot connect or remove a channel end to end.
   as an admin of the channel/group you want to post to, then get that chat's
   numeric id (e.g. via `@userinfobot` or the Bot API's `getUpdates`). Paste
   both into the connect form — this is a manual-token flow, not OAuth.
-- **Mastodon** — no pre-registration needed either: enter the instance
-  hostname you're on (e.g. `mastodon.social`) in the connect form. The backend
-  dynamically registers an OAuth app with that instance on first use
-  (`POST /api/v1/apps`, per-instance, cached) and redirects you through the
-  instance's own consent screen.
 - **Bluesky** — not OAuth. In the Bluesky app: Settings → Privacy and
   Security → App Passwords → create one. Enter your handle
   (e.g. `you.bsky.social`) and that app password in the connect form —
   **never your main account password**.
-- **Discord** — requires an app registered at the
-  [Discord Developer Portal](https://discord.com/developers/applications).
-  Create an app, add an OAuth2 redirect URI matching
-  `INTEGRATIONS_REDIRECT_URL`, and put its client id/secret in
-  `DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET`. Connecting a channel walks the
-  user through Discord's `webhook.incoming` consent screen, where they pick
-  the channel to post into; the token stored is the resulting webhook itself.
-- **Slack** — requires an app registered at
-  [api.slack.com/apps](https://api.slack.com/apps). Add an OAuth redirect URL
-  matching `INTEGRATIONS_REDIRECT_URL`, request the scopes needed to post
-  messages, and put its client id/secret in
-  `SLACK_INTEGRATION_CLIENT_ID`/`SLACK_INTEGRATION_CLIENT_SECRET`.
-
 ## Obtaining credentials for the eight Block 5 networks
 
 All eight are OAuth 2.0 client pairs registered per deployment, and all

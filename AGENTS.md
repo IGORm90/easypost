@@ -2,9 +2,8 @@
 
 ## Overview
 
-EasyPost is a multi-tenant social-post scheduler. You connect Telegram, Mastodon, Bluesky, Discord
-and Slack channels, compose a post (with per-channel variations and threads), schedule it, and watch
-it publish.
+EasyPost is a multi-tenant social-post scheduler. You connect Telegram and Bluesky channels,
+compose a post (with per-channel variations and threads), schedule it, and watch it publish.
 
 **Laravel 13 REST API + a separate Vue 3 SPA.** There is no Inertia — the SPA talks to the API over
 axios with Sanctum cookie auth. Everything is scoped to an `Organization`.
@@ -78,7 +77,7 @@ hourly, `ScanMissedPostsJob` every 10 min, digest email hourly).
 ### Domain vocabulary
 
 - `Organization` — the tenant. `OrganizationUser` is the role pivot; `Invite` brings people in.
-- `Integration` — a *connected publishing channel* (Telegram bot, Mastodon account, …). Its
+- `Integration` — a *connected publishing channel* (a Telegram bot, a Bluesky account). Its
   `token`/`refresh_token` use the `encrypted` cast. `IntegrationTimeSlot` holds its posting slots.
 - `SocialAccount` — a *login identity* (GitHub/Google/OIDC). Not a publishing channel. Don't confuse
   the two.
@@ -105,7 +104,8 @@ bitten.
 
 **Provider isolation.** No provider-specific string or branch outside `app/Social/Providers`.
 The guard greps `app/**/*.php` for `telegram|mastodon|bluesky|discord|slack` inside any quoted
-string — `tests/Unit/Architecture/ProviderIsolationTest.php`. The SPA mirrors this: only
+string — `mastodon`, `discord` and `slack` stay in that list on purpose after those providers were
+removed, so a stray reference cannot come back unnoticed — `tests/Unit/Architecture/ProviderIsolationTest.php`. The SPA mirrors this: only
 `resources/js/components/previews/registry.ts` may map a provider id to behaviour —
 `resources/js/__tests__/providerIsolation.spec.ts`.
 

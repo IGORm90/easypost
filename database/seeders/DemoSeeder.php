@@ -59,7 +59,7 @@ use RuntimeException;
  * could still point `DB_DATABASE` at `app_test` outside the test
  * runner.
  *
- * Provider identifiers used here (telegram/mastodon/bluesky) are real,
+ * Provider identifiers used here (telegram/bluesky) are real,
  * already-shipped providers (see config/social.php) — deliberately not
  * the test-only 'fake' identifier (`Tests\TestCase::setUp()` wires that
  * into `config('social.providers')` only inside the test process; see
@@ -224,19 +224,25 @@ class DemoSeeder extends Seeder
      */
     private function createIntegrations(Organization $organization): array
     {
+        /*
+         * Keyed by a demo-local label, not by provider identifier: the
+         * demo workspace wants three channels to make the calendar look
+         * like a real one, and this install ships two networks, so one
+         * network appears twice. The identifier is the second element.
+         */
         $specs = [
-            'telegram' => 'Demo Announcements',
-            'mastodon' => 'demo@mastodon.social',
-            'bluesky' => 'demo.bsky.social',
+            'announcements' => ['telegram', 'Demo Announcements'],
+            'updates' => ['telegram', 'Demo Product Updates'],
+            'bluesky' => ['bluesky', 'demo.bsky.social'],
         ];
 
         $integrations = [];
 
-        foreach ($specs as $identifier => $name) {
-            $integrations[$identifier] = Integration::create([
+        foreach ($specs as $key => [$identifier, $name]) {
+            $integrations[$key] = Integration::create([
                 'organization_id' => $organization->id,
                 'provider_identifier' => $identifier,
-                'internal_id' => "demo-{$identifier}-".Str::random(8),
+                'internal_id' => "demo-{$key}-".Str::random(8),
                 'name' => $name,
                 'picture' => null,
                 'profile' => null,
@@ -294,28 +300,28 @@ class DemoSeeder extends Seeder
     ): void {
         // 1. Draft, single channel, no media — the simplest possible state.
         $this->makeGroup($organization, $user, PostState::DRAFT, now(), [
-            $this->channel($integrations['telegram'], ['Draft: outline for next week\'s announcement.']),
+            $this->channel($integrations['announcements'], ['Draft: outline for next week\'s announcement.']),
         ]);
 
         // 2. Draft, single channel, with media and a tag.
         $this->makeGroup($organization, $user, PostState::DRAFT, now(), [
-            $this->channel($integrations['mastodon'], ['Draft: launch teaser, still picking the photo.'], [[$media[0]]]),
+            $this->channel($integrations['updates'], ['Draft: launch teaser, still picking the photo.'], [[$media[0]]]),
         ], tag: $tag);
 
         // 3. Scheduled, single channel, tomorrow.
         $this->makeGroup($organization, $user, PostState::QUEUE, now()->addDay(), [
-            $this->channel($integrations['telegram'], ["We're live tomorrow! \u{1F680}"]),
+            $this->channel($integrations['announcements'], ["We're live tomorrow! \u{1F680}"]),
         ]);
 
         // 4. Scheduled, two channels at once, with media on one of them.
         $this->makeGroup($organization, $user, PostState::QUEUE, now()->addDays(2), [
             $this->channel($integrations['bluesky'], ['New product shots are up.'], [[$media[1]]]),
-            $this->channel($integrations['mastodon'], ['New product shots are up.'], [[$media[1]]]),
+            $this->channel($integrations['updates'], ['New product shots are up.'], [[$media[1]]]),
         ], tag: $tag);
 
         // 5. Scheduled thread (three linked segments) on one channel.
         $this->makeGroup($organization, $user, PostState::QUEUE, now()->addDays(3), [
-            $this->channel($integrations['telegram'], [
+            $this->channel($integrations['announcements'], [
                 'Thread: why we built this (1/3)',
                 'Thread: what changed for you (2/3)',
                 'Thread: what\'s next (3/3)',
@@ -324,18 +330,18 @@ class DemoSeeder extends Seeder
 
         // 6. Published, single channel, with media, a few days ago.
         $this->makeGroup($organization, $user, PostState::PUBLISHED, now()->subDays(4), [
-            $this->channel($integrations['telegram'], ['We shipped the new scheduler today.'], [[$media[2]]], released: true),
+            $this->channel($integrations['announcements'], ['We shipped the new scheduler today.'], [[$media[2]]], released: true),
         ]);
 
         // 7. Published, two channels at once.
         $this->makeGroup($organization, $user, PostState::PUBLISHED, now()->subDays(5), [
             $this->channel($integrations['bluesky'], ['Meet the team behind the launch.'], [[$media[3]]], released: true),
-            $this->channel($integrations['mastodon'], ['Meet the team behind the launch.'], [[$media[3]]], released: true),
+            $this->channel($integrations['updates'], ['Meet the team behind the launch.'], [[$media[3]]], released: true),
         ]);
 
         // 8. Published thread (two linked segments), a week ago.
         $this->makeGroup($organization, $user, PostState::PUBLISHED, now()->subWeek(), [
-            $this->channel($integrations['telegram'], [
+            $this->channel($integrations['announcements'], [
                 'Thank you to everyone who joined the beta (1/2)',
                 'Full changelog is in the docs (2/2)',
             ], released: true),
@@ -347,7 +353,7 @@ class DemoSeeder extends Seeder
             $user,
             PostState::ERROR,
             now()->subDay(),
-            [$this->channel($integrations['mastodon'], ['This one failed to send.'])],
+            [$this->channel($integrations['updates'], ['This one failed to send.'])],
             error: 'The connected channel rejected the request: token expired.',
         );
 
@@ -358,7 +364,7 @@ class DemoSeeder extends Seeder
             PostState::ERROR,
             now()->subDays(2),
             [
-                $this->channel($integrations['telegram'], ['Both channels failed on this one.']),
+                $this->channel($integrations['announcements'], ['Both channels failed on this one.']),
                 $this->channel($integrations['bluesky'], ['Both channels failed on this one.']),
             ],
             error: 'The connected channel rejected the request: rate limited.',

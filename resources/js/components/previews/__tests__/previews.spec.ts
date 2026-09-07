@@ -1,18 +1,12 @@
 import { mount } from '@vue/test-utils';
 import TelegramPreview from '../TelegramPreview.vue';
-import MastodonPreview from '../MastodonPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
-import DiscordPreview from '../DiscordPreview.vue';
-import SlackPreview from '../SlackPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 import PreviewPane from '../PreviewPane.vue';
 
 const ALL = [
     ['telegram', TelegramPreview],
-    ['mastodon', MastodonPreview],
     ['bluesky', BlueskyPreview],
-    ['discord', DiscordPreview],
-    ['slack', SlackPreview],
     ['generic', GenericPreview],
 ] as const;
 
@@ -69,65 +63,21 @@ describe.each(ALL)('%s preview, hostile content', (_label, Component) => {
 
 // --- Thread shape honesty ----------------------------------------------
 
-it('Mastodon nests each reply under the previous one (a true linked-list chain)', () => {
-    const w = mount(MastodonPreview, {
+it('Bluesky nests each reply under the previous one (a true linked-list chain)', () => {
+    const w = mount(BlueskyPreview, {
         props: {
-            channelName: 'My Mastodon',
+            channelName: 'My Bluesky',
             channelPicture: null,
-            segments: [{ content: 'root toot' }, { content: 'reply one' }, { content: 'reply two' }],
+            segments: [{ content: 'root post' }, { content: 'reply one' }, { content: 'reply two' }],
         },
     });
 
-    expect(w.text()).toContain('root toot');
+    expect(w.text()).toContain('root post');
     expect(w.text()).toContain('reply one');
     expect(w.text()).toContain('reply two');
-    // Two "replying to the previous post" labels — one per non-root segment.
-    expect(w.findAll('p').filter((p) => p.text().includes('Replying to the previous post'))).toHaveLength(2);
-});
-
-it('Slack renders every reply as a direct child of the ROOT, not chained reply-to-reply', () => {
-    const w = mount(SlackPreview, {
-        props: {
-            channelName: 'My Slack',
-            channelPicture: null,
-            segments: [{ content: 'root message' }, { content: 'reply one' }, { content: 'reply two' }],
-        },
-    });
-
-    // A single flat thread block holding both replies, not two nested rails.
-    expect(w.text()).toContain('root message');
-    expect(w.text()).toContain('2 replies in thread');
-    expect(w.text()).toContain('reply one');
-    expect(w.text()).toContain('reply two');
-});
-
-// Final review, Minor: the count was passed as a named argument only, so
-// a thread with one reply read "1 replies in thread".
-it('Slack counts a single reply in the singular', () => {
-    const w = mount(SlackPreview, {
-        props: {
-            channelName: 'My Slack',
-            channelPicture: null,
-            segments: [{ content: 'root message' }, { content: 'the only reply' }],
-        },
-    });
-
-    expect(w.text()).toContain('1 reply in thread');
-    expect(w.text()).not.toContain('1 replies');
-});
-
-it('Discord renders extra segments as separate, explicitly unlinked messages', () => {
-    const w = mount(DiscordPreview, {
-        props: {
-            channelName: 'My Discord',
-            channelPicture: null,
-            segments: [{ content: 'first' }, { content: 'second' }],
-        },
-    });
-
-    expect(w.text()).toContain('first');
-    expect(w.text()).toContain('second');
-    expect(w.text()).toMatch(/does not support threading/i);
+    // One "Reply" label per non-root segment — the preview must not
+    // imply three independent posts when the provider chains them.
+    expect(w.findAll('p').filter((p) => p.text() === 'Reply')).toHaveLength(2);
 });
 
 // --- PreviewPane resolves via the registry, never by branching ---------

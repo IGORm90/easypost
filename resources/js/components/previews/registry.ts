@@ -1,9 +1,6 @@
 import type { Component } from 'vue';
 import TelegramPreview from './TelegramPreview.vue';
-import MastodonPreview from './MastodonPreview.vue';
 import BlueskyPreview from './BlueskyPreview.vue';
-import DiscordPreview from './DiscordPreview.vue';
-import SlackPreview from './SlackPreview.vue';
 import GenericPreview from './GenericPreview.vue';
 
 /**
@@ -20,16 +17,14 @@ import GenericPreview from './GenericPreview.vue';
  * outside this `components/previews/` directory. That guard is the
  * frontend analogue of tests/Unit/Architecture/ProviderIsolationTest.php.
  *
- * Adding a sixth network: drop in `SixthPreview.vue`, add one entry
- * here. Nothing outside this file (or `components/previews/` generally)
- * needs to change.
+ * Adding a network: drop in `ItsPreview.vue`, add one entry here.
+ * Nothing outside this file (or `components/previews/` generally) needs
+ * to change. Removing one is the same edit in reverse — a channel whose
+ * network is gone keeps rendering, through `GenericPreview`.
  */
 export const previewRegistry: Record<string, Component> = {
     telegram: TelegramPreview,
-    mastodon: MastodonPreview,
     bluesky: BlueskyPreview,
-    discord: DiscordPreview,
-    slack: SlackPreview,
 };
 
 /** Resolves `identifier` to its preview component, defaulting to `GenericPreview` for anything not in the registry. */

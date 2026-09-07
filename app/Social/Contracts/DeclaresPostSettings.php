@@ -10,7 +10,7 @@ namespace App\Social\Contracts;
  *
  * The distinction from `DeclaresUpdatableSettings` is the lifetime of
  * the answer, and it is not a shade of meaning: a channel setting
- * (Slack's `channel_id`) is decided once and reused, and lives on the
+ * (a workspace's `channel_id`) is decided once and reused, and lives on the
  * `integrations` row; a post setting is part of the post, lives on
  * `posts.settings`, and may legitimately differ between two posts to the
  * same channel. Putting a subreddit in channel settings would mean one

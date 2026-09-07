@@ -33,16 +33,16 @@ use InvalidArgumentException;
  * documented mechanism for third-party apps), verified via
  * `com.atproto.server.createSession` -- see ManualTokenAuth.
  *
- * Fixed entryway host: unlike Mastodon's user-chosen instance, every
- * call here targets `bsky.social`, the public AT Protocol entryway,
- * which proxies to whichever PDS actually hosts a given account. This
- * host is a constant in this class, never taken from request input, so
- * (unlike MastodonProvider's instance host) there is no SafeRemoteHost
- * check to make: SafeRemoteHost exists to gate a server-side request
- * target an admin controls, and nothing here is admin-controlled. A
- * fixed multi-tenant entryway is a real simplification for an MVP (a
- * self-hosted PDS user would need their own instance host, symmetric to
- * Mastodon) -- documented here rather than silently assumed.
+ * Fixed entryway host: every call here targets `bsky.social`, the
+ * public AT Protocol entryway, which proxies to whichever PDS actually
+ * hosts a given account. This host is a constant in this class, never
+ * taken from request input, so there is no SafeRemoteHost check to make:
+ * SafeRemoteHost exists to gate a server-side request target an admin
+ * controls, and nothing here is admin-controlled. A fixed multi-tenant
+ * entryway is a real simplification for an MVP (a self-hosted PDS user
+ * would need to name their own instance host, which would then be
+ * admin-controlled input and would need that check) -- documented here
+ * rather than silently assumed.
  *
  * Session lifecycle (SupportsRefresh): createSession returns a
  * short-lived accessJwt and a longer-lived refreshJwt. refresh()

@@ -8,10 +8,9 @@ use App\Social\Dto\MediaDto;
 /**
  * Optional capability: implement this on a provider whose network
  * requires (or benefits from) uploading a media file ahead of composing
- * the post itself — e.g. Mastodon's `/api/v2/media` endpoint returns an
- * attachment id that must exist before the status referencing it can be
- * created; Bluesky uploads a blob and the post references that blob;
- * Slack completes a file upload and the message references the file id.
+ * the post itself — e.g. Bluesky uploads a blob and the post references
+ * that blob; a network whose media endpoint returns an attachment id
+ * needs that id to exist before the post referencing it is created.
  * Providers that simply attach raw files inline on post() (nothing to
  * pre-upload) don't implement it.
  *

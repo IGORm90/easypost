@@ -74,7 +74,7 @@ it('marks a group with any released segment as non-editable even when the group 
     state: 'QUEUE',
     posts: [
       { id: 'p1', content: 'a', state: 'PUBLISHED', integration: { id: 'i1', provider_identifier: 'telegram', name: 'A' } },
-      { id: 'p2', content: 'b', state: 'QUEUE', integration: { id: 'i2', provider_identifier: 'discord', name: 'B' } },
+      { id: 'p2', content: 'b', state: 'QUEUE', integration: { id: 'i2', provider_identifier: 'bluesky', name: 'B' } },
     ],
   })
   const w = await mountGrid([partiallyReleased])

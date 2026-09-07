@@ -11,9 +11,9 @@ namespace App\Social\Contracts;
  * Important 4): `PUT /api/integrations/{id}` used to accept
  * `'settings' => ['sometimes','nullable','array']` and write it straight
  * through, so an org admin could repoint a channel's whole settings blob
- * with one request — changing the Mastodon instance host every future
- * publish connects to, or the target chat/channel a stored credential
- * posts into, with no connect flow and no OAuth involved. The fix cannot
+ * with one request — changing the instance host every future publish
+ * connects to, or the target chat/channel a stored credential posts
+ * into, with no connect flow and no OAuth involved. The fix cannot
  * be a hardcoded per-network list in the request class: provider names
  * appear only under `app/Social/Providers`, enforced by
  * `tests/Unit/Architecture/ProviderIsolationTest.php`. So the provider

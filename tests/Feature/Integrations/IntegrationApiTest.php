@@ -5,9 +5,9 @@ use App\Models\Organization;
 use App\Services\Billing\PlanLimitService;
 use App\Services\Integrations\IntegrationService;
 use App\Social\Dto\AuthResultDto;
-use App\Support\SafeRemoteHost;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\NoOptionsFakeProvider;
+use Tests\Support\UpdatableSettingsFakeProvider;
 
 /*
  * Task 13: the OAuth-connect HTTP surface (GET /api/providers,
@@ -48,7 +48,7 @@ it('exposes each provider\'s supported text marks as plain strings', function ()
     $byIdentifier = collect((array) $response->json())->keyBy('identifier');
 
     expect($byIdentifier['telegram']['capabilities']['supportedMarks'])->toContain('BOLD')
-        ->and($byIdentifier['mastodon']['capabilities']['supportedMarks'])->toBe([]);
+        ->and($byIdentifier['bluesky']['capabilities']['supportedMarks'])->toBe([]);
 });
 
 it('reports auth_type manual for a ManualTokenAuth provider and oauth for a standard one', function () {
@@ -63,7 +63,7 @@ it('reports auth_type manual for a ManualTokenAuth provider and oauth for a stan
     $byIdentifier = collect((array) $response->json())->keyBy('identifier');
 
     expect($byIdentifier['telegram']['auth_type'])->toBe('manual')
-        ->and($byIdentifier['mastodon']['auth_type'])->toBe('oauth');
+        ->and($byIdentifier['fake']['auth_type'])->toBe('oauth');
 });
 
 // --- GET /api/integrations ----------------------------------------------
@@ -139,28 +139,18 @@ it('returns the provider\'s extra payload from auth-url (Task 14 review, Finding
 });
 
 it('forwards query/body params from auth-url into generateAuthUrl (Task 14 review, Finding 4)', function () {
-    // Mastodon needs the frontend-supplied instance host to reach
-    // generateAuthUrl(); this proves the controller's generic
-    // pass-through actually works end to end against a real registered
-    // provider, not just the interface signature.
-    Http::fake([
-        'mastodon.social/api/v1/apps' => Http::response([
-            'client_id' => 'test-client-id',
-            'client_secret' => 'test-client-secret',
-        ]),
-    ]);
-    SafeRemoteHost::fake(['mastodon.social' => ['198.51.100.10']]);
-
+    // A network can need a value from the frontend before an authorize
+    // URL can even be built (a user-chosen instance host, a workspace).
+    // This proves the controller's generic pass-through actually works
+    // end to end, rather than just matching the interface signature —
+    // FakeProvider echoes whatever it was handed back through `extra`.
     $org = Organization::factory()->create();
     actingAsMember($org, 'ADMIN');
 
-    $response = $this->postJson('/api/integrations/mastodon/auth-url', ['instance' => 'mastodon.social']);
+    $response = $this->postJson('/api/integrations/fake/auth-url', ['instance' => 'chosen.test']);
 
     $response->assertOk();
-    expect($response->json('url'))->toContain('https://mastodon.social/oauth/authorize')
-        ->and($response->json('extra'))->toBe(['instance' => 'mastodon.social']);
-
-    SafeRemoteHost::stopFaking();
+    expect($response->json('extra.params'))->toBe(['instance' => 'chosen.test']);
 });
 
 it('rejects auth-url for a non-admin member', function () {
@@ -579,20 +569,25 @@ it("rejects reading another organization's channel options as not found", functi
  * Final-review batch 2, Important 4: `settings` is no longer a
  * write-anything blob. The keys a channel accepts come from its own
  * provider (App\Social\Contracts\DeclaresUpdatableSettings); a provider
- * that declares nothing accepts nothing. Slack is the one provider with
- * a legitimately user-changeable setting today (which channel to post
- * into) — batch 3's picker UI writes it through exactly this endpoint,
- * which is why this is a key allow-list rather than "drop settings".
+ * that declares nothing accepts nothing. No shipped provider declares an
+ * updatable setting today, so these run against
+ * Tests\Support\UpdatableSettingsFakeProvider — the guarantee being
+ * tested is the request layer's, not any one network's, and this is a
+ * key allow-list rather than "drop settings" precisely so a picker UI
+ * can still write through this endpoint.
  */
 it('rejects a settings key the channel\'s provider does not declare updatable', function () {
+    config()->set('social.providers.fake-updatable', UpdatableSettingsFakeProvider::class);
+
     $org = Organization::factory()->create();
-    // The Mastodon instance host is the sharpest case: repointing it aims
+    // A host-shaped setting is the sharpest case: repointing one aims
     // every future publish at a server of the caller's choosing, with no
     // connect flow — the cheapest entry into this batch's SSRF findings.
+    // This provider declares only channel_id, so 'instance' is refused.
     $integration = Integration::factory()->create([
         'organization_id' => $org->id,
-        'provider_identifier' => 'mastodon',
-        'settings' => ['instance' => 'mastodon.social'],
+        'provider_identifier' => 'fake-updatable',
+        'settings' => ['instance' => 'chosen.test'],
     ]);
     actingAsMember($org, 'ADMIN');
 
@@ -600,7 +595,7 @@ it('rejects a settings key the channel\'s provider does not declare updatable', 
         'settings' => ['instance' => 'attacker.example'],
     ])->assertInvalid(['settings']);
 
-    expect($integration->fresh()->settings)->toBe(['instance' => 'mastodon.social']);
+    expect($integration->fresh()->settings)->toBe(['instance' => 'chosen.test']);
 });
 
 it('rejects any settings key at all for a provider declaring none', function () {
@@ -619,10 +614,12 @@ it('rejects any settings key at all for a provider declaring none', function () 
 });
 
 it('accepts a declared settings key and merges it without dropping the rest', function () {
+    config()->set('social.providers.fake-updatable', UpdatableSettingsFakeProvider::class);
+
     $org = Organization::factory()->create();
     $integration = Integration::factory()->create([
         'organization_id' => $org->id,
-        'provider_identifier' => 'slack',
+        'provider_identifier' => 'fake-updatable',
         'settings' => ['team_id' => 'T1', 'channel_id' => 'C-old'],
     ]);
     actingAsMember($org, 'ADMIN');
@@ -637,10 +634,12 @@ it('accepts a declared settings key and merges it without dropping the rest', fu
 });
 
 it('validates the shape of a declared settings key', function () {
+    config()->set('social.providers.fake-updatable', UpdatableSettingsFakeProvider::class);
+
     $org = Organization::factory()->create();
     $integration = Integration::factory()->create([
         'organization_id' => $org->id,
-        'provider_identifier' => 'slack',
+        'provider_identifier' => 'fake-updatable',
         'settings' => ['channel_id' => 'C-old'],
     ]);
     actingAsMember($org, 'ADMIN');
@@ -653,8 +652,8 @@ it('validates the shape of a declared settings key', function () {
 /*
  * Final-review batch 2, Important 5: auth-url is the second route in this
  * application that makes a server-originated request to a caller-named
- * host (MastodonProvider registers an OAuth app per instance), and it
- * carried no rate limit at all. Same 10/min budget as media/from-url.
+ * host (a provider may register an OAuth app per user-named instance),
+ * and it carried no rate limit at all. Same 10/min budget as media/from-url.
  */
 it('throttles auth-url', function () {
     $org = Organization::factory()->create();
@@ -665,4 +664,29 @@ it('throttles auth-url', function () {
     }
 
     $this->postJson('/api/integrations/fake/auth-url')->assertStatus(429);
+});
+
+/*
+ * Soft degradation, read side. A channel connected before its network
+ * was removed from this install still has to be visible — it is the
+ * only place the customer can see it and delete it. The list must
+ * therefore never resolve a provider, and GET /api/providers (which
+ * lists what CAN be connected) must not advertise the dead identifier.
+ */
+it('still lists a channel whose provider is no longer registered, and does not advertise that provider', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+
+    $orphan = Integration::factory()->create([
+        'organization_id' => $org->id,
+        'provider_identifier' => 'network-removed-from-this-install',
+    ]);
+
+    $this->getJson('/api/integrations')
+        ->assertOk()
+        ->assertJsonFragment(['id' => $orphan->id]);
+
+    $identifiers = collect((array) $this->getJson('/api/providers')->json())->pluck('identifier');
+
+    expect($identifiers)->not->toContain('network-removed-from-this-install');
 });

@@ -91,7 +91,7 @@ it("the counter reflects the channel's own maxCharacters and turns red past it",
     expect(short.find('[data-testid="counter-0"]').classes().join(' ')).not.toMatch(/danger/);
 
     const over = mount(ThreadEditor, {
-        props: { modelValue: segments('a'.repeat(2500)), capabilities: capabilities({ maxCharacters: 2000 }), label: 'Discord' },
+        props: { modelValue: segments('a'.repeat(2500)), capabilities: capabilities({ maxCharacters: 2000 }), label: 'A network' },
     });
     expect(over.text()).toContain('2500 / 2000');
     expect(over.find('[data-testid="counter-0"]').classes().join(' ')).toMatch(/danger/);
@@ -123,12 +123,12 @@ it('a signature is included in the counter of the last segment only', () => {
     expect(w.find('[data-testid="counter-1"]').text()).toContain('30 / 300');
 });
 
-it('the add button is disabled and explained when the channel does not support threads (Discord)', () => {
+it('the add button is disabled and explained when the channel does not support threads', () => {
     const w = mount(ThreadEditor, {
         props: {
             modelValue: segments('only'),
             capabilities: capabilities({ supportsThreads: false, maxThreadLength: null }),
-            label: 'Discord',
+            label: 'A network',
         },
     });
 
@@ -142,7 +142,7 @@ it('the add button disables once maxThreadLength is reached', () => {
         props: {
             modelValue: segments('a', 'b', 'c'),
             capabilities: capabilities({ supportsThreads: true, maxThreadLength: 3 }),
-            label: 'Mastodon',
+            label: 'A network',
         },
     });
 

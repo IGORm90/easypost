@@ -16,7 +16,7 @@ import { useIntegrationsStore } from '../../stores/integrations';
  * from ConnectProviderModal without ever navigating away.
  *
  * `extra` round-trips generically: ConnectProviderModal stashed whatever
- * `POST .../auth-url` returned in `extra` (Mastodon's `{ instance }`;
+ * `POST .../auth-url` returned in `extra` (an `{ instance }` host;
  * empty for providers that need nothing) into
  * `sessionStorage['channel_connect_pending']` right before the redirect.
  * This component never inspects what's inside it — it's spread into the

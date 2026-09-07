@@ -21,7 +21,7 @@ function failure(overrides: Record<string, unknown> = {}) {
         publish_date: '2026-09-10T09:00:00Z',
         error: 'Publishing failed on 1 of 2 channels.',
         channels: [
-            { integration: { id: 'int-1', name: 'Marketing Slack' }, error: 'channel_not_found' },
+            { integration: { id: 'int-1', name: 'Marketing feed' }, error: 'channel_not_found' },
         ],
         ...overrides,
     };
@@ -71,7 +71,7 @@ it('shows the group reason and the per-channel detail', async () => {
     // Both, not either: "which post failed" and "which of its channels"
     // are different questions, and a partially-failed group needs both.
     expect(w.text()).toContain('Publishing failed on 1 of 2 channels.');
-    expect(w.text()).toContain('Marketing Slack');
+    expect(w.text()).toContain('Marketing feed');
     expect(w.text()).toContain('channel_not_found');
 });
 
