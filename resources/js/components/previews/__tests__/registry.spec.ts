@@ -1,7 +1,10 @@
-import { previewRegistry, resolvePreview } from '../registry';
+import { iconRegistry, previewRegistry, resolvePreview, resolveProviderIcon } from '../registry';
 import TelegramPreview from '../TelegramPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
+import TelegramIcon from '../icons/TelegramIcon.vue';
+import BlueskyIcon from '../icons/BlueskyIcon.vue';
+import GenericIcon from '../icons/GenericIcon.vue';
 
 /**
  * The registry is the ONLY place allowed to know that "telegram" maps to
@@ -39,4 +42,44 @@ it('resolvePreview() falls back to GenericPreview for a network this build no lo
 
 it('resolvePreview() defaults to GenericPreview for an empty identifier', () => {
     expect(resolvePreview('')).toBe(GenericPreview);
+});
+
+/**
+ * The second map this file owns: a provider's brand mark. It lives here
+ * for exactly the reason the preview map does — providerIsolation.spec.ts
+ * forbids a provider identifier (in source OR in a file path) anywhere
+ * under resources/js outside components/previews/, so an
+ * `{ telegram: TelegramIcon }` map and a `TelegramIcon.vue` have nowhere
+ * else they could legally live.
+ */
+it('exposes every provider that has a brand mark of its own', () => {
+    expect(iconRegistry).toEqual({
+        telegram: TelegramIcon,
+        bluesky: BlueskyIcon,
+    });
+});
+
+it('resolveProviderIcon("telegram") returns the Telegram mark', () => {
+    expect(resolveProviderIcon('telegram')).toBe(TelegramIcon);
+});
+
+it('resolveProviderIcon("bluesky") returns the Bluesky mark', () => {
+    expect(resolveProviderIcon('bluesky')).toBe(BlueskyIcon);
+});
+
+it('resolveProviderIcon() defaults to GenericIcon for a network with no mark yet', () => {
+    // Every one of Block 5's eight planned networks lands here until its
+    // own mark is drawn — the available-networks grid must render it as a
+    // connectable card regardless, not as a hole.
+    expect(resolveProviderIcon('some-future-network')).toBe(GenericIcon);
+});
+
+it('resolveProviderIcon() falls back to GenericIcon for a network this build no longer ships', () => {
+    // Same reasoning as resolvePreview()'s fallback: a channel connected
+    // before its network was removed still exists and still has to draw.
+    expect(resolveProviderIcon('mastodon')).toBe(GenericIcon);
+});
+
+it('resolveProviderIcon() defaults to GenericIcon for an empty identifier', () => {
+    expect(resolveProviderIcon('')).toBe(GenericIcon);
 });

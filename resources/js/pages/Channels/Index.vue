@@ -3,9 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { isAxiosError } from 'axios';
 import AppLayout from '../../layouts/AppLayout.vue';
-import Button from '../../components/ui/Button.vue';
 import Toast from '../../components/ui/Toast.vue';
 import ChannelCard from '../../components/channels/ChannelCard.vue';
+import ProviderCard from '../../components/channels/ProviderCard.vue';
 import ConnectProviderModal from '../../components/channels/ConnectProviderModal.vue';
 import ChannelSettingsDrawer from '../../components/channels/ChannelSettingsDrawer.vue';
 import { useIntegrationsStore, type Integration } from '../../stores/integrations';
@@ -43,6 +43,20 @@ watch(
 );
 
 const providerFor = (identifier: string) => store.providers.find((p) => p.identifier === identifier);
+
+/**
+ * How many channels the organization holds per network, built once per
+ * change rather than filtered per card: the catalogue block renders a
+ * card for every provider the build ships, and a per-card `filter()`
+ * would walk the whole channel list once per network for no reason.
+ */
+const connectedCounts = computed(() =>
+    store.list.reduce<Record<string, number>>((counts, integration) => {
+        counts[integration.provider_identifier] = (counts[integration.provider_identifier] ?? 0) + 1;
+
+        return counts;
+    }, {}),
+);
 
 const connectOpen = ref(false);
 const reconnectProvider = ref<string | undefined>(undefined);
@@ -115,22 +129,22 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-3xl flex-col gap-4">
-            <div class="flex items-center justify-between">
-                <h1 class="text-lg font-semibold text-text">{{ t('channels.title') }}</h1>
-                <!-- secondary, not primary: ConnectProviderModal's own
-                     submit button is this screen's one primary action
-                     once the modal is open (color.md §3.1 — at most one
-                     primary element per screen), same reasoning as
-                     Settings/Team.vue's invite trigger. -->
-                <Button variant="secondary" @click="openConnect">{{ t('channels.connect') }}</Button>
-            </div>
+        <!-- Left-aligned, not centred: the two blocks are a reading
+             column, and `mx-auto` parked them mid-screen with the nav
+             rail already eating the left edge, so nothing on the page
+             shared a starting x. `max-w-3xl` stays — it caps the line
+             length and the card grid, it does not centre anything. -->
+        <div class="flex max-w-3xl flex-col gap-8">
+            <h1 class="text-lg font-semibold text-text">{{ t('channels.title') }}</h1>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
 
-            <p v-if="!loading && store.list.length === 0" class="text-sm text-muted">{{ t('channels.empty') }}</p>
+            <!-- What this organization already holds. -->
+            <section class="flex flex-col gap-3">
+                <h2 class="text-sm font-semibold text-text">{{ t('channels.connected.title') }}</h2>
 
-            <div class="flex flex-col gap-3">
+                <p v-if="!loading && store.list.length === 0" class="text-sm text-muted">{{ t('channels.empty') }}</p>
+
                 <ChannelCard
                     v-for="integration in store.list"
                     :key="integration.id"
@@ -141,7 +155,31 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
                     @remove="remove(integration)"
                     @reconnect="openReconnect(integration)"
                 />
-            </div>
+            </section>
+
+            <!-- What it could hold. Every network the build ships, whether
+                 or not it is already connected — see ProviderCard's
+                 docblock for why a connected network keeps its card. The
+                 screen's only connect trigger now lives here: the old
+                 header button opened the very same picker, and one screen
+                 does not need the same action twice. -->
+            <section class="flex flex-col gap-3">
+                <div>
+                    <h2 class="text-sm font-semibold text-text">{{ t('channels.available.title') }}</h2>
+                    <p class="mt-0.5 text-sm text-muted">{{ t('channels.available.subtitle') }}</p>
+                </div>
+
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <ProviderCard
+                        v-for="provider in store.providers"
+                        :key="provider.identifier"
+                        data-test="provider-card"
+                        :provider="provider"
+                        :connected-count="connectedCounts[provider.identifier] ?? 0"
+                        @connect="openConnect"
+                    />
+                </div>
+            </section>
         </div>
 
         <ConnectProviderModal

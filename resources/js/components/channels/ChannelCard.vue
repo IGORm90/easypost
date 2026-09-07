@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import Card from '../ui/Card.vue';
 import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
+import { resolveProviderIcon } from '../previews/registry';
 import type { Integration, Provider } from '../../stores/integrations';
 
 const props = defineProps<{
@@ -24,7 +25,13 @@ const providerName = computed(() => props.provider?.name ?? props.integration.pr
 
 // Avatars never carry primary — color.md §3.1/§3.2: they're decorative
 // identity, not the screen's action.
-const initial = computed(() => providerName.value.charAt(0).toUpperCase());
+//
+// The fallback for a channel the network gave us no picture for used to
+// be a single-letter monogram, which told a reader nothing: every
+// Telegram channel drew the same "T". The network's own mark at least
+// says which network this is. Resolved through the registry, never by
+// branching on the identifier here (previews/registry.ts).
+const icon = computed(() => resolveProviderIcon(props.integration.provider_identifier));
 </script>
 
 <template>
@@ -36,12 +43,17 @@ const initial = computed(() => providerName.value.charAt(0).toUpperCase());
                 :alt="providerName"
                 class="h-10 w-10 shrink-0 rounded-full object-cover"
             />
+            <!-- --surface-2, not --accent-soft: the mark may carry a
+                 brand colour (color.md §6) and a neutral ground keeps that
+                 contrast identical in both themes — the same tile
+                 ProviderCard uses, so a channel and its network read as
+                 the same thing. -->
             <div
                 v-else
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent"
+                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-muted"
                 aria-hidden="true"
             >
-                {{ initial }}
+                <component :is="icon" class="h-6 w-6" />
             </div>
 
             <div class="min-w-0 flex-1">

@@ -142,6 +142,16 @@
         "title": "Channels",
         "connect": "Connect channel",
         "empty": "No channels connected yet.",
+        "connected": {
+            "title": "Your channels"
+        },
+        "available": {
+            "title": "Available networks",
+            "subtitle": "Connect an account to start scheduling posts to it.",
+            "connect": "Connect",
+            "connectAria": "Connect {name}",
+            "connectedCount": "{count} connected"
+        },
         "status": {
             "active": "Active",
             "disabled": "Disabled",
