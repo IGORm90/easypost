@@ -35,6 +35,8 @@
       "registerLink": "Create one",
       "forgotLink": "Forgot your password?",
       "error": "Incorrect email or password.",
+      "google": "Continue with Google",
+      "oauthError": "Google sign-in could not be completed. Please try again.",
       "sessionExpired": "Your session has expired. Please sign in again."
     },
     "register": {

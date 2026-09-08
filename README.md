@@ -108,6 +108,28 @@ purpose:
 optional Socialite providers for signing **into** the app itself. They are
 unrelated to the publishing providers below.
 
+#### Google sign-in setup
+
+1. In Google Cloud Console, configure the OAuth consent screen for the audience
+   that may use this EasyPost deployment. While the app is in testing, add each
+   permitted Google account as a test user.
+2. Create an OAuth 2.0 **Web application** client and add this exact authorized
+   redirect URI: `https://<public-app-host>/api/auth/oauth/google/callback`.
+   It is the Laravel callback, not the Vite development-server URL or SPA
+   `/login` route.
+3. Store the issued values only in deployment secrets, then configure:
+
+   ```dotenv
+   GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REDIRECT_URI=https://<public-app-host>/api/auth/oauth/google/callback
+   OAUTH_SPA_REDIRECT_URL=https://<public-app-host>
+   ```
+
+   `GOOGLE_REDIRECT_URI` must byte-for-byte match the URI registered in Google
+   Cloud Console. After changing production environment values, refresh the
+   Laravel configuration cache or redeploy the PHP and queue services.
+
 ### Publishing channels
 
 | Variable | Purpose |

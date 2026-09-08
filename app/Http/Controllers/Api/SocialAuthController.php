@@ -89,6 +89,10 @@ class SocialAuthController extends Controller
 
     private function errorRedirectUrl(): string
     {
-        return (string) config('services.oauth_spa_redirect_url').'?oauth_error=1';
+        // The SPA home route requires an authenticated session. A failed
+        // OAuth callback has none, so redirecting there makes the router
+        // bounce to /login and discard the error marker before it can be
+        // shown. Send it straight to the guest route instead.
+        return rtrim((string) config('services.oauth_spa_redirect_url'), '/').'/login?oauth_error=1';
     }
 }

@@ -1,22 +1,27 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { isAxiosError } from 'axios';
 import AuthLayout from '../../layouts/AuthLayout.vue';
 import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
+import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/auth';
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 
 const form = reactive({ email: '', password: '' });
 const loading = ref(false);
-const error = ref<string | null>(null);
+const googleLoading = ref(false);
+const oauthError = ref(route.query.oauth_error === '1');
+const error = ref<string | null>(oauthError.value ? t('auth.login.oauthError') : null);
 
 async function submit(): Promise<void> {
+    oauthError.value = false;
     error.value = null;
     loading.value = true;
 
@@ -37,6 +42,30 @@ async function submit(): Promise<void> {
         }
     } finally {
         loading.value = false;
+    }
+}
+
+/**
+ * The backend must create Socialite's session-bound state before the
+ * browser leaves this origin. It returns the provider URL as JSON instead
+ * of redirecting the XHR itself, because only a top-level navigation carries
+ * the session cookie back through Google's callback under SameSite=Lax.
+ */
+async function continueWithGoogle(): Promise<void> {
+    oauthError.value = false;
+    error.value = null;
+    googleLoading.value = true;
+
+    try {
+        const { data } = await api.get<{ url: string }>('/auth/oauth/google/redirect');
+        window.location.assign(data.url);
+    } catch {
+        // The callback controller deliberately collapses provider errors
+        // into the same generic message; keep an initiation failure equally
+        // opaque so browser/network details never become user-facing copy.
+        error.value = t('auth.login.oauthError');
+    } finally {
+        googleLoading.value = false;
     }
 }
 </script>
@@ -73,10 +102,14 @@ async function submit(): Promise<void> {
                 {{ t('auth.login.sessionExpired') }}
             </p>
 
-            <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
+            <p v-if="error" :data-test="oauthError ? 'oauth-error' : 'login-error'" role="alert" class="text-sm text-danger">{{ error }}</p>
 
             <Button type="submit" variant="primary" :loading="loading">{{ t('auth.login.submit') }}</Button>
         </form>
+
+        <Button data-test="google-login" type="button" variant="secondary" :loading="googleLoading" @click="continueWithGoogle">
+            {{ t('auth.login.google') }}
+        </Button>
 
         <div class="mt-4 flex flex-col items-center gap-2 text-sm">
             <router-link :to="{ name: 'forgot-password' }" class="text-primary hover:underline">

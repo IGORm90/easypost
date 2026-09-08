@@ -151,7 +151,7 @@ it('rejects a callback whose state does not match the session it was issued in',
     $callback = $this->withCookie($cookieName, $sessionId)
         ->get('/api/auth/oauth/github/callback?state=not-the-real-state&code=irrelevant');
 
-    $callback->assertRedirect(config('services.oauth_spa_redirect_url').'?oauth_error=1');
+    $callback->assertRedirect(config('services.oauth_spa_redirect_url').'/login?oauth_error=1');
     expect(User::count())->toBe(0)
         ->and(SocialAccount::count())->toBe(0);
 });
@@ -159,7 +159,7 @@ it('rejects a callback whose state does not match the session it was issued in',
 it('rejects a callback with no prior redirect, so no session state to match at all', function () {
     $callback = $this->get('/api/auth/oauth/github/callback?state=anything&code=irrelevant');
 
-    $callback->assertRedirect(config('services.oauth_spa_redirect_url').'?oauth_error=1');
+    $callback->assertRedirect(config('services.oauth_spa_redirect_url').'/login?oauth_error=1');
     expect(User::count())->toBe(0);
 });
 
@@ -170,7 +170,7 @@ it('fails cleanly, without leaking the provider error, when the provider callbac
 
     $response = $this->get('/api/auth/oauth/github/callback');
 
-    $response->assertRedirect(config('services.oauth_spa_redirect_url').'?oauth_error=1');
+    $response->assertRedirect(config('services.oauth_spa_redirect_url').'/login?oauth_error=1');
     $response->assertDontSee('irrelevant-secret-detail', false);
     expect(User::count())->toBe(0);
 });
