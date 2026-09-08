@@ -12,6 +12,15 @@ vi.mock('../../../api/client', () => ({
 beforeEach(() => {
     setActivePinia(createPinia());
     post.mockReset();
+    localStorage.clear();
+});
+
+// Modal.vue teleports to <body>, outside wherever the wrapper itself was
+// mounted — several specs below use `attachTo: document.body` for that
+// reason, and without cleanup each one's teleported form would still be
+// sitting in the DOM for the next test's own `document.body.querySelector`.
+afterEach(() => {
+    document.body.innerHTML = '';
 });
 
 const telegram: Provider = {
@@ -53,7 +62,7 @@ it('shows no local error line for a 402 — the global limit toast already cover
     post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 402, data: { message: 'limit reached' } } });
 
     mount(ConnectProviderModal, {
-        props: { open: true, providers: [telegram], preselect: 'telegram' },
+        props: { open: true, provider: telegram },
         attachTo: document.body,
     });
     await flushPromises();
@@ -70,7 +79,7 @@ it('still shows a local error line for a non-402 failure (e.g. a permission erro
     post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 403, data: {} } });
 
     mount(ConnectProviderModal, {
-        props: { open: true, providers: [telegram], preselect: 'telegram' },
+        props: { open: true, provider: telegram },
         attachTo: document.body,
     });
     await flushPromises();
@@ -82,50 +91,69 @@ it('still shows a local error line for a non-402 failure (e.g. a permission erro
     expect(document.body.querySelector('.text-danger')).not.toBeNull();
 });
 
-/** Clicks the provider entry in the picker — NOT `w.get('button')`, which is the modal's own close button. */
-async function selectProvider(w: ReturnType<typeof mount>): Promise<void> {
-    const button = w.findAll('button').find((candidate) => candidate.text() === 'Telegram');
-    await button?.trigger('click');
-}
-
 // Final review, Important 10: the credential form's shape is the
 // provider's own declaration (GET /api/providers -> auth_fields), not a
 // map of provider names this component keeps. Renders whatever it is
 // told, in the declared order, with the declared input types.
-it('renders exactly the fields the provider declares, in order', async () => {
+//
+// Task 37: the picker step this used to require reaching through first
+// is gone — the card that triggers this modal already committed to a
+// provider (Channels/Index.vue's `beginConnect()`), so the modal opens
+// straight on the credential form.
+it('renders exactly the fields the provider declares, in order, with no picker step', async () => {
     const w = mount(ConnectProviderModal, {
-        props: { open: true, providers: [telegram] },
+        props: { open: true, provider: telegram },
         global: { stubs: { teleport: true } },
     });
     await flushPromises();
-
-    await selectProvider(w);
 
     const inputs = w.findAll('input');
     expect(inputs.map((input) => input.attributes('id'))).toEqual(['connect-bot_token', 'connect-chat_id']);
     expect(inputs.map((input) => input.attributes('type'))).toEqual(['password', 'text']);
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('Telegram');
 });
 
 it('falls back to a single generic credential field for a manual provider that declares none', async () => {
     const w = mount(ConnectProviderModal, {
-        props: { open: true, providers: [{ ...telegram, auth_fields: [] }] },
+        props: { open: true, provider: { ...telegram, auth_fields: [] } },
         global: { stubs: { teleport: true } },
     });
     await flushPromises();
-
-    await selectProvider(w);
 
     expect(w.findAll('input').map((input) => input.attributes('id'))).toEqual(['connect-token']);
 });
 
-it('asks for nothing before the redirect when an oauth provider declares no fields', async () => {
+it('renders nothing when it has no provider yet (closed, or between props updates)', async () => {
     const w = mount(ConnectProviderModal, {
-        props: { open: true, providers: [{ ...telegram, auth_type: 'oauth' as const, auth_fields: [] }] },
+        props: { open: false, provider: null },
         global: { stubs: { teleport: true } },
     });
     await flushPromises();
 
-    await selectProvider(w);
-
     expect(w.findAll('input')).toHaveLength(0);
+});
+
+it('asks for the declared fields before redirecting an oauth provider that needs one', async () => {
+    const oauthWithField: Provider = { ...telegram, auth_type: 'oauth', auth_fields: [{ key: 'instance', type: 'text' }] };
+    const tab = { location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    post.mockResolvedValueOnce({ data: { url: 'https://oauth.example/authorize', state: 's', extra: {} } });
+
+    mount(ConnectProviderModal, {
+        props: { open: true, provider: oauthWithField },
+        attachTo: document.body,
+    });
+    await flushPromises();
+
+    const input = document.body.querySelector('#connect-instance') as HTMLInputElement;
+    input.value = 'my-instance';
+    input.dispatchEvent(new Event('input'));
+
+    const form = document.body.querySelector('form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith(`/integrations/${telegram.identifier}/auth-url`, expect.objectContaining({ instance: 'my-instance' }));
+    expect(tab.location.href).toBe('https://oauth.example/authorize');
+    expect(JSON.parse(localStorage.getItem('channel_connect_pending') ?? 'null')).toMatchObject({ provider: telegram.identifier, state: 's' });
 });

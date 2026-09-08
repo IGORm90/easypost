@@ -1,12 +1,14 @@
 import { mount } from '@vue/test-utils';
 import TelegramPreview from '../TelegramPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
+import RedditPreview from '../RedditPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 import PreviewPane from '../PreviewPane.vue';
 
 const ALL = [
     ['telegram', TelegramPreview],
     ['bluesky', BlueskyPreview],
+    ['reddit', RedditPreview],
     ['generic', GenericPreview],
 ] as const;
 
@@ -80,6 +82,24 @@ it('Bluesky nests each reply under the previous one (a true linked-list chain)',
     expect(w.findAll('p').filter((p) => p.text() === 'Reply')).toHaveLength(2);
 });
 
+it('Reddit nests each comment under the previous segment (submission + comment chain)', () => {
+    const w = mount(RedditPreview, {
+        props: {
+            channelName: 'u/scheduler_bot',
+            channelPicture: null,
+            segments: [{ content: 'root submission' }, { content: 'comment one' }, { content: 'comment two' }],
+        },
+    });
+
+    expect(w.text()).toContain('root submission');
+    expect(w.text()).toContain('comment one');
+    expect(w.text()).toContain('comment two');
+    // One "Comment" label per non-root segment — mirrors RedditProvider::post(),
+    // which publishes chain[0] as a submission and everything after as a
+    // reply comment, never as a second detached submission.
+    expect(w.findAll('p').filter((p) => p.text() === 'Comment')).toHaveLength(2);
+});
+
 // --- PreviewPane resolves via the registry, never by branching ---------
 
 it('PreviewPane renders TelegramPreview for a telegram identifier', () => {
@@ -88,6 +108,14 @@ it('PreviewPane renders TelegramPreview for a telegram identifier', () => {
     });
 
     expect(w.findComponent(TelegramPreview).exists()).toBe(true);
+});
+
+it('PreviewPane renders RedditPreview for a reddit identifier', () => {
+    const w = mount(PreviewPane, {
+        props: { providerIdentifier: 'reddit', channelName: 'C', channelPicture: null, segments: [{ content: 'hi' }] },
+    });
+
+    expect(w.findComponent(RedditPreview).exists()).toBe(true);
 });
 
 it('PreviewPane falls back to GenericPreview for an unknown identifier', () => {

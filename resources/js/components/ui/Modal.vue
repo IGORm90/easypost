@@ -251,44 +251,128 @@ onBeforeUnmount(() => {
 
 <template>
     <Teleport to="body">
-        <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div class="absolute inset-0 bg-overlay" @click="onBackdropClick" />
-            <div
-                ref="dialog"
-                role="dialog"
-                aria-modal="true"
-                :aria-labelledby="title ? titleId : undefined"
-                tabindex="-1"
-                class="relative w-full rounded-xl border border-border bg-surface p-6 shadow-lg"
-                :class="sizeClass"
-            >
-                <div class="mb-4 flex shrink-0 items-center justify-between gap-2">
-                    <h2 v-if="title" :id="titleId" class="text-base font-semibold text-text">{{ title }}</h2>
-                    <!--
-                        Header actions (Task 1.1's "Share"). Deliberately
-                        placed BEFORE the close button so both the visual
-                        order and the tab order put "do something" ahead of
-                        "leave" — and so `ml-auto` keeps pinning the group
-                        to the right whether or not the slot is filled.
-                    -->
-                    <div class="ml-auto flex items-center gap-2">
-                        <slot name="actions" />
-                        <button
-                            type="button"
-                            class="rounded-xl p-1 text-muted hover:text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                            :aria-label="t('ui.close')"
-                            @click="emit('close')"
-                        >
-                            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                <path
-                                    d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
-                                />
-                            </svg>
-                        </button>
+        <!--
+            `name="modal"` drives the .modal-enter/leave-* classes below,
+            which target .modal-backdrop and .modal-panel individually — see
+            the <style> block for why the animation lives on the children
+            and not on this wrapper. `appear` covers a caller that mounts
+            with `open` already true; `:duration` is required because Vue
+            reads the transition length off THIS element (the transitioned
+            root), which has no `transition:` rule of its own — without it,
+            `whenTransitionEnds` finds nothing to wait for and unmounts the
+            leave instantly, silently reverting to the old instant pop.
+        -->
+        <Transition name="modal" appear :duration="{ enter: 180, leave: 120 }">
+            <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div class="modal-backdrop absolute inset-0 bg-overlay" @click="onBackdropClick" />
+                <div
+                    ref="dialog"
+                    role="dialog"
+                    aria-modal="true"
+                    :aria-labelledby="title ? titleId : undefined"
+                    tabindex="-1"
+                    class="modal-panel relative w-full rounded-xl border border-border bg-surface p-6 shadow-lg"
+                    :class="sizeClass"
+                >
+                    <div class="mb-4 flex shrink-0 items-center justify-between gap-2">
+                        <h2 v-if="title" :id="titleId" class="text-base font-semibold text-text">{{ title }}</h2>
+                        <!--
+                            Header actions (Task 1.1's "Share"). Deliberately
+                            placed BEFORE the close button so both the visual
+                            order and the tab order put "do something" ahead of
+                            "leave" — and so `ml-auto` keeps pinning the group
+                            to the right whether or not the slot is filled.
+                        -->
+                        <div class="ml-auto flex items-center gap-2">
+                            <slot name="actions" />
+                            <button
+                                type="button"
+                                class="rounded-xl p-1 text-muted hover:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                :aria-label="t('ui.close')"
+                                @click="emit('close')"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path
+                                        d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+                                    />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
+                    <slot />
                 </div>
-                <slot />
             </div>
-        </div>
+        </Transition>
     </Teleport>
 </template>
+
+<style scoped>
+/*
+ * Deliberately no transition rule on the wrapper `<div>` that `<Transition>`
+ * actually toggles (the `.fixed inset-0 …` element) — only its two children,
+ * .modal-backdrop and .modal-panel, animate. That split is why the
+ * `:duration` prop on the <Transition> in the template is required, not
+ * optional: Vue's `whenTransitionEnds` looks at the CSS transition duration
+ * of the transitioned element itself, finds none here, and would otherwise
+ * remove the leave from the DOM on the very next frame — see the comment
+ * there.
+ *
+ * "Quiet lift": the panel rises slightly and settles rather than just
+ * fading, close is faster than open so dismissing feels immediate while
+ * opening feels deliberate, and scoped styles work through Teleport because
+ * the compiler stamps `data-v-*` on the elements THIS component renders,
+ * regardless of where in the DOM they end up mounted.
+ */
+.modal-enter-active .modal-backdrop {
+    transition: opacity 150ms ease-out;
+}
+
+.modal-leave-active .modal-backdrop {
+    transition: opacity 120ms ease-in;
+}
+
+.modal-enter-from .modal-backdrop,
+.modal-leave-to .modal-backdrop {
+    opacity: 0;
+}
+
+.modal-enter-active .modal-panel {
+    transition:
+        opacity 180ms ease-out,
+        transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-leave-active .modal-panel {
+    transition:
+        opacity 120ms ease-in,
+        transform 120ms ease-in;
+}
+
+.modal-enter-from .modal-panel {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+}
+
+.modal-leave-to .modal-panel {
+    opacity: 0;
+    transform: scale(0.98);
+}
+
+/*
+ * The lift itself (translateY + scale) is the part that can trigger
+ * vestibular discomfort, not the fade — so reduced motion keeps the opacity
+ * transition but drops the transform and shortens the duration, rather than
+ * disabling the transition outright.
+ */
+@media (prefers-reduced-motion: reduce) {
+    .modal-enter-from .modal-panel,
+    .modal-leave-to .modal-panel {
+        transform: none;
+    }
+
+    .modal-enter-active .modal-panel,
+    .modal-enter-active .modal-backdrop {
+        transition-duration: 80ms;
+    }
+}
+</style>

@@ -8,7 +8,8 @@ import ChannelCard from '../../components/channels/ChannelCard.vue';
 import ProviderCard from '../../components/channels/ProviderCard.vue';
 import ConnectProviderModal from '../../components/channels/ConnectProviderModal.vue';
 import ChannelSettingsDrawer from '../../components/channels/ChannelSettingsDrawer.vue';
-import { useIntegrationsStore, type Integration } from '../../stores/integrations';
+import { PopupBlockedError, useChannelConnect } from '../../composables/useChannelConnect';
+import { useIntegrationsStore, type Integration, type Provider } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
 import { useOrganizationStore } from '../../stores/organization';
 
@@ -16,9 +17,12 @@ const { t } = useI18n();
 const store = useIntegrationsStore();
 const auth = useAuthStore();
 const organization = useOrganizationStore();
+const { startOAuthConnect } = useChannelConnect();
 
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
+/** Neutral confirmation that the login tab opened — a fast-connect provider never shows a modal, so this is the only feedback the user gets before they switch tabs. */
+const noticeMessage = ref<string | null>(null);
 
 async function load(): Promise<void> {
     loading.value = true;
@@ -59,23 +63,69 @@ const connectedCounts = computed(() =>
 );
 
 const connectOpen = ref(false);
-const reconnectProvider = ref<string | undefined>(undefined);
+const connectProvider = ref<Provider | undefined>(undefined);
 // Task 36 fix round 1, Critical 2: which specific channel is being
 // reconnected, so EnforcePlanLimit's pre-check can tell a repair of an
 // existing channel apart from a genuinely new connect — see
 // ConnectProviderModal.vue's preselectIntegrationId docblock.
-const reconnectIntegrationId = ref<string | undefined>(undefined);
+const connectIntegrationId = ref<string | undefined>(undefined);
 
-function openConnect(): void {
-    reconnectProvider.value = undefined;
-    reconnectIntegrationId.value = undefined;
+/**
+ * Task 37: the single entry point for both a fresh connect (from a
+ * catalogue card) and a reconnect (from an already-held, broken channel).
+ * A fast-connect oauth provider — declares no `auth_fields`, so there is
+ * nothing to ask for before the redirect — never opens the modal at all:
+ * asking anything at all would be a dialog with one button in it, so its
+ * login opens directly in a new tab instead.
+ */
+function beginConnect(provider: Provider, integrationId?: string): void {
+    if (provider.auth_type === 'oauth' && provider.auth_fields.length === 0) {
+        void openLoginTab(provider, integrationId);
+
+        return;
+    }
+
+    connectProvider.value = provider;
+    connectIntegrationId.value = integrationId;
     connectOpen.value = true;
 }
 
+async function openLoginTab(provider: Provider, integrationId?: string): Promise<void> {
+    errorMessage.value = null;
+    noticeMessage.value = null;
+
+    const reconnectParams = integrationId ? { integration_id: integrationId } : {};
+
+    try {
+        await startOAuthConnect(provider, reconnectParams);
+        noticeMessage.value = t('channels.available.openingLogin');
+    } catch (e) {
+        if (e instanceof PopupBlockedError) {
+            errorMessage.value = t('channels.available.popupBlocked');
+
+            return;
+        }
+
+        // Task 36 fix round 1, Minor 5: a 402 already shows the global
+        // warning toast (api/client.ts's response interceptor) — this
+        // page's own --danger line must not ALSO fire for the same event
+        // (color.md §3.8). Every other failure keeps its line.
+        if (!(isAxiosError(e) && e.response?.status === 402)) {
+            errorMessage.value = isAxiosError(e) && e.response?.status === 403
+                ? t('channels.connectModal.permissionDenied')
+                : t('channels.connectModal.error');
+        }
+    }
+}
+
 function openReconnect(integration: Integration): void {
-    reconnectProvider.value = integration.provider_identifier;
-    reconnectIntegrationId.value = integration.id;
-    connectOpen.value = true;
+    const provider = providerFor(integration.provider_identifier);
+
+    if (!provider) {
+        return;
+    }
+
+    beginConnect(provider, integration.id);
 }
 
 function onConnected(): void {
@@ -138,6 +188,7 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
             <h1 class="text-lg font-semibold text-text">{{ t('channels.title') }}</h1>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
+            <Toast v-else-if="noticeMessage" variant="neutral" @dismiss="noticeMessage = null">{{ noticeMessage }}</Toast>
 
             <!-- What this organization already holds. -->
             <section class="flex flex-col gap-3">
@@ -176,7 +227,7 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
                         data-test="provider-card"
                         :provider="provider"
                         :connected-count="connectedCounts[provider.identifier] ?? 0"
-                        @connect="openConnect"
+                        @connect="beginConnect"
                     />
                 </div>
             </section>
@@ -184,9 +235,8 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
 
         <ConnectProviderModal
             :open="connectOpen"
-            :providers="store.providers"
-            :preselect="reconnectProvider"
-            :preselect-integration-id="reconnectIntegrationId"
+            :provider="connectProvider ?? null"
+            :preselect-integration-id="connectIntegrationId"
             @close="connectOpen = false"
             @connected="onConnected"
         />

@@ -1,577 +1,582 @@
 {
-    "app": {
-        "name": "EasyPost"
+  "app": {
+    "name": "EasyPost"
+  },
+  "nav": {
+    "toggleTheme": "Toggle theme",
+    "menu": "Menu",
+    "channels": "Channels",
+    "media": "Media",
+    "settingsProfile": "Profile",
+    "settingsTeam": "Team",
+    "settingsSets": "Channel sets",
+    "settingsSignatures": "Signatures",
+    "admin": "Admin",
+    "logout": "Log out"
+  },
+  "ui": {
+    "close": "Close",
+    "loading": "Loading…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "shell": {
+    "comingSoon": "This section will arrive in a later task."
+  },
+  "auth": {
+    "login": {
+      "title": "Sign in",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "noAccount": "No account yet?",
+      "registerLink": "Create one",
+      "forgotLink": "Forgot your password?",
+      "error": "Incorrect email or password.",
+      "sessionExpired": "Your session has expired. Please sign in again."
     },
-    "nav": {
-        "toggleTheme": "Toggle theme",
-        "menu": "Menu",
-        "channels": "Channels",
-        "media": "Media",
-        "settingsProfile": "Profile",
-        "settingsTeam": "Team",
-        "settingsSets": "Channel sets",
-        "settingsSignatures": "Signatures",
-        "admin": "Admin",
-        "logout": "Log out"
+    "register": {
+      "title": "Create an account",
+      "name": "Name",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Create account",
+      "haveAccount": "Already have an account?",
+      "loginLink": "Sign in",
+      "success": "Account created. Check your inbox to verify your email."
     },
-    "ui": {
-        "close": "Close",
-        "loading": "Loading…",
-        "save": "Save",
-        "cancel": "Cancel",
-        "copy": "Copy",
-        "copied": "Copied"
+    "forgot": {
+      "title": "Reset your password",
+      "email": "Email",
+      "submit": "Send reset link",
+      "success": "If that email is registered, a reset link has been sent.",
+      "backToLogin": "Back to sign in"
     },
-    "shell": {
-        "comingSoon": "This section will arrive in a later task."
+    "reset": {
+      "title": "Choose a new password",
+      "password": "New password",
+      "submit": "Save password",
+      "success": "Password changed. You can sign in now.",
+      "invalidLink": "This password reset link is invalid or has expired.",
+      "loginLink": "Go to sign in"
+    }
+  },
+  "organization": {
+    "switcher": {
+      "label": "Organization",
+      "empty": "No organizations"
+    }
+  },
+  "settings": {
+    "profile": {
+      "title": "Profile",
+      "name": "Name",
+      "timezone": "Timezone",
+      "locale": "Interface language",
+      "emailNotifications": "Email notifications",
+      "save": "Save changes",
+      "saved": "Profile updated.",
+      "apiKey": {
+        "title": "API key",
+        "description": "Used to authenticate API access. Shown only once, right after it's generated — store it somewhere safe.",
+        "rotate": "Generate new key",
+        "rotateConfirm": "The old key will stop working. Continue?",
+        "generated": "New key generated. Copy it now — it will not be shown again.",
+        "none": "No key generated yet."
+      }
     },
-    "auth": {
-        "login": {
-            "title": "Sign in",
-            "email": "Email",
-            "password": "Password",
-            "submit": "Sign in",
-            "noAccount": "No account yet?",
-            "registerLink": "Create one",
-            "forgotLink": "Forgot your password?",
-            "error": "Incorrect email or password.",
-            "sessionExpired": "Your session has expired. Please sign in again."
-        },
-        "register": {
-            "title": "Create an account",
-            "name": "Name",
-            "email": "Email",
-            "password": "Password",
-            "submit": "Create account",
-            "haveAccount": "Already have an account?",
-            "loginLink": "Sign in",
-            "success": "Account created. Check your inbox to verify your email."
-        },
-        "forgot": {
-            "title": "Reset your password",
-            "email": "Email",
-            "submit": "Send reset link",
-            "success": "If that email is registered, a reset link has been sent.",
-            "backToLogin": "Back to sign in"
-        },
-        "reset": {
-            "title": "Choose a new password",
-            "password": "New password",
-            "submit": "Save password",
-            "success": "Password changed. You can sign in now.",
-            "invalidLink": "This password reset link is invalid or has expired.",
-            "loginLink": "Go to sign in"
-        }
+    "team": {
+      "title": "Team",
+      "member": "Member",
+      "role": "Role",
+      "joined": "Member since",
+      "actions": "Actions",
+      "remove": "Remove",
+      "removeConfirm": "Remove this member from the organization?",
+      "invite": {
+        "title": "Invite a member",
+        "email": "Email (optional)",
+        "role": "Role",
+        "submit": "Create invite",
+        "success": "Invite link created:",
+        "copy": "Copy link"
+      },
+      "roles": {
+        "SUPERADMIN": "Superadmin",
+        "ADMIN": "Admin",
+        "USER": "Member"
+      }
     },
-    "organization": {
-        "switcher": {
-            "label": "Organization",
-            "empty": "No organizations"
-        }
+    "plan": {
+      "title": "Plan and usage",
+      "current": "Plan: {plan}",
+      "channels": "Channels",
+      "postsPerMonth": "Posts this month",
+      "mediaStorage": "Media storage (MB)",
+      "ofMax": "{current} of {max}",
+      "unlimited": "Unlimited",
+      "loadError": "Could not load plan usage."
+    }
+  },
+  "invites": {
+    "accept": {
+      "title": "Organization invite",
+      "description": "You've been invited to join an organization.",
+      "submit": "Accept invite",
+      "success": "You've joined the organization.",
+      "error": "Could not accept this invite. The link may be invalid or already used."
+    }
+  },
+  "validation": {
+    "generic": "Please check the form for errors."
+  },
+  "limits": {
+    "channels": "You've reached your plan's channel limit ({current}/{max}). Disconnect a channel you no longer use to free up room.",
+    "postsPerMonth": "You've reached your plan's monthly post limit ({current}/{max}). Wait for next month's reset to schedule more.",
+    "mediaStorageMb": "You've reached your plan's media storage limit ({current}/{max} MB). Delete unused files from the media library to free up room.",
+    "generic": "This organization has reached a plan limit."
+  },
+  "channels": {
+    "title": "Channels",
+    "connect": "Connect channel",
+    "empty": "No channels connected yet.",
+    "connected": {
+      "title": "Your channels"
+    },
+    "available": {
+      "title": "Available networks",
+      "subtitle": "Connect an account to start scheduling posts to it.",
+      "connect": "Connect",
+      "connectAria": "Connect {name}",
+      "connectedCount": "{count} connected",
+      "openingLogin": "Continue in the new tab that just opened.",
+      "popupBlocked": "Your browser blocked the login tab. Allow pop-ups for this site and try again."
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "refreshNeeded": "Reconnection required"
+    },
+    "actions": {
+      "settings": "Settings",
+      "enable": "Enable",
+      "disable": "Disable",
+      "remove": "Remove",
+      "removeConfirm": "Remove channel \"{name}\"? Scheduled posts through it will stop going out.",
+      "reconnect": "Reconnect"
+    },
+    "connectModal": {
+      "title": "Connect a channel",
+      "titleFor": "Connect {name}",
+      "oauthIntro": "You'll be redirected to {name} to authorize.",
+      "connect": "Connect",
+      "fields": {
+        "botToken": "Bot token",
+        "chatId": "Chat/channel id",
+        "handle": "Handle (e.g. user.bsky.social)",
+        "appPassword": "App password",
+        "token": "Access token"
+      },
+      "manualSubmit": "Connect",
+      "error": "Could not connect the channel. Check the details and try again.",
+      "permissionDenied": "You don't have permission to connect a channel."
     },
     "settings": {
-        "profile": {
-            "title": "Profile",
-            "name": "Name",
-            "timezone": "Timezone",
-            "locale": "Interface language",
-            "emailNotifications": "Email notifications",
-            "save": "Save changes",
-            "saved": "Profile updated.",
-            "apiKey": {
-                "title": "API key",
-                "description": "Used to authenticate API access. Shown only once, right after it's generated — store it somewhere safe.",
-                "rotate": "Generate new key",
-                "rotateConfirm": "The old key will stop working. Continue?",
-                "generated": "New key generated. Copy it now — it will not be shown again.",
-                "none": "No key generated yet."
-            }
-        },
-        "team": {
-            "title": "Team",
-            "member": "Member",
-            "role": "Role",
-            "joined": "Member since",
-            "actions": "Actions",
-            "remove": "Remove",
-            "removeConfirm": "Remove this member from the organization?",
-            "invite": {
-                "title": "Invite a member",
-                "email": "Email (optional)",
-                "role": "Role",
-                "submit": "Create invite",
-                "success": "Invite link created:",
-                "copy": "Copy link"
-            },
-            "roles": {
-                "SUPERADMIN": "Superadmin",
-                "ADMIN": "Admin",
-                "USER": "Member"
-            }
-        },
-        "plan": {
-            "title": "Plan and usage",
-            "current": "Plan: {plan}",
-            "channels": "Channels",
-            "postsPerMonth": "Posts this month",
-            "mediaStorage": "Media storage (MB)",
-            "ofMax": "{current} of {max}",
-            "unlimited": "Unlimited",
-            "loadError": "Could not load plan usage."
-        }
+      "title": "\"{name}\" settings",
+      "name": "Name",
+      "groupName": "Group",
+      "customerName": "Customer",
+      "timeSlots": "Posting schedule",
+      "timeSlotsHint": "Times are shown in your timezone ({tz}); stored and synced in UTC.",
+      "addSlot": "Add slot",
+      "removeSlot": "Remove slot",
+      "save": "Save",
+      "saved": "Settings saved.",
+      "weekday": "Weekday",
+      "time": "Time",
+      "chooseOption": "Choose…",
+      "optionsError": "This channel's list of destinations could not be loaded. Try again later — everything else here can still be saved.",
+      "fields": {
+        "channel_id": "Destination channel"
+      }
     },
-    "invites": {
-        "accept": {
-            "title": "Organization invite",
-            "description": "You've been invited to join an organization.",
-            "submit": "Accept invite",
-            "success": "You've joined the organization.",
-            "error": "Could not accept this invite. The link may be invalid or already used."
-        }
-    },
-    "validation": {
-        "generic": "Please check the form for errors."
-    },
-    "limits": {
-        "channels": "You've reached your plan's channel limit ({current}/{max}). Disconnect a channel you no longer use to free up room.",
-        "postsPerMonth": "You've reached your plan's monthly post limit ({current}/{max}). Wait for next month's reset to schedule more.",
-        "mediaStorageMb": "You've reached your plan's media storage limit ({current}/{max} MB). Delete unused files from the media library to free up room.",
-        "generic": "This organization has reached a plan limit."
-    },
-    "channels": {
-        "title": "Channels",
-        "connect": "Connect channel",
-        "empty": "No channels connected yet.",
-        "connected": {
-            "title": "Your channels"
-        },
-        "available": {
-            "title": "Available networks",
-            "subtitle": "Connect an account to start scheduling posts to it.",
-            "connect": "Connect",
-            "connectAria": "Connect {name}",
-            "connectedCount": "{count} connected"
-        },
-        "status": {
-            "active": "Active",
-            "disabled": "Disabled",
-            "refreshNeeded": "Reconnection required"
-        },
-        "actions": {
-            "settings": "Settings",
-            "enable": "Enable",
-            "disable": "Disable",
-            "remove": "Remove",
-            "removeConfirm": "Remove channel \"{name}\"? Scheduled posts through it will stop going out.",
-            "reconnect": "Reconnect"
-        },
-        "connectModal": {
-            "title": "Connect a channel",
-            "chooseProvider": "Choose a network",
-            "oauthIntro": "You'll be redirected to {name} to authorize.",
-            "connect": "Connect",
-            "back": "Back",
-            "fields": {
-                "botToken": "Bot token",
-                "chatId": "Chat/channel id",
-                "handle": "Handle (e.g. user.bsky.social)",
-                "appPassword": "App password",
-                "token": "Access token"
-            },
-            "manualSubmit": "Connect",
-            "error": "Could not connect the channel. Check the details and try again.",
-            "permissionDenied": "You don't have permission to connect a channel."
-        },
-        "settings": {
-            "title": "\"{name}\" settings",
-            "name": "Name",
-            "groupName": "Group",
-            "customerName": "Customer",
-            "timeSlots": "Posting schedule",
-            "timeSlotsHint": "Times are shown in your timezone ({tz}); stored and synced in UTC.",
-            "addSlot": "Add slot",
-            "removeSlot": "Remove slot",
-            "save": "Save",
-            "saved": "Settings saved.",
-            "weekday": "Weekday",
-            "time": "Time",
-            "chooseOption": "Choose…",
-            "optionsError": "This channel's list of destinations could not be loaded. Try again later — everything else here can still be saved.",
-            "fields": {
-                "channel_id": "Destination channel"
-            }
-        },
-        "weekdays": {
-            "0": "Mon",
-            "1": "Tue",
-            "2": "Wed",
-            "3": "Thu",
-            "4": "Fri",
-            "5": "Sat",
-            "6": "Sun"
-        }
-    },
-    "sharedPost": {
-        "publishDate": "Publish date",
-        "notFound": "This link is invalid or is no longer shared.",
-        "empty": "Nothing to preview yet."
-    },
-    "calendar": {
-        "title": "Calendar",
-        "today": "Today",
-        "loadError": "Could not load the calendar.",
-        "views": {
-            "month": "Month",
-            "week": "Week",
-            "day": "Day"
-        },
-        "mode": {
-            "label": "Display mode",
-            "grid": "Grid",
-            "list": "List"
-        },
-        "filters": {
-            "customer": "Customer",
-            "customerPlaceholder": "Filter by customer",
-            "tags": "Tags",
-            "noTags": "No tags yet."
-        },
-        "state": {
-            "DRAFT": "Draft",
-            "QUEUE": "Scheduled",
-            "PUBLISHED": "Published",
-            "ERROR": "Publishing failed"
-        },
-        "locked": "Published posts can't be moved or deleted.",
-        "remove": "Remove",
-        "removeConfirm": "Remove this post from the calendar?",
-        "actions": "Post actions",
-        "share": {
-            "menuItem": "Share",
-            "indicator": "Public link is active",
-            "title": "Share this post",
-            "description": "A public link shows this post exactly as it will be published — no editing, no account needed. Anyone holding the link can open it.",
-            "create": "Create link",
-            "linkLabel": "Public link",
-            "active": "The link is active",
-            "inactive": "No link yet",
-            "revoke": "Turn the link off",
-            "revokeConfirm": "Turn this link off? Anyone already holding it will stop being able to open the post.",
-            "createError": "Could not create the link. Please try again.",
-            "revokeError": "Could not turn the link off. Please try again."
-        },
-        "duplicate": {
-            "menuItem": "Duplicate"
-        },
-        "toast": {
-            "moveConflict": "This post was already published, so the move was cancelled. The list has been refreshed.",
-            "moveError": "Could not reschedule the post. Please try again.",
-            "removeError": "Could not remove the post. Please try again.",
-            "duplicateError": "Could not duplicate the post. Please try again."
-        },
-        "newPost": "New post",
-        "errors": {
-            "title": "{count} scheduled post(s) failed to publish",
-            "retry": "Retry",
-            "retryError": "Could not retry this post. Please try again.",
-            "retryConflict": "This post is no longer retryable — it may have been retried already, or has since published.",
-            "unknownReason": "No reason was recorded."
-        },
-        "list": {
-            "stateFilter": "Status",
-            "states": {
-                "all": "All",
-                "DRAFT": "Drafts",
-                "QUEUE": "Scheduled",
-                "PUBLISHED": "Published",
-                "ERROR": "Failed"
-            },
-            "empty": {
-                "all": "No posts yet. Compose one and it will show up here.",
-                "DRAFT": "No drafts. Anything you start without scheduling lands here.",
-                "QUEUE": "Nothing is scheduled right now.",
-                "PUBLISHED": "Nothing has published yet.",
-                "ERROR": "Nothing has failed to publish. That is the good outcome."
-            },
-            "comments": "{count} comment(s)",
-            "loadMore": "Show more",
-            "loadError": "Could not load the list of posts.",
-            "noDate": "No date"
-        },
-        "repeatIndicator": "Repeating post",
-        "removeConfirmRepeating": "Delete this post? It is the next occurrence of a repeating post, so deleting it also stops the series."
-    },
-    "tags": {
-        "manage": "Manage tags",
-        "title": "Tags",
-        "add": "New tag",
-        "empty": "No tags yet. Create one to group and filter your posts.",
-        "nameLabel": "Name",
-        "colorLabel": "Colour",
-        "create": "Create tag",
-        "rename": "Rename",
-        "save": "Save",
-        "cancel": "Cancel",
-        "remove": "Delete",
-        "usage": "On {count} post(s)",
-        "unused": "Not used yet",
-        "removeConfirm": "Delete \"{name}\"? It will come off {count} post(s) — the posts themselves stay.",
-        "removeConfirmUnused": "Delete \"{name}\"? No post is using it.",
-        "loadError": "Could not load the tags. Please try again.",
-        "saveError": "Could not save the tag. Please try again.",
-        "removeError": "Could not delete the tag. Please try again."
-    },
-    "sets": {
-        "title": "Channel sets",
-        "manage": "Channel sets",
-        "intro": "A set is a saved group of channels. Pick it once in the editor instead of ticking the same channels on every post.",
-        "empty": "No sets yet.",
-        "emptyHint": "Create one below, or save your current selection straight from the post editor.",
-        "noChannels": "Connect a channel first — a set is a shortcut for choosing between them.",
-        "nameLabel": "Name",
-        "channelsLabel": "Channels",
-        "channelCount": "{count} channel(s)",
-        "orphaned": "No channels left in this set — its channels were disconnected. Add at least one to be able to save it.",
-        "create": "Create set",
-        "rename": "Edit",
-        "save": "Save",
-        "cancel": "Cancel",
-        "remove": "Delete",
-        "removeConfirm": "Delete \"{name}\"? It is only a shortcut for choosing channels — no post and no channel is affected.",
-        "saveAsSet": "Save as set",
-        "saveAsSetName": "Set name",
-        "loadError": "Could not load the sets. Please try again.",
-        "saveError": "Could not save the set. Please try again.",
-        "removeError": "Could not delete the set. Please try again."
-    },
-    "signatures": {
-        "title": "Signatures",
-        "manage": "Manage signatures",
-        "intro": "A signature is a saved tail — contacts, a disclaimer, a call to subscribe. The editor appends the one you pick to the last segment of a channel's thread.",
-        "empty": "No signatures yet.",
-        "emptyHint": "Write one below. Whatever you save here shows up in the post editor's per-channel picker.",
-        "contentLabel": "Signature text",
-        "isDefaultLabel": "Use as the default signature",
-        "defaultBadge": "Default",
-        "defaultHint": "An organization has at most one default signature — making this one the default takes the mark off whichever signature holds it now.",
-        "makeDefault": "Make default",
-        "create": "Create signature",
-        "edit": "Edit",
-        "save": "Save",
-        "cancel": "Cancel",
-        "remove": "Delete",
-        "removeConfirm": "Delete this signature? Posts that already carry its text keep it — only the saved signature goes away.",
-        "loadError": "Could not load the signatures. Please try again.",
-        "saveError": "Could not save the signature. Please try again.",
-        "removeError": "Could not delete the signature. Please try again."
-    },
-    "comments": {
-        "title": "Comments",
-        "intro": "Internal to your team — nothing here is published or shown on a shared link.",
-        "empty": "No comments yet.",
-        "emptyHint": "Leave a note for whoever picks this post up next.",
-        "inputLabel": "Add a comment",
-        "submit": "Comment",
-        "loadError": "Could not load the comments. Please try again.",
-        "sendError": "Could not send the comment. Your text is still here — try again."
-    },
-    "admin": {
-        "impersonating": {
-            "label": "You are working as {name}.",
-            "hint": "Everything you do here is recorded as them.",
-            "stop": "Back to my account",
-            "stopError": "Could not end the impersonation session. Please try again."
-        },
-        "users": {
-            "title": "Users",
-            "intro": "Every account on this instance. Sign in as one of them to see exactly what they see.",
-            "search": "Search by name or email",
-            "empty": "Nobody matches that search.",
-            "emptyHint": "Try part of a name, or the address they signed up with.",
-            "columnName": "Name",
-            "columnEmail": "Email",
-            "columnOrganizations": "Workspaces",
-            "columnCreated": "Joined",
-            "noOrganizations": "No workspace",
-            "superadmin": "Superadmin",
-            "impersonate": "Sign in as",
-            "more": "Load more",
-            "loadError": "Could not load the users. Please try again."
-        },
-        "errors": {
-            "forbidden": "Only a superadmin can start an impersonation session.",
-            "nested": "You are already impersonating someone. Go back to your own account first.",
-            "self": "That is your own account.",
-            "actorGone": "The account you were impersonating from no longer exists. Please sign in again.",
-            "generic": "Could not sign in as that user. Please try again."
-        }
-    },
-    "editor": {
-        "titleNew": "New post",
-        "titleEdit": "Edit post",
-        "locked": "This post has already gone out and can no longer be edited here.",
-        "lockedRetry": "This post has already gone out. Your text is safe — saving now will create it as a new post instead of changing the original.",
-        "confirmNewPost": "This will publish a second, separate post — the original that already went out will not be changed. Continue?",
-        "confirmNewPostYes": "Yes, create a new post",
-        "closeWithoutSaving": "Close without saving",
-        "networkError": "Could not reach the server. Nothing was lost — check your connection and try again.",
-        "commonContent": "Shared text",
-        "commonContentPlaceholder": "Write once, then vary it per channel on its own tab below.",
-        "signature": "Signature",
-        "noSignature": "No signature",
-        "signatureUnknown": "None selected — pick one to append",
-        "signatureEditHint": "This post's text may already include a signature that was appended earlier; picking one here appends another copy.",
-        "tags": "Tags",
-        "picker": {
-            "sets": "Channel sets",
-            "channels": "Channels",
-            "empty": "Connect a channel first to be able to post."
-        },
-        "schedule": {
-            "findSlotFor": "Find a slot for",
-            "chooseChannel": "Choose a channel",
-            "findSlot": "Find free slot",
-            "findSlotError": "Could not find a free slot. Please try again.",
-            "publishDate": "Publish date",
-            "timezoneHint": "Times are shown in your timezone ({tz})."
-        },
-        "actions": {
-            "saveDraft": "Save draft",
-            "schedule": "Schedule",
-            "publishNow": "Publish now"
-        },
-        "thread": {
-            "rootLabel": "Post text",
-            "rootLabelFor": "Post text ({name})",
-            "replyLabel": "Reply {n}",
-            "add": "Add to thread",
-            "remove": "Remove",
-            "attachMedia": "Attach media",
-            "removeMedia": "Remove media"
-        },
-        "counter": {
-            "over": "(over by {n})"
-        },
-        "hints": {
-            "threadUnsupported": "This channel does not support threads — only a single message can be sent.",
-            "threadTooLong": "A thread on this channel can have at most {max} messages.",
-            "mediaLimits": "Up to {images} images and {videos} videos per message.",
-            "altTextRequired": "Images require alt text on this channel.",
-            "mediaRequired": "This channel publishes nothing without an image or video.",
-            "marksUnsupported": "This channel has no formatting — markup will be published as plain characters."
-        },
-        "tabs": {
-            "hasError": "This channel has a validation problem"
-        },
-        "emoji": {
-            "open": "Insert emoji",
-            "search": "Search emoji",
-            "empty": "No emoji match that search.",
-            "categories": {
-                "smileys": "Smileys",
-                "gestures": "Gestures",
-                "people": "People",
-                "nature": "Nature",
-                "food": "Food & drink",
-                "activity": "Activity",
-                "objects": "Objects",
-                "symbols": "Symbols",
-                "flags": "Flags"
-            }
-        },
-        "format": {
-            "label": "Formatting",
-            "bold": "Bold",
-            "italic": "Italic",
-            "strike": "Strikethrough",
-            "code": "Monospace",
-            "link": "Link",
-            "linkUrl": "Link address",
-            "linkApply": "Add link",
-            "linkCancel": "Cancel"
-        },
-        "repeat": {
-            "label": "Repeat",
-            "never": "Do not repeat",
-            "unit": {
-                "DAY": "Every few days",
-                "WEEK": "Every few weeks",
-                "MONTH": "Every few months"
-            },
-            "every": "Interval",
-            "until": "Repeat until",
-            "hint": "Each repeat is scheduled only after the previous one has published, and counts as a post against your plan.",
-            "needsEnd": "Choose when the repeat should stop before scheduling."
-        },
-        "postSettings": {
-            "intro": "This network needs a few details for every post.",
-            "choose": "Choose…",
-            "optionsError": "This list could not be loaded. The rest of the post is unaffected.",
-            "fields": {
-                "subreddit": "Subreddit",
-                "title": "Title",
-                "flair_id": "Flair",
-                "kind": "Post type",
-                "url": "Link",
-                "reply_settings": "Who can reply"
-            }
-        }
-    },
-    "preview": {
-        "title": "Preview",
-        "approximation": "An approximation — the real network may render this differently.",
-        "empty": "Nothing to preview yet — start typing above.",
-        "generic": {
-            "notice": "No network-specific preview yet — showing plain text."
-        },
-        "telegram": {
-            "kind": "Telegram channel"
-        },
-        "bluesky": {
-            "kind": "Post",
-            "reply": "Reply"
-        }
-    },
-    "integrations": {
-        "callback": {
-            "title": "Connecting channel",
-            "inProgress": "Finishing the connection…",
-            "success": "Channel \"{name}\" connected.",
-            "backToChannels": "Back to channels",
-            "errors": {
-                "denied": "Access was not granted. Please try connecting the channel again.",
-                "invalidState": "This connection attempt has expired or is invalid. Please try again.",
-                "generic": "Could not connect the channel. Please try again."
-            }
-        }
-    },
-    "media": {
-        "title": "Media library",
-        "empty": "No media yet — upload a file or paste a link above.",
-        "search": "Search by filename",
-        "loadMore": "Load more",
-        "loadError": "Could not load the media library. Please try again.",
-        "video": "Video",
-        "uploading": "Uploading…",
-        "delete": "Delete",
-        "deleteConfirm": "Delete this media? This cannot be undone.",
-        "deleteInUse": "This media is still attached to a post that hasn't been published yet. Remove it from that post first.",
-        "deleteFailed": "Could not delete this media. Please try again.",
-        "uploader": {
-            "dropHint": "Drag files here, or",
-            "browse": "Browse files",
-            "constraints": "Images (JPEG, PNG, GIF, WebP) and MP4 video, up to 100 MB each.",
-            "urlPlaceholder": "Paste an image or video URL",
-            "importUrl": "Import",
-            "unsupportedType": "\"{name}\" is not an image or MP4 video and was skipped.",
-            "tooLarge": "\"{name}\" is larger than 100 MB and was skipped.",
-            "uploadFailed": "\"{name}\" failed to upload. Please try again.",
-            "urlImportFailed": "Could not import that URL. Please check it and try again."
-        },
-        "picker": {
-            "title": "Choose media",
-            "selectedCount": "{count} selected",
-            "confirm": "Add to post"
-        }
+    "weekdays": {
+      "0": "Mon",
+      "1": "Tue",
+      "2": "Wed",
+      "3": "Thu",
+      "4": "Fri",
+      "5": "Sat",
+      "6": "Sun"
     }
+  },
+  "sharedPost": {
+    "publishDate": "Publish date",
+    "notFound": "This link is invalid or is no longer shared.",
+    "empty": "Nothing to preview yet."
+  },
+  "calendar": {
+    "title": "Calendar",
+    "today": "Today",
+    "loadError": "Could not load the calendar.",
+    "views": {
+      "month": "Month",
+      "week": "Week",
+      "day": "Day"
+    },
+    "mode": {
+      "label": "Display mode",
+      "grid": "Grid",
+      "list": "List"
+    },
+    "filters": {
+      "customer": "Customer",
+      "customerPlaceholder": "Filter by customer",
+      "tags": "Tags",
+      "noTags": "No tags yet."
+    },
+    "state": {
+      "DRAFT": "Draft",
+      "QUEUE": "Scheduled",
+      "PUBLISHED": "Published",
+      "ERROR": "Publishing failed"
+    },
+    "locked": "Published posts can't be moved or deleted.",
+    "remove": "Remove",
+    "removeConfirm": "Remove this post from the calendar?",
+    "actions": "Post actions",
+    "share": {
+      "menuItem": "Share",
+      "indicator": "Public link is active",
+      "title": "Share this post",
+      "description": "A public link shows this post exactly as it will be published — no editing, no account needed. Anyone holding the link can open it.",
+      "create": "Create link",
+      "linkLabel": "Public link",
+      "active": "The link is active",
+      "inactive": "No link yet",
+      "revoke": "Turn the link off",
+      "revokeConfirm": "Turn this link off? Anyone already holding it will stop being able to open the post.",
+      "createError": "Could not create the link. Please try again.",
+      "revokeError": "Could not turn the link off. Please try again."
+    },
+    "duplicate": {
+      "menuItem": "Duplicate"
+    },
+    "toast": {
+      "moveConflict": "This post was already published, so the move was cancelled. The list has been refreshed.",
+      "moveError": "Could not reschedule the post. Please try again.",
+      "removeError": "Could not remove the post. Please try again.",
+      "duplicateError": "Could not duplicate the post. Please try again."
+    },
+    "newPost": "New post",
+    "errors": {
+      "title": "{count} scheduled post(s) failed to publish",
+      "retry": "Retry",
+      "retryError": "Could not retry this post. Please try again.",
+      "retryConflict": "This post is no longer retryable — it may have been retried already, or has since published.",
+      "unknownReason": "No reason was recorded."
+    },
+    "list": {
+      "stateFilter": "Status",
+      "states": {
+        "all": "All",
+        "DRAFT": "Drafts",
+        "QUEUE": "Scheduled",
+        "PUBLISHED": "Published",
+        "ERROR": "Failed"
+      },
+      "empty": {
+        "all": "No posts yet. Compose one and it will show up here.",
+        "DRAFT": "No drafts. Anything you start without scheduling lands here.",
+        "QUEUE": "Nothing is scheduled right now.",
+        "PUBLISHED": "Nothing has published yet.",
+        "ERROR": "Nothing has failed to publish. That is the good outcome."
+      },
+      "comments": "{count} comment(s)",
+      "loadMore": "Show more",
+      "loadError": "Could not load the list of posts.",
+      "noDate": "No date"
+    },
+    "repeatIndicator": "Repeating post",
+    "removeConfirmRepeating": "Delete this post? It is the next occurrence of a repeating post, so deleting it also stops the series."
+  },
+  "tags": {
+    "manage": "Manage tags",
+    "title": "Tags",
+    "add": "New tag",
+    "empty": "No tags yet. Create one to group and filter your posts.",
+    "nameLabel": "Name",
+    "colorLabel": "Colour",
+    "create": "Create tag",
+    "rename": "Rename",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Delete",
+    "usage": "On {count} post(s)",
+    "unused": "Not used yet",
+    "removeConfirm": "Delete \"{name}\"? It will come off {count} post(s) — the posts themselves stay.",
+    "removeConfirmUnused": "Delete \"{name}\"? No post is using it.",
+    "loadError": "Could not load the tags. Please try again.",
+    "saveError": "Could not save the tag. Please try again.",
+    "removeError": "Could not delete the tag. Please try again."
+  },
+  "sets": {
+    "title": "Channel sets",
+    "manage": "Channel sets",
+    "intro": "A set is a saved group of channels. Pick it once in the editor instead of ticking the same channels on every post.",
+    "empty": "No sets yet.",
+    "emptyHint": "Create one below, or save your current selection straight from the post editor.",
+    "noChannels": "Connect a channel first — a set is a shortcut for choosing between them.",
+    "nameLabel": "Name",
+    "channelsLabel": "Channels",
+    "channelCount": "{count} channel(s)",
+    "orphaned": "No channels left in this set — its channels were disconnected. Add at least one to be able to save it.",
+    "create": "Create set",
+    "rename": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Delete",
+    "removeConfirm": "Delete \"{name}\"? It is only a shortcut for choosing channels — no post and no channel is affected.",
+    "saveAsSet": "Save as set",
+    "saveAsSetName": "Set name",
+    "loadError": "Could not load the sets. Please try again.",
+    "saveError": "Could not save the set. Please try again.",
+    "removeError": "Could not delete the set. Please try again."
+  },
+  "signatures": {
+    "title": "Signatures",
+    "manage": "Manage signatures",
+    "intro": "A signature is a saved tail — contacts, a disclaimer, a call to subscribe. The editor appends the one you pick to the last segment of a channel's thread.",
+    "empty": "No signatures yet.",
+    "emptyHint": "Write one below. Whatever you save here shows up in the post editor's per-channel picker.",
+    "contentLabel": "Signature text",
+    "isDefaultLabel": "Use as the default signature",
+    "defaultBadge": "Default",
+    "defaultHint": "An organization has at most one default signature — making this one the default takes the mark off whichever signature holds it now.",
+    "makeDefault": "Make default",
+    "create": "Create signature",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Delete",
+    "removeConfirm": "Delete this signature? Posts that already carry its text keep it — only the saved signature goes away.",
+    "loadError": "Could not load the signatures. Please try again.",
+    "saveError": "Could not save the signature. Please try again.",
+    "removeError": "Could not delete the signature. Please try again."
+  },
+  "comments": {
+    "title": "Comments",
+    "intro": "Internal to your team — nothing here is published or shown on a shared link.",
+    "empty": "No comments yet.",
+    "emptyHint": "Leave a note for whoever picks this post up next.",
+    "inputLabel": "Add a comment",
+    "submit": "Comment",
+    "loadError": "Could not load the comments. Please try again.",
+    "sendError": "Could not send the comment. Your text is still here — try again."
+  },
+  "admin": {
+    "impersonating": {
+      "label": "You are working as {name}.",
+      "hint": "Everything you do here is recorded as them.",
+      "stop": "Back to my account",
+      "stopError": "Could not end the impersonation session. Please try again."
+    },
+    "users": {
+      "title": "Users",
+      "intro": "Every account on this instance. Sign in as one of them to see exactly what they see.",
+      "search": "Search by name or email",
+      "empty": "Nobody matches that search.",
+      "emptyHint": "Try part of a name, or the address they signed up with.",
+      "columnName": "Name",
+      "columnEmail": "Email",
+      "columnOrganizations": "Workspaces",
+      "columnCreated": "Joined",
+      "noOrganizations": "No workspace",
+      "superadmin": "Superadmin",
+      "impersonate": "Sign in as",
+      "more": "Load more",
+      "loadError": "Could not load the users. Please try again."
+    },
+    "errors": {
+      "forbidden": "Only a superadmin can start an impersonation session.",
+      "nested": "You are already impersonating someone. Go back to your own account first.",
+      "self": "That is your own account.",
+      "actorGone": "The account you were impersonating from no longer exists. Please sign in again.",
+      "generic": "Could not sign in as that user. Please try again."
+    }
+  },
+  "editor": {
+    "titleNew": "New post",
+    "titleEdit": "Edit post",
+    "locked": "This post has already gone out and can no longer be edited here.",
+    "lockedRetry": "This post has already gone out. Your text is safe — saving now will create it as a new post instead of changing the original.",
+    "confirmNewPost": "This will publish a second, separate post — the original that already went out will not be changed. Continue?",
+    "confirmNewPostYes": "Yes, create a new post",
+    "closeWithoutSaving": "Close without saving",
+    "networkError": "Could not reach the server. Nothing was lost — check your connection and try again.",
+    "commonContent": "Shared text",
+    "commonContentPlaceholder": "Write once, then vary it per channel on its own tab below.",
+    "signature": "Signature",
+    "noSignature": "No signature",
+    "signatureUnknown": "None selected — pick one to append",
+    "signatureEditHint": "This post's text may already include a signature that was appended earlier; picking one here appends another copy.",
+    "tags": "Tags",
+    "picker": {
+      "sets": "Channel sets",
+      "channels": "Channels",
+      "empty": "Connect a channel first to be able to post."
+    },
+    "schedule": {
+      "findSlotFor": "Find a slot for",
+      "chooseChannel": "Choose a channel",
+      "findSlot": "Find free slot",
+      "findSlotError": "Could not find a free slot. Please try again.",
+      "publishDate": "Publish date",
+      "timezoneHint": "Times are shown in your timezone ({tz})."
+    },
+    "actions": {
+      "saveDraft": "Save draft",
+      "schedule": "Schedule",
+      "publishNow": "Publish now"
+    },
+    "thread": {
+      "rootLabel": "Post text",
+      "rootLabelFor": "Post text ({name})",
+      "replyLabel": "Reply {n}",
+      "add": "Add to thread",
+      "remove": "Remove",
+      "attachMedia": "Attach media",
+      "removeMedia": "Remove media"
+    },
+    "counter": {
+      "over": "(over by {n})"
+    },
+    "hints": {
+      "threadUnsupported": "This channel does not support threads — only a single message can be sent.",
+      "threadTooLong": "A thread on this channel can have at most {max} messages.",
+      "mediaLimits": "Up to {images} images and {videos} videos per message.",
+      "altTextRequired": "Images require alt text on this channel.",
+      "mediaRequired": "This channel publishes nothing without an image or video.",
+      "marksUnsupported": "This channel has no formatting — markup will be published as plain characters."
+    },
+    "tabs": {
+      "hasError": "This channel has a validation problem"
+    },
+    "emoji": {
+      "open": "Insert emoji",
+      "search": "Search emoji",
+      "empty": "No emoji match that search.",
+      "categories": {
+        "smileys": "Smileys",
+        "gestures": "Gestures",
+        "people": "People",
+        "nature": "Nature",
+        "food": "Food & drink",
+        "activity": "Activity",
+        "objects": "Objects",
+        "symbols": "Symbols",
+        "flags": "Flags"
+      }
+    },
+    "format": {
+      "label": "Formatting",
+      "bold": "Bold",
+      "italic": "Italic",
+      "strike": "Strikethrough",
+      "code": "Monospace",
+      "link": "Link",
+      "linkUrl": "Link address",
+      "linkApply": "Add link",
+      "linkCancel": "Cancel"
+    },
+    "repeat": {
+      "label": "Repeat",
+      "never": "Do not repeat",
+      "unit": {
+        "DAY": "Every few days",
+        "WEEK": "Every few weeks",
+        "MONTH": "Every few months"
+      },
+      "every": "Interval",
+      "until": "Repeat until",
+      "hint": "Each repeat is scheduled only after the previous one has published, and counts as a post against your plan.",
+      "needsEnd": "Choose when the repeat should stop before scheduling."
+    },
+    "postSettings": {
+      "intro": "This network needs a few details for every post.",
+      "choose": "Choose…",
+      "optionsError": "This list could not be loaded. The rest of the post is unaffected.",
+      "fields": {
+        "subreddit": "Subreddit",
+        "title": "Title",
+        "flair_id": "Flair",
+        "kind": "Post type",
+        "url": "Link",
+        "reply_settings": "Who can reply"
+      }
+    }
+  },
+  "preview": {
+    "title": "Preview",
+    "approximation": "An approximation — the real network may render this differently.",
+    "empty": "Nothing to preview yet — start typing above.",
+    "generic": {
+      "notice": "No network-specific preview yet — showing plain text."
+    },
+    "telegram": {
+      "kind": "Telegram channel"
+    },
+    "bluesky": {
+      "kind": "Post",
+      "reply": "Reply"
+    },
+    "reddit": {
+      "kind": "Post",
+      "comment": "Comment"
+    }
+  },
+  "integrations": {
+    "callback": {
+      "title": "Connecting channel",
+      "inProgress": "Finishing the connection…",
+      "success": "Channel \"{name}\" connected.",
+      "backToChannels": "Back to channels",
+      "errors": {
+        "denied": "Access was not granted. Please try connecting the channel again.",
+        "invalidState": "This connection attempt has expired or is invalid. Please try again.",
+        "generic": "Could not connect the channel. Please try again."
+      }
+    }
+  },
+  "media": {
+    "title": "Media library",
+    "empty": "No media yet — upload a file or paste a link above.",
+    "search": "Search by filename",
+    "loadMore": "Load more",
+    "loadError": "Could not load the media library. Please try again.",
+    "video": "Video",
+    "uploading": "Uploading…",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this media? This cannot be undone.",
+    "deleteInUse": "This media is still attached to a post that hasn't been published yet. Remove it from that post first.",
+    "deleteFailed": "Could not delete this media. Please try again.",
+    "uploader": {
+      "dropHint": "Drag files here, or",
+      "browse": "Browse files",
+      "constraints": "Images (JPEG, PNG, GIF, WebP) and MP4 video, up to 100 MB each.",
+      "urlPlaceholder": "Paste an image or video URL",
+      "importUrl": "Import",
+      "unsupportedType": "\"{name}\" is not an image or MP4 video and was skipped.",
+      "tooLarge": "\"{name}\" is larger than 100 MB and was skipped.",
+      "uploadFailed": "\"{name}\" failed to upload. Please try again.",
+      "urlImportFailed": "Could not import that URL. Please check it and try again."
+    },
+    "picker": {
+      "title": "Choose media",
+      "selectedCount": "{count} selected",
+      "confirm": "Add to post"
+    }
+  }
 }

@@ -18,6 +18,36 @@ function mountModal(props: Record<string, unknown> = {}) {
     });
 }
 
+// The user's complaint was "it opens so fast" — the honest cause was that
+// Modal had NO animation at all: a bare v-if inside a Teleport, so the
+// panel and its backdrop appeared in a single frame. `<Transition>` with a
+// `name` is what gives the enter/leave classes below something to hook.
+it('opens through a named transition instead of appearing in a single frame', () => {
+    const w = mountModal();
+
+    expect(w.get('transition-stub').attributes('name')).toBe('modal');
+});
+
+// Only the backdrop and panel carry a `transition:` rule — the outer
+// `.fixed` wrapper is layout-only. Vue's whenTransitionEnds reads the
+// computed transition duration off the ROOT element of the transitioned
+// node, and would find none there, firing `done` (and unmounting the leave)
+// immediately. The explicit `:duration` is what keeps the leave fade from
+// silently reverting to an instant pop — do not remove it as "redundant".
+it('declares an explicit duration, because only its children (not the transitioned root) animate', () => {
+    const w = mountModal();
+    const duration = w.get('transition-stub').attributes('duration');
+
+    expect(duration).toBeTruthy();
+});
+
+it('the backdrop and the panel each carry their own animation hook class', () => {
+    const w = mountModal();
+
+    expect(w.get('.fixed > .absolute').classes()).toContain('modal-backdrop');
+    expect(w.get('[role="dialog"]').classes()).toContain('modal-panel');
+});
+
 it('a backdrop click closes the modal by default — every existing caller keeps this behaviour', async () => {
     const w = mountModal();
     await w.find('.fixed > .absolute').trigger('click');

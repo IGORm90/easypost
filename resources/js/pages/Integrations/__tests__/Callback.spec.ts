@@ -36,7 +36,8 @@ beforeEach(() => {
     setActivePinia(createPinia());
     i18n.global.locale.value = 'en';
     post.mockReset();
-    sessionStorage.setItem('channel_connect_pending', JSON.stringify({ provider: 'fake', state: 'the-state', extra: {} }));
+    localStorage.clear();
+    localStorage.setItem('channel_connect_pending', JSON.stringify({ provider: 'fake', state: 'the-state', extra: {}, created_at: Date.now() }));
 });
 
 // Task 36 fix round 1, Minor 5: a 402 from the callback request already
@@ -61,4 +62,31 @@ it('still shows local error text for a generic failure', async () => {
     const w = await mountAt({ state: 'the-state' });
 
     expect(w.find('[role="alert"]').exists()).toBe(true);
+});
+
+// Task 37: the pending record now moves from sessionStorage to
+// localStorage — it is written on /channels and must be read in the new
+// tab a fast-connect provider's login opened. localStorage outlives the
+// browser session sessionStorage did, so a record left behind by an
+// abandoned connect must not be honoured by some unrelated later visit —
+// treated exactly like no pending record at all: invalid state.
+it('treats a pending record older than 15 minutes as absent', async () => {
+    localStorage.setItem(
+        'channel_connect_pending',
+        JSON.stringify({ provider: 'fake', state: 'the-state', extra: {}, created_at: Date.now() - 16 * 60 * 1000 }),
+    );
+
+    const w = await mountAt({ state: 'the-state' });
+
+    expect(post).not.toHaveBeenCalled();
+    expect(w.find('[role="alert"]').exists()).toBe(true);
+});
+
+it('completes the callback normally when the pending record is fresh', async () => {
+    post.mockResolvedValueOnce({ data: { id: 'i-1', name: 'Release notes' } });
+
+    const w = await mountAt({ state: 'the-state' });
+
+    expect(post).toHaveBeenCalledWith('/integrations/fake/callback', { state: 'the-state' });
+    expect(w.text()).toContain('Release notes');
 });

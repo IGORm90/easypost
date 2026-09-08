@@ -1,9 +1,11 @@
 import { iconRegistry, previewRegistry, resolvePreview, resolveProviderIcon } from '../registry';
 import TelegramPreview from '../TelegramPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
+import RedditPreview from '../RedditPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 import TelegramIcon from '../icons/TelegramIcon.vue';
 import BlueskyIcon from '../icons/BlueskyIcon.vue';
+import RedditIcon from '../icons/RedditIcon.vue';
 import GenericIcon from '../icons/GenericIcon.vue';
 
 /**
@@ -17,6 +19,7 @@ it('exposes every known provider identifier in the registry map', () => {
     expect(previewRegistry).toEqual({
         telegram: TelegramPreview,
         bluesky: BlueskyPreview,
+        reddit: RedditPreview,
     });
 });
 
@@ -26,6 +29,10 @@ it('resolvePreview("telegram") returns TelegramPreview', () => {
 
 it('resolvePreview("bluesky") returns BlueskyPreview', () => {
     expect(resolvePreview('bluesky')).toBe(BlueskyPreview);
+});
+
+it('resolvePreview("reddit") returns RedditPreview', () => {
+    expect(resolvePreview('reddit')).toBe(RedditPreview);
 });
 
 it('resolvePreview() defaults to GenericPreview for an unknown identifier', () => {
@@ -56,6 +63,7 @@ it('exposes every provider that has a brand mark of its own', () => {
     expect(iconRegistry).toEqual({
         telegram: TelegramIcon,
         bluesky: BlueskyIcon,
+        reddit: RedditIcon,
     });
 });
 
@@ -65,6 +73,10 @@ it('resolveProviderIcon("telegram") returns the Telegram mark', () => {
 
 it('resolveProviderIcon("bluesky") returns the Bluesky mark', () => {
     expect(resolveProviderIcon('bluesky')).toBe(BlueskyIcon);
+});
+
+it('resolveProviderIcon("reddit") returns the Reddit mark', () => {
+    expect(resolveProviderIcon('reddit')).toBe(RedditIcon);
 });
 
 it('resolveProviderIcon() defaults to GenericIcon for a network with no mark yet', () => {

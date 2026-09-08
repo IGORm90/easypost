@@ -1,6 +1,7 @@
 <?php
 
 use App\Social\Providers\BlueskyProvider;
+use App\Social\Providers\RedditProvider;
 use App\Social\Providers\TelegramProvider;
 
 return [
@@ -29,6 +30,7 @@ return [
     'providers' => [
         'telegram' => TelegramProvider::class,
         'bluesky' => BlueskyProvider::class,
+        'reddit' => RedditProvider::class,
     ],
 
 ];

@@ -148,10 +148,23 @@ member still cannot connect or remove a channel end to end.
   Security → App Passwords → create one. Enter your handle
   (e.g. `you.bsky.social`) and that app password in the connect form —
   **never your main account password**.
-## Obtaining credentials for the eight Block 5 networks
+- **Reddit** — OAuth 2.0, one client pair registered per deployment
+  (`INTEGRATIONS_REDIRECT_URL` is the redirect URI). Create a **web app**
+  at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps). Set
+  `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, and also `REDDIT_USER_AGENT`
+  — Reddit refuses generic or absent user agents outright, so use
+  something like `easypost/1.0 by /u/your-account`. The connect flow asks
+  for `duration=permanent`; without it Reddit issues no refresh token and
+  the channel dies within the hour. Unlike Telegram and Bluesky, clicking
+  "Connect" on Reddit's card opens Reddit's own login in a new tab
+  directly — there is no credential form, since nothing needs to be typed
+  before the redirect. A connected channel can post to any subreddit it
+  moderates or is a member of; the subreddit and title are chosen per
+  post, not at connect time.
+## Obtaining credentials for the seven remaining Block 5 networks
 
-All eight are OAuth 2.0 client pairs registered per deployment, and all
-eight use the same redirect URI — `INTEGRATIONS_REDIRECT_URL` — because
+All seven are OAuth 2.0 client pairs registered per deployment, and all
+seven use the same redirect URI — `INTEGRATIONS_REDIRECT_URL` — because
 the SPA, not the backend, receives the provider's redirect and posts the
 code back. Leaving a pair empty only means that channel cannot be
 connected here; nothing else is affected.
@@ -178,13 +191,6 @@ your own test accounts does not wait for it; acceptance does.
   channel in this app (different author URN, different permissions), and
   the organization to post as is chosen in the channel's settings after
   connecting.
-- **Reddit** — create a **web app** at
-  [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps). Set
-  `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, and also
-  `REDDIT_USER_AGENT` — Reddit refuses generic or absent user agents
-  outright, so use something like `easypost/1.0 by /u/your-account`. The
-  connect flow asks for `duration=permanent`; without it Reddit issues no
-  refresh token and the channel dies within the hour.
 - **Facebook Page** — register at
   [developers.facebook.com](https://developers.facebook.com/apps). Request
   `pages_show_list`, `pages_manage_posts` and `pages_read_engagement`; set

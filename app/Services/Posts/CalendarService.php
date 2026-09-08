@@ -57,6 +57,14 @@ use Illuminate\Pagination\LengthAwarePaginator;
 class CalendarService
 {
     /**
+     * Both readers below load `posts.integration` `withTrashed()`. Disconnecting
+     * a channel soft-deletes its `Integration`, and Post::integration() is a
+     * plain belongsTo with no such default — without this, the relation
+     * resolves to null the moment any one post's channel is disconnected, and
+     * IntegrationResource reads `id` off that null unconditionally, 500ing the
+     * whole calendar for one disconnected channel. Same fix as
+     * ShareService::findForPublic() applies for the public share page.
+     *
      * @param  list<string>  $tagIds
      * @return Collection<int, PostGroup>
      */
@@ -64,7 +72,7 @@ class CalendarService
     {
         $query = PostGroup::query()
             ->whereBetween('publish_date', [$from, $to])
-            ->with(['posts.integration', 'tags']);
+            ->with(['posts.integration' => fn ($query) => $query->withTrashed(), 'tags']);
 
         if (! $this->applyFilters($query, $customer, $tagIds)) {
             return new Collection;
@@ -100,7 +108,7 @@ class CalendarService
     public function list(?PostState $state, ?string $customer, array $tagIds, int $perPage): LengthAwarePaginator
     {
         $query = PostGroup::query()
-            ->with(['posts.integration', 'tags'])
+            ->with(['posts.integration' => fn ($query) => $query->withTrashed(), 'tags'])
             ->withCount('comments');
 
         if ($state !== null) {

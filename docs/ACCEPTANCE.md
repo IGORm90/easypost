@@ -79,18 +79,35 @@ to be thorough, by hitting `DELETE /api/integrations/{id}` directly as the
 
 Needs real credentials — see [README.md](../README.md)'s "Obtaining
 credentials" section for how to get each one (a bot token for Telegram, an
-app password for Bluesky).
+app password for Bluesky, an OAuth app registration for Reddit).
 
-For **each** of Telegram and Bluesky:
+For **each** of Telegram, Bluesky and Reddit:
 
-1. Settings → Channels → Connect → pick the provider, complete its flow.
+1. Settings → Channels → click "Connect" on that network's own card in the
+   "Available networks" catalogue — its credential form opens directly, with
+   no intermediate network picker (Task 37: the card the operator already
+   clicked is the only choice being made; clicking it commits to that
+   network). Reddit is `auth_type: 'oauth'` with no `auth_fields`, so this is
+   the first shipped provider to actually take the fast-connect branch: no
+   modal at all, a new tab opens straight to Reddit's own authorize page.
 2. Compose a short post targeting only that channel, publish immediately
-   (or schedule ~1 minute out).
+   (or schedule ~1 minute out). For Reddit, `PostSettingsFields.vue` will ask
+   for a subreddit and a title before publish is allowed — pick a throwaway
+   subreddit you moderate, not a real community, since this is a real post.
 3. Confirm the message actually appears on the real channel (open the
-   Telegram channel or the Bluesky profile directly).
+   Telegram channel, the Bluesky profile, or the Reddit submission directly).
 
-Expected: both succeed independently. Do this one provider at a time —
+Expected: all three succeed independently. Do this one provider at a time —
 a failure on one should not be read as a failure of the others.
+
+For Reddit specifically, also do one thing none of the other gates
+exercise: attach an image to the post and confirm it actually appears
+(`RedditProvider::uploadMedia()`'s three-leg lease/upload/submit flow is
+covered by `Http::fake()` in `tests/Unit/Social/RedditProviderTest.php`
+only — no automated gate has ever sent it a real file, and CI provisions no
+MinIO to even try). Then compose a second, threaded post (2+ segments) to
+confirm the submission-plus-comments chain actually nests as replies on
+Reddit, not as three separate top-level posts.
 
 ### 4. One post, three channels, per-channel variation, threaded, at a scheduled time
 
@@ -344,3 +361,32 @@ pass should exercise them by hand.
   CI job uploads a file to S3-compatible storage; the media tests use
   `Storage::fake('media')`. Uploading through the UI locally (§5) is the
   only thing that exercises it.
+- **The fast-connect (new-tab OAuth) path is unit-tested only.** Task 37
+  gave a provider declaring `auth_type: 'oauth'` with no `auth_fields` a
+  dedicated flow: clicking its card's "Connect" opens the platform's login
+  directly in a new tab (`useChannelConnect().startOAuthConnect()`), with
+  no modal, and `pages/Integrations/Callback.vue` completes the connect in
+  that tab via a `localStorage`-based handoff. Reddit is now the first
+  shipped provider that actually takes this branch (Telegram and Bluesky
+  both stay `auth_type: 'manual'`) — see §3's numbered check above for the
+  manual walkthrough. Until that check has actually been run against a real
+  Reddit account, `window.open`, the `channel_connect_pending` record
+  crossing the tab boundary, and a real callback round-trip remain exercised
+  only by stubs in `useChannelConnect.spec.ts`, `Channels/Index.spec.ts`
+  and `Integrations/Callback.spec.ts` — none of which opens a real tab or
+  talks to a real authorization server.
+- **Reddit's media upload and submission-plus-comments thread are
+  `Http::fake()`-only.** `RedditProvider::uploadMedia()`'s three-leg
+  lease/S3-upload/submit flow and `RedditProvider::post()`'s
+  submission-then-comment-chain are both covered end to end in
+  `tests/Unit/Social/RedditProviderTest.php`, but every one of those tests
+  fakes Reddit's HTTP responses — none of them has ever sent a byte to a
+  real Reddit API or a real S3 bucket. CI provisions no MinIO for the
+  application's own media pipeline either, so the whole chain (upload a
+  real image in the composer → `MediaTempFiles` copies it → `PublishService`
+  hands it to `uploadMedia()` → the presigned POST actually reaches S3 →
+  `post()` references the uploaded asset) is untested by any automated
+  gate. §3's numbered Reddit check above is the only thing that exercises
+  it. Reddit video posts are not supported at all (`maxVideos: 0` in
+  `RedditProvider::capabilities()`) — Reddit's video pipeline needs a
+  separate, more involved upload API this change does not implement.

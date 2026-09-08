@@ -27,7 +27,7 @@ const props = defineProps<{
     connectedCount: number;
 }>();
 
-const emit = defineEmits<{ connect: [] }>();
+const emit = defineEmits<{ connect: [Provider] }>();
 
 const { t } = useI18n();
 
@@ -59,7 +59,7 @@ const icon = computed(() => resolveProviderIcon(props.provider.identifier));
             <Button
                 variant="secondary"
                 :aria-label="t('channels.available.connectAria', { name: provider.name })"
-                @click="emit('connect')"
+                @click="emit('connect', provider)"
             >
                 {{ t('channels.available.connect') }}
             </Button>

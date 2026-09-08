@@ -73,11 +73,11 @@ it('counts the channels already connected to this network', () => {
     expect(mountCard(known, 2).text()).toContain(i18n.global.t('channels.available.connectedCount', { count: 2 }));
 });
 
-it('emits connect when the button is pressed', async () => {
+it('emits connect with this card\'s own provider when the button is pressed', async () => {
     const w = mountCard(known);
     await w.get('button').trigger('click');
 
-    expect(w.emitted('connect')).toHaveLength(1);
+    expect(w.emitted('connect')).toEqual([[known]]);
 });
 
 it('gives the connect button an accessible name naming the network', () => {

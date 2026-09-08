@@ -5,12 +5,22 @@ import { isAxiosError } from 'axios';
 import Modal from '../ui/Modal.vue';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
+import { PopupBlockedError, useChannelConnect } from '../../composables/useChannelConnect';
 import { useIntegrationsStore, type Integration, type Provider, type ProviderAuthField } from '../../stores/integrations';
 
 /**
  * Connects a channel, generically across every provider's `auth_type`
  * (never branching on provider identifier to decide *which flow* to
  * run — only `auth_type` decides that, per this task's brief).
+ *
+ * Task 37: this used to open on a picker step (a plain list of every
+ * provider name) and let the user choose again what they had just chosen
+ * on the "Available networks" card. It now always opens committed to one
+ * `provider` — the card itself is the only picker on this screen. A
+ * fast-connect oauth provider (declares no `auth_fields`) never reaches
+ * this component at all: Channels/Index.vue's `beginConnect()` sends it
+ * straight to `useChannelConnect().startOAuthConnect()` instead, since a
+ * modal with nothing to ask for would be a dialog with one button in it.
  *
  * Final review, Important 10: this component used to carry its own
  * hardcoded per-provider field maps for exactly that — which credentials
@@ -25,18 +35,9 @@ import { useIntegrationsStore, type Integration, type Provider, type ProviderAut
  */
 const props = defineProps<{
     open: boolean;
-    providers: Provider[];
-    /** Pre-selects a provider (skipping the picker) — used by the "Reconnect" flow on an already-connected, refresh_needed channel. */
-    preselect?: string;
-    /**
-     * The specific channel being reconnected (Task 36 fix round 1,
-     * Critical 2). Sent as `integration_id` on `POST .../auth-url` so
-     * `EnforcePlanLimit`'s reconnect-aware pre-check can recognise this
-     * as a repair of an existing channel, not a new one — otherwise an
-     * organization already at its channel limit gets a 402 on the only
-     * path this UI offers to fix a broken channel, even though
-     * `IntegrationService::connect()` itself always allows it.
-     */
+    /** The single network this instance connects — `null` only while closed or between prop updates. */
+    provider: Provider | null;
+    /** The specific channel being reconnected (Task 36 fix round 1, Critical 2). Sent as `integration_id` on `POST .../auth-url` so `EnforcePlanLimit`'s reconnect-aware pre-check can recognise this as a repair of an existing channel, not a new one — otherwise an organization already at its channel limit gets a 402 on the only path this UI offers to fix a broken channel, even though `IntegrationService::connect()` itself always allows it. */
     preselectIntegrationId?: string;
 }>();
 
@@ -44,31 +45,32 @@ const emit = defineEmits<{ close: []; connected: [Integration] }>();
 
 const { t, te } = useI18n();
 const store = useIntegrationsStore();
+const { startOAuthConnect } = useChannelConnect();
 
 /**
  * A manual provider that declares no fields still needs *something* asked
  * for — a credential form with no inputs cannot connect anything — so a
  * single generic token field stands in until that provider declares its
  * own shape. An OAuth provider declaring nothing simply needs nothing
- * before the redirect, which is the normal case.
+ * before the redirect, which is the normal case (and, per this task's
+ * brief, never reaches this component — see the docblock above).
  */
 const FALLBACK_MANUAL_FIELDS: ProviderAuthField[] = [{ key: 'token', type: 'password' }];
 
-const selected = ref<Provider | null>(null);
 const values = ref<Record<string, string>>({});
 const submitting = ref(false);
 const error = ref<string | null>(null);
 
 const fields = computed<ProviderAuthField[]>(() => {
-    if (!selected.value) {
+    if (!props.provider) {
         return [];
     }
 
-    if (selected.value.auth_fields.length > 0) {
-        return selected.value.auth_fields;
+    if (props.provider.auth_fields.length > 0) {
+        return props.provider.auth_fields;
     }
 
-    return selected.value.auth_type === 'manual' ? FALLBACK_MANUAL_FIELDS : [];
+    return props.provider.auth_type === 'manual' ? FALLBACK_MANUAL_FIELDS : [];
 });
 
 /**
@@ -85,35 +87,15 @@ function fieldLabel(key: string): string {
     return te(messageKey) ? t(messageKey) : key;
 }
 
-function reset(): void {
-    selected.value = null;
-    values.value = {};
-    submitting.value = false;
-    error.value = null;
-}
-
-function select(provider: Provider): void {
-    selected.value = provider;
-    values.value = {};
-    error.value = null;
-}
-
 watch(
     () => props.open,
     (open) => {
         if (!open) {
-            reset();
-
-            return;
-        }
-
-        const match = props.preselect ? props.providers.find((p) => p.identifier === props.preselect) : undefined;
-
-        if (match) {
-            select(match);
+            values.value = {};
+            submitting.value = false;
+            error.value = null;
         }
     },
-    { immediate: true },
 );
 
 function close(): void {
@@ -121,11 +103,11 @@ function close(): void {
 }
 
 async function submit(): Promise<void> {
-    if (!selected.value) {
+    if (!props.provider) {
         return;
     }
 
-    const provider = selected.value;
+    const provider = props.provider;
     error.value = null;
     submitting.value = true;
 
@@ -149,16 +131,16 @@ async function submit(): Promise<void> {
             return;
         }
 
-        const { url, state, extra } = await store.connect(provider.identifier, { ...values.value, ...reconnectParams });
-
-        // Round-tripped generically: whatever `extra` the backend
-        // returned (an `{ instance }` host, or nothing for providers
-        // that don't need any) is stashed as opaque data and handed back
-        // untouched by pages/Integrations/Callback.vue — this component
-        // never inspects what's inside it.
-        sessionStorage.setItem('channel_connect_pending', JSON.stringify({ provider: provider.identifier, state, extra }));
-        window.location.assign(url);
+        await startOAuthConnect(provider, { ...values.value, ...reconnectParams });
+        close();
     } catch (e) {
+        if (e instanceof PopupBlockedError) {
+            error.value = t('channels.available.popupBlocked');
+            submitting.value = false;
+
+            return;
+        }
+
         // Task 36 fix round 1, Minor 5: a 402 already shows the global
         // warning toast (api/client.ts's response interceptor) — this
         // local --danger line must not ALSO fire for the same event
@@ -177,23 +159,10 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-    <Modal :open="open" :title="t('channels.connectModal.title')" @close="close">
-        <div v-if="!selected" class="flex flex-col gap-2">
-            <p class="text-sm text-muted">{{ t('channels.connectModal.chooseProvider') }}</p>
-            <button
-                v-for="provider in providers"
-                :key="provider.identifier"
-                type="button"
-                class="rounded-xl border border-border px-3 py-2 text-left text-sm text-text hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                @click="select(provider)"
-            >
-                {{ provider.name }}
-            </button>
-        </div>
-
-        <form v-else class="flex flex-col gap-4" @submit.prevent="submit">
-            <p v-if="selected.auth_type === 'oauth' && fields.length === 0" class="text-sm text-muted">
-                {{ t('channels.connectModal.oauthIntro', { name: selected.name }) }}
+    <Modal :open="open" :title="provider ? t('channels.connectModal.titleFor', { name: provider.name }) : t('channels.connectModal.title')" @close="close">
+        <form v-if="provider" class="flex flex-col gap-4" @submit.prevent="submit">
+            <p v-if="provider.auth_type === 'oauth' && fields.length === 0" class="text-sm text-muted">
+                {{ t('channels.connectModal.oauthIntro', { name: provider.name }) }}
             </p>
 
             <Input
@@ -209,11 +178,8 @@ async function submit(): Promise<void> {
             <p v-if="error" class="text-sm text-danger">{{ error }}</p>
 
             <div class="flex gap-2">
-                <Button v-if="!preselect" type="button" variant="ghost" @click="selected = null">
-                    {{ t('channels.connectModal.back') }}
-                </Button>
                 <Button type="submit" variant="primary" :loading="submitting">
-                    {{ selected.auth_type === 'manual' ? t('channels.connectModal.manualSubmit') : t('channels.connectModal.connect') }}
+                    {{ provider.auth_type === 'manual' ? t('channels.connectModal.manualSubmit') : t('channels.connectModal.connect') }}
                 </Button>
             </div>
         </form>

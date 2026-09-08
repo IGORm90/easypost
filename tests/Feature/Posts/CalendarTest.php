@@ -218,3 +218,34 @@ it('exposes the share token on calendar entries', function () {
     expect($entries[$shared->id]['share_token'])->toBe(str_repeat('a', 64))
         ->and($entries[$private->id]['share_token'])->toBeNull();
 });
+
+/*
+ * Disconnecting a channel soft-deletes its Integration — an everyday
+ * act — but posts already scheduled against it keep their integration_id.
+ * Post::integration() is a plain belongsTo with no withTrashed(), so
+ * without loading it explicitly, `$post->integration` resolves to null
+ * the moment the channel is disconnected, and IntegrationResource reads
+ * `$this->id` off that null unconditionally: a 500 on the calendar for
+ * any organization with one disconnected channel that ever had a post.
+ * Same failure mode ShareService::findForPublic() already guards against
+ * for the public share page.
+ */
+it('does not 500 when a post targets a disconnected (soft-deleted) channel', function () {
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $group = PostGroup::factory()->for($org)->create(['state' => PostState::QUEUE, 'publish_date' => now()->addDay()]);
+    Post::factory()->for($group, 'group')->create(['organization_id' => $org->id, 'integration_id' => $integration->id]);
+
+    $integration->delete();
+
+    $response = $this->getJson('/api/calendar?'.http_build_query([
+        'from' => now()->subDay()->toIso8601String(),
+        'to' => now()->addWeek()->toIso8601String(),
+    ]));
+
+    $response->assertOk();
+    $entries = collect((array) $response->json())->keyBy('id');
+    expect($entries[$group->id]['posts'][0]['integration']['id'])->toBe($integration->id);
+});

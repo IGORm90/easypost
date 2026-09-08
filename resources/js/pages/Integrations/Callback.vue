@@ -6,6 +6,7 @@ import { isAxiosError } from 'axios';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Button from '../../components/ui/Button.vue';
 import { useIntegrationsStore } from '../../stores/integrations';
+import { PENDING_CONNECT_KEY, PENDING_CONNECT_TTL_MS, type PendingConnect } from '../../composables/useChannelConnect';
 
 /**
  * The frontend half of Task 13's `INTEGRATIONS_REDIRECT_URL` contract
@@ -15,31 +16,33 @@ import { useIntegrationsStore } from '../../stores/integrations';
  * provider (Telegram, Bluesky) — those submit straight to `callback()`
  * from ConnectProviderModal without ever navigating away.
  *
- * `extra` round-trips generically: ConnectProviderModal stashed whatever
+ * Task 37: a fast-connect oauth provider opens its login in a NEW tab
+ * (`useChannelConnect().startOAuthConnect()`), so this page now typically
+ * runs in that tab, not the one that started the connect — this tab does
+ * not close itself on success or failure, it just shows the outcome.
+ *
+ * `extra` round-trips generically: `startOAuthConnect()` stashed whatever
  * `POST .../auth-url` returned in `extra` (an `{ instance }` host;
  * empty for providers that need nothing) into
- * `sessionStorage['channel_connect_pending']` right before the redirect.
- * This component never inspects what's inside it — it's spread into the
- * callback payload untouched, alongside the provider's own query
+ * `localStorage[PENDING_CONNECT_KEY]` right before the redirect —
+ * `localStorage`, not `sessionStorage`, because the record must cross the
+ * tab boundary between where it was written and where it is read here.
+ * This component never inspects what's inside `extra` — it's spread into
+ * the callback payload untouched, alongside the provider's own query
  * parameters (`code`, ...), so a provider needing a brand new `extra`
  * key tomorrow needs no change here.
  *
- * Three distinct failure paths, per this task's brief, each shown as
+ * Four distinct failure paths, per this task's brief, each shown as
  * words — never a raw server message, never a blank page:
  *  - the provider denied consent / reported its own error (`?error=...`
  *    on the redirect — the OAuth2 standard shape);
- *  - `pending` is missing or its `state` doesn't match the redirect's
- *    (expired session, reused/forged link, or this page opened without
- *    ever starting a connect flow);
+ *  - `pending` is missing, older than `PENDING_CONNECT_TTL_MS`, or its
+ *    `state` doesn't match the redirect's (expired session, reused/forged
+ *    link, or this page opened without ever starting a connect flow);
  *  - the backend rejected the callback itself (expired/consumed
  *    `state`, provider-side auth failure, ...) — caught generically,
  *    never displaying `e.response.data.message` raw to the user.
  */
-interface PendingConnect {
-    provider: string;
-    state: string;
-    extra: Record<string, unknown>;
-}
 
 const { t } = useI18n();
 const route = useRoute();
@@ -75,10 +78,10 @@ function fail(message: string): void {
 }
 
 onMounted(async () => {
-    const raw = sessionStorage.getItem('channel_connect_pending');
+    const raw = localStorage.getItem(PENDING_CONNECT_KEY);
     // Consumed on first read regardless of outcome: a stale entry must
     // never be reused by a later, unrelated navigation to this route.
-    sessionStorage.removeItem('channel_connect_pending');
+    localStorage.removeItem(PENDING_CONNECT_KEY);
 
     // `null` is a real outcome here (no entry, or unparseable JSON), so
     // the type says so rather than being cast away — the guard below
@@ -91,7 +94,13 @@ onMounted(async () => {
         pending = null;
     }
 
-    if (!pending || !pending.state || !pending.provider) {
+    // localStorage outlives the browser session sessionStorage did, so an
+    // abandoned connect's record could otherwise be picked up by an
+    // unrelated visit to this URL days later — treated exactly like no
+    // pending record at all.
+    const expired = pending ? Date.now() - pending.created_at > PENDING_CONNECT_TTL_MS : false;
+
+    if (!pending || expired || !pending.state || !pending.provider) {
         fail(t('integrations.callback.errors.invalidState'));
 
         return;

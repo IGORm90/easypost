@@ -19,9 +19,13 @@ import type { Integration, Provider } from '../../../stores/integrations';
  * setup, not a duplicate.
  */
 const get = vi.fn();
+const post = vi.fn();
 
 vi.mock('../../../api/client', () => ({
-    api: { get: (...args: unknown[]) => get(...args) },
+    api: {
+        get: (...args: unknown[]) => get(...args),
+        post: (...args: unknown[]) => post(...args),
+    },
 }));
 
 // The page under test is its two blocks, not the app chrome — AppLayout
@@ -91,8 +95,14 @@ function respondWith(integrations: Integration[], providers: Provider[] = PROVID
 beforeEach(() => {
     setActivePinia(createPinia());
     get.mockReset();
+    post.mockReset();
+    localStorage.clear();
     i18n.global.locale.value = 'en';
     respondWith([]);
+});
+
+afterEach(() => {
+    document.body.innerHTML = '';
 });
 
 async function mountPage() {
@@ -141,15 +151,64 @@ it('keeps a network offerable once it is connected, and counts what is on it', a
     expect(cards(w)[1].text()).not.toContain(i18n.global.t('channels.available.connectedCount', { count: 0 }));
 });
 
-it('opens the network picker from a card', async () => {
+// Task 37: clicking a card used to reopen a second picker inside the
+// modal — the very network you had just chosen was asked again. The
+// card IS the picker now: it commits to its own provider, so the modal
+// opens straight on that provider's credential form.
+it('opens the clicked card\'s own credential form directly — no second picker', async () => {
     const w = await mountPage();
-
-    expect(document.body.textContent).not.toContain(en.channels.connectModal.chooseProvider);
 
     await cards(w)[0].get('button').trigger('click');
     await flushPromises();
 
     // Modal.vue teleports to <body>, outside the mounted wrapper's root —
     // same reason ConnectProviderModal.spec.ts reads document.body.
-    expect(document.body.textContent).toContain(en.channels.connectModal.chooseProvider);
+    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain('Fake Network');
+    expect(dialog.querySelector('input[type="password"]')).not.toBeNull();
+    expect(dialog.textContent).not.toContain('Other Network');
+});
+
+it('never opens a second picker for the other card either', async () => {
+    const w = await mountPage();
+
+    await cards(w)[1].get('button').trigger('click');
+    await flushPromises();
+
+    const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.textContent).toContain('Other Network');
+    expect(dialog.textContent).not.toContain('Fake Network');
+});
+
+it('opens the platform login in a new tab for a fast-connect provider, with no modal at all', async () => {
+    const fastConnect = provider('fastnet', 'Fastnet');
+    fastConnect.auth_type = 'oauth';
+    fastConnect.auth_fields = [];
+    respondWith([], [...PROVIDERS, fastConnect]);
+
+    const tab = { location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    post.mockResolvedValue({ data: { url: 'https://fastnet.example/login', state: 's', extra: {} } });
+
+    const w = await mountPage();
+    await cards(w)[2].get('button').trigger('click');
+    await flushPromises();
+
+    expect(post).toHaveBeenCalledWith('/integrations/fastnet/auth-url', {});
+    expect(tab.location.href).toBe('https://fastnet.example/login');
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it('shows a message and no crash when the browser blocks the login tab', async () => {
+    const fastConnect = provider('fastnet', 'Fastnet');
+    fastConnect.auth_type = 'oauth';
+    fastConnect.auth_fields = [];
+    respondWith([], [...PROVIDERS, fastConnect]);
+    vi.spyOn(window, 'open').mockReturnValue(null);
+
+    const w = await mountPage();
+    await cards(w)[2].get('button').trigger('click');
+    await flushPromises();
+
+    expect(w.text()).toContain(en.channels.available.popupBlocked);
 });
