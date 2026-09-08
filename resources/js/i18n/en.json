@@ -537,6 +537,16 @@
     "reddit": {
       "kind": "Post",
       "comment": "Comment"
+    },
+    "facebook-page": {
+      "kind": "Page post"
+    },
+    "instagram": {
+      "kind": "Post"
+    },
+    "meta-threads": {
+      "kind": "Thread",
+      "reply": "Reply"
     }
   },
   "integrations": {

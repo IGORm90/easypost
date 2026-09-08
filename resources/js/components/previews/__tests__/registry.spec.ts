@@ -2,10 +2,16 @@ import { iconRegistry, previewRegistry, resolvePreview, resolveProviderIcon } fr
 import TelegramPreview from '../TelegramPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
 import RedditPreview from '../RedditPreview.vue';
+import FacebookPagePreview from '../FacebookPagePreview.vue';
+import InstagramPreview from '../InstagramPreview.vue';
+import MetaThreadsPreview from '../MetaThreadsPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 import TelegramIcon from '../icons/TelegramIcon.vue';
 import BlueskyIcon from '../icons/BlueskyIcon.vue';
 import RedditIcon from '../icons/RedditIcon.vue';
+import FacebookPageIcon from '../icons/FacebookPageIcon.vue';
+import InstagramIcon from '../icons/InstagramIcon.vue';
+import MetaThreadsIcon from '../icons/MetaThreadsIcon.vue';
 import GenericIcon from '../icons/GenericIcon.vue';
 
 /**
@@ -20,6 +26,9 @@ it('exposes every known provider identifier in the registry map', () => {
         telegram: TelegramPreview,
         bluesky: BlueskyPreview,
         reddit: RedditPreview,
+        'facebook-page': FacebookPagePreview,
+        instagram: InstagramPreview,
+        'meta-threads': MetaThreadsPreview,
     });
 });
 
@@ -33,6 +42,18 @@ it('resolvePreview("bluesky") returns BlueskyPreview', () => {
 
 it('resolvePreview("reddit") returns RedditPreview', () => {
     expect(resolvePreview('reddit')).toBe(RedditPreview);
+});
+
+it('resolvePreview("facebook-page") returns FacebookPagePreview', () => {
+    expect(resolvePreview('facebook-page')).toBe(FacebookPagePreview);
+});
+
+it('resolvePreview("instagram") returns InstagramPreview', () => {
+    expect(resolvePreview('instagram')).toBe(InstagramPreview);
+});
+
+it('resolvePreview("meta-threads") returns MetaThreadsPreview', () => {
+    expect(resolvePreview('meta-threads')).toBe(MetaThreadsPreview);
 });
 
 it('resolvePreview() defaults to GenericPreview for an unknown identifier', () => {
@@ -64,6 +85,9 @@ it('exposes every provider that has a brand mark of its own', () => {
         telegram: TelegramIcon,
         bluesky: BlueskyIcon,
         reddit: RedditIcon,
+        'facebook-page': FacebookPageIcon,
+        instagram: InstagramIcon,
+        'meta-threads': MetaThreadsIcon,
     });
 });
 
@@ -77,6 +101,18 @@ it('resolveProviderIcon("bluesky") returns the Bluesky mark', () => {
 
 it('resolveProviderIcon("reddit") returns the Reddit mark', () => {
     expect(resolveProviderIcon('reddit')).toBe(RedditIcon);
+});
+
+it('resolveProviderIcon("facebook-page") returns the Facebook Page mark', () => {
+    expect(resolveProviderIcon('facebook-page')).toBe(FacebookPageIcon);
+});
+
+it('resolveProviderIcon("instagram") returns the Instagram mark', () => {
+    expect(resolveProviderIcon('instagram')).toBe(InstagramIcon);
+});
+
+it('resolveProviderIcon("meta-threads") returns the Threads mark', () => {
+    expect(resolveProviderIcon('meta-threads')).toBe(MetaThreadsIcon);
 });
 
 it('resolveProviderIcon() defaults to GenericIcon for a network with no mark yet', () => {

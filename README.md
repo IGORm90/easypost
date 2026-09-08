@@ -220,7 +220,8 @@ your own test accounts does not wait for it; acceptance does.
   post as is chosen in the channel's settings after connecting; only the
   long-lived user token is stored, and the page token is fetched at
   publish time.
-- **Instagram (Business)** — the same Meta app plus `instagram_basic` and
+- **Instagram (Business)** — the same Meta app, requesting `pages_show_list`
+  (to list which page's linked account to publish as), `instagram_basic` and
   `instagram_content_publish`; the Instagram account must be linked to a
   Facebook Page. Set
   `INSTAGRAM_CLIENT_ID`/`INSTAGRAM_CLIENT_SECRET`.

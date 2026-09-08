@@ -537,6 +537,16 @@
     "reddit": {
       "kind": "Пост",
       "comment": "Комментарий"
+    },
+    "facebook-page": {
+      "kind": "Запись на странице"
+    },
+    "instagram": {
+      "kind": "Пост"
+    },
+    "meta-threads": {
+      "kind": "Тред",
+      "reply": "Ответ"
     }
   },
   "integrations": {

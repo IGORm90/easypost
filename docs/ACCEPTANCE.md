@@ -79,25 +79,32 @@ to be thorough, by hitting `DELETE /api/integrations/{id}` directly as the
 
 Needs real credentials — see [README.md](../README.md)'s "Obtaining
 credentials" section for how to get each one (a bot token for Telegram, an
-app password for Bluesky, an OAuth app registration for Reddit).
+app password for Bluesky, an OAuth app registration for Reddit, a Meta app
+for Facebook Page/Instagram/Threads).
 
-For **each** of Telegram, Bluesky and Reddit:
+For **each** of Telegram, Bluesky, Reddit and Facebook Page:
 
 1. Settings → Channels → click "Connect" on that network's own card in the
    "Available networks" catalogue — its credential form opens directly, with
    no intermediate network picker (Task 37: the card the operator already
    clicked is the only choice being made; clicking it commits to that
-   network). Reddit is `auth_type: 'oauth'` with no `auth_fields`, so this is
-   the first shipped provider to actually take the fast-connect branch: no
-   modal at all, a new tab opens straight to Reddit's own authorize page.
+   network). Reddit and Facebook Page are both `auth_type: 'oauth'` with no
+   `auth_fields`, so both take the fast-connect branch: no modal at all, a
+   new tab opens straight to the network's own authorize page. For Facebook
+   Page, after the OAuth callback, open the new channel's settings and pick
+   a page from the list `SupportsOptions::options('pages')` returns — this
+   is the one manual step the connect flow itself does not do, on purpose
+   (`FacebookPageProvider`'s docblock: the page token is resolved fresh per
+   publish, never stored).
 2. Compose a short post targeting only that channel, publish immediately
    (or schedule ~1 minute out). For Reddit, `PostSettingsFields.vue` will ask
    for a subreddit and a title before publish is allowed — pick a throwaway
    subreddit you moderate, not a real community, since this is a real post.
 3. Confirm the message actually appears on the real channel (open the
-   Telegram channel, the Bluesky profile, or the Reddit submission directly).
+   Telegram channel, the Bluesky profile, the Reddit submission, or the
+   Facebook Page directly).
 
-Expected: all three succeed independently. Do this one provider at a time —
+Expected: all four succeed independently. Do this one provider at a time —
 a failure on one should not be read as a failure of the others.
 
 For Reddit specifically, also do one thing none of the other gates
@@ -108,6 +115,21 @@ only — no automated gate has ever sent it a real file, and CI provisions no
 MinIO to even try). Then compose a second, threaded post (2+ segments) to
 confirm the submission-plus-comments chain actually nests as replies on
 Reddit, not as three separate top-level posts.
+
+**Instagram and Threads cannot be accepted on this stack at all — do not
+attempt them here.** Both publish by handing the Graph API a URL
+(`MediaDto::$publicUrl`) it fetches for itself; neither ever receives an
+uploaded file. The local default (`AWS_URL=http://localhost:9000/media`,
+MinIO) is not reachable from Meta's servers, so a container never leaves
+`IN_PROGRESS`/never gets created at all. These two channels are unit-tested
+only (`tests/Unit/Social/InstagramProviderTest.php`,
+`tests/Unit/Social/ThreadsProviderTest.php`, both `Http::fake()`-only) and
+are acceptable **only on a deployment whose `AWS_URL` is publicly
+routable** — the same caveat this document already carries for MinIO in
+general, sharpened here because for these two networks it is not a gap in
+coverage, it is the entire publish path. Publishing to a Facebook Page,
+Instagram account or Threads account the operator does not own also
+requires Meta app review, same as README's note for X/LinkedIn.
 
 ### 4. One post, three channels, per-channel variation, threaded, at a scheduled time
 
@@ -390,3 +412,21 @@ pass should exercise them by hand.
   it. Reddit video posts are not supported at all (`maxVideos: 0` in
   `RedditProvider::capabilities()`) — Reddit's video pipeline needs a
   separate, more involved upload API this change does not implement.
+- **The three Meta providers' whole publish path is `Http::fake()`-only,
+  and for two of them that is not a gap — it is the ceiling.**
+  `FacebookPageProvider`, `InstagramProvider` and `ThreadsProvider` are
+  each covered end to end in their own `tests/Unit/Social/*ProviderTest.php`
+  (OAuth exchange, the long-lived-token dance, error mapping, the
+  container-poll-publish sequence, Threads' reply chain and partial
+  failure), but no automated gate has ever sent a byte to a real Meta
+  endpoint. Facebook Page is a real upload
+  (`uploadHttp()`/`ReadsMediaFiles`, same shape as every other provider's
+  media path) and can be accepted the normal way once §3's Facebook Page
+  check has run. Instagram and Threads are different in kind, not just
+  untested: both build every post from `MediaDto::$publicUrl`, a URL Meta
+  fetches for itself, and never receive an upload at all — see §3's note
+  above. On this stack's local MinIO (`AWS_URL=http://localhost:9000/media`)
+  that URL is not reachable from the outside, so these two channels cannot
+  be accepted here regardless of how thorough the walkthrough is; a real
+  acceptance pass for them needs a deployment with a publicly routable
+  `AWS_URL`, full stop.

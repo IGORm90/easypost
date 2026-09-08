@@ -2,10 +2,16 @@ import type { Component } from 'vue';
 import TelegramPreview from './TelegramPreview.vue';
 import BlueskyPreview from './BlueskyPreview.vue';
 import RedditPreview from './RedditPreview.vue';
+import FacebookPagePreview from './FacebookPagePreview.vue';
+import InstagramPreview from './InstagramPreview.vue';
+import MetaThreadsPreview from './MetaThreadsPreview.vue';
 import GenericPreview from './GenericPreview.vue';
 import TelegramIcon from './icons/TelegramIcon.vue';
 import BlueskyIcon from './icons/BlueskyIcon.vue';
 import RedditIcon from './icons/RedditIcon.vue';
+import FacebookPageIcon from './icons/FacebookPageIcon.vue';
+import InstagramIcon from './icons/InstagramIcon.vue';
+import MetaThreadsIcon from './icons/MetaThreadsIcon.vue';
 import GenericIcon from './icons/GenericIcon.vue';
 
 /**
@@ -39,6 +45,9 @@ export const previewRegistry: Record<string, Component> = {
     telegram: TelegramPreview,
     bluesky: BlueskyPreview,
     reddit: RedditPreview,
+    'facebook-page': FacebookPagePreview,
+    instagram: InstagramPreview,
+    'meta-threads': MetaThreadsPreview,
 };
 
 /** Resolves `identifier` to its preview component, defaulting to `GenericPreview` for anything not in the registry. */
@@ -60,6 +69,9 @@ export const iconRegistry: Record<string, Component> = {
     telegram: TelegramIcon,
     bluesky: BlueskyIcon,
     reddit: RedditIcon,
+    'facebook-page': FacebookPageIcon,
+    instagram: InstagramIcon,
+    'meta-threads': MetaThreadsIcon,
 };
 
 /** Resolves `identifier` to its brand mark, defaulting to `GenericIcon` for anything not in the registry. */

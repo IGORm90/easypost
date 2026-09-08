@@ -1,8 +1,11 @@
 <?php
 
 use App\Social\Providers\BlueskyProvider;
+use App\Social\Providers\FacebookPageProvider;
+use App\Social\Providers\InstagramProvider;
 use App\Social\Providers\RedditProvider;
 use App\Social\Providers\TelegramProvider;
+use App\Social\Providers\ThreadsProvider;
 
 return [
 
@@ -31,6 +34,9 @@ return [
         'telegram' => TelegramProvider::class,
         'bluesky' => BlueskyProvider::class,
         'reddit' => RedditProvider::class,
+        'facebook-page' => FacebookPageProvider::class,
+        'instagram' => InstagramProvider::class,
+        'meta-threads' => ThreadsProvider::class,
     ],
 
 ];

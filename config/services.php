@@ -105,6 +105,21 @@ return [
         'client_secret' => env('META_THREADS_CLIENT_SECRET'),
     ],
 
+    /*
+     * Tuning for InstagramProvider/ThreadsProvider's container-poll loop
+     * (App\Social\Providers\PublishesViaMetaContainers::awaitContainer()),
+     * not per-network credentials. Left at Laravel config defaults here
+     * rather than env vars — the production values are chosen to fit
+     * comfortably inside the 90s Horizon publish timeout (see
+     * BoundsHttpTimeouts) even for a slow-transcoding video, and only a
+     * test needs to shrink them (to avoid a real 27s sleep asserting the
+     * "never finishes" case).
+     */
+    'meta' => [
+        'container_poll_max_attempts' => 10,
+        'container_poll_delay_seconds' => 3,
+    ],
+
     'github' => [
         'client_id' => env('GITHUB_CLIENT_ID'),
         'client_secret' => env('GITHUB_CLIENT_SECRET'),

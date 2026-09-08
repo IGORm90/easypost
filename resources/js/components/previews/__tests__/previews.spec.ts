@@ -2,6 +2,9 @@ import { mount } from '@vue/test-utils';
 import TelegramPreview from '../TelegramPreview.vue';
 import BlueskyPreview from '../BlueskyPreview.vue';
 import RedditPreview from '../RedditPreview.vue';
+import FacebookPagePreview from '../FacebookPagePreview.vue';
+import InstagramPreview from '../InstagramPreview.vue';
+import MetaThreadsPreview from '../MetaThreadsPreview.vue';
 import GenericPreview from '../GenericPreview.vue';
 import PreviewPane from '../PreviewPane.vue';
 
@@ -9,6 +12,9 @@ const ALL = [
     ['telegram', TelegramPreview],
     ['bluesky', BlueskyPreview],
     ['reddit', RedditPreview],
+    ['facebook-page', FacebookPagePreview],
+    ['instagram', InstagramPreview],
+    ['meta-threads', MetaThreadsPreview],
     ['generic', GenericPreview],
 ] as const;
 
@@ -98,6 +104,24 @@ it('Reddit nests each comment under the previous segment (submission + comment c
     // which publishes chain[0] as a submission and everything after as a
     // reply comment, never as a second detached submission.
     expect(w.findAll('p').filter((p) => p.text() === 'Comment')).toHaveLength(2);
+});
+
+it('Threads nests each reply under the previous one (a true linked-list chain)', () => {
+    const w = mount(MetaThreadsPreview, {
+        props: {
+            channelName: '@brand',
+            channelPicture: null,
+            segments: [{ content: 'root post' }, { content: 'reply one' }, { content: 'reply two' }],
+        },
+    });
+
+    expect(w.text()).toContain('root post');
+    expect(w.text()).toContain('reply one');
+    expect(w.text()).toContain('reply two');
+    // One "Reply" label per non-root segment, mirroring ThreadsProvider::post(),
+    // which threads every later segment onto the release id the previous
+    // one just published, never as a second detached root.
+    expect(w.findAll('p').filter((p) => p.text() === 'Reply')).toHaveLength(2);
 });
 
 // --- PreviewPane resolves via the registry, never by branching ---------
