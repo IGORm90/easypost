@@ -12,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * The scheduled entry point for Task 32's safety net — see
- * routes/console.php for its `->everyTenMinutes()` registration. Runs
+ * routes/console.php for its `->everyFiveMinutes()` registration. Runs
  * with NO `OrganizationContext` set, exactly like `PublishPostJob` and
  * `RefreshIntegrationTokenJob` (see `AppServiceProvider`'s queue-event
  * listeners, which clear it around every job boundary) — this class
@@ -38,10 +38,12 @@ use Illuminate\Queue\SerializesModels;
  * slow first run still mid-`chunkById()` when the second tick's push is
  * picked up) — and `MissedPostsService::notifyFailed()`'s
  * `whereNull('notified_at')` read is not by itself atomic against that.
- * `$uniqueFor` below is deliberately shorter than the `everyTenMinutes()`
- * schedule interval, so a normal (fast) run's lock is always gone well
- * before the next tick's push, and a wedged run's lock cannot survive
- * past a small buffer before the FOLLOWING tick after that — the same
+ * `$uniqueFor` below is deliberately shorter than the `everyFiveMinutes()`
+ * schedule interval (post-review fix, P1: shrunk from 570s alongside the
+ * cadence change from ten minutes to five), so a normal (fast) run's
+ * lock is always gone well before the next tick's push, and a wedged
+ * run's lock cannot survive past a small buffer before the FOLLOWING
+ * tick after that — the same
  * "self-heals within roughly one more interval" trade-off
  * `RefreshIntegrationTokenJob`'s docblock documents for its own
  * uniqueFor()/schedule relationship.
@@ -63,10 +65,10 @@ final class ScanMissedPostsJob implements ShouldBeUnique, ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * Comfortably under the 600s `everyTenMinutes()` schedule interval —
+     * Comfortably under the 300s `everyFiveMinutes()` schedule interval —
      * see the class docblock.
      */
-    public int $uniqueFor = 570;
+    public int $uniqueFor = 270;
 
     public function uniqueId(): string
     {

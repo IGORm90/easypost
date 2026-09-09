@@ -8,7 +8,10 @@ use App\Social\Contracts\SupportsRefresh;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\ProviderRegistry;
 use Carbon\CarbonInterface;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Owns the "keep OAuth tokens alive" half of Task 16: which integrations
@@ -39,8 +42,9 @@ class TokenRefreshService
 
     /**
      * Every non-disabled, non-trashed integration whose token expires at
-     * or before $asOf + 2h, restricted to providers that implement
-     * SupportsRefresh. Deliberately excludes:
+     * or before $asOf + config('publishing.token_refresh_window_days'),
+     * restricted to providers that implement SupportsRefresh.
+     * Deliberately excludes:
      *  - disabled integrations (a broken channel already flagged
      *    refresh_needed/disabled must not be retried here — the user has
      *    to reconnect it; see IntegrationBrokenNotification);
@@ -67,7 +71,7 @@ class TokenRefreshService
         return Integration::withoutGlobalScope('organization')
             ->where('disabled', false)
             ->whereNotNull('token_expires_at')
-            ->where('token_expires_at', '<=', $asOf->clone()->addHours(2))
+            ->where('token_expires_at', '<=', $asOf->clone()->addDays((int) config('publishing.token_refresh_window_days')))
             ->whereIn('provider_identifier', $refreshableIdentifiers)
             ->get();
     }
@@ -97,8 +101,72 @@ class TokenRefreshService
      * marking a healthy channel broken over one is the exact failure
      * mode Task 16 calls out as customer-visible. The caller
      * (RefreshIntegrationTokenJob) decides the retry policy for those.
+     *
+     * QUEUE.md Task 8: wrapped in a per-integration Cache::lock, the same
+     * primitive MissedPostsService and OAuthStateService::consume() already
+     * use elsewhere in this codebase. This is a real correctness fix, not
+     * defensive belt-and-braces: several providers rotate single-use
+     * refresh tokens, so two genuinely concurrent refreshes for the SAME
+     * integration mean the second one presents an already-consumed
+     * refresh token and the provider revokes the whole grant — permanently
+     * disconnecting the channel. RefreshIntegrationTokenJob's own
+     * ShouldBeUnique lock already stops a second dispatch from ever
+     * reaching the queue in the common case, but this method is called
+     * directly in tests and could in principle be reached by any future
+     * caller that bypasses the job — the lock here makes the guarantee
+     * belong to the operation itself, not to one caller's dispatch path.
+     *
+     * block(5, ...), not a bare get(): a refresh that's already in flight
+     * for this integration should make a second, overlapping call wait
+     * briefly and then skip — not fail loudly. 5s comfortably covers a
+     * real provider round-trip without stalling the caller for long. A
+     * failed block() means the first call is still running (or hung);
+     * either way there is nothing for this call to do, so a
+     * LockTimeoutException is caught and treated as "someone else is
+     * already refreshing this." Missing this particular pass is harmless:
+     * dueForRefresh()'s multi-day window means the integration is picked
+     * up again on the very next scheduled sweep.
+     *
+     * Post-review fix (round 4): $integration is re-read with fresh()
+     * ONLY AFTER the lock is actually held, never before. The lock alone
+     * does not protect against staleness — it only serializes WHEN two
+     * calls run, not WHICH data they act on. A caller can queue up
+     * waiting on block() while holding an $integration instance loaded
+     * before another call rotated this integration's refresh_token and
+     * committed; if that stale instance were used once the wait finally
+     * ends, several providers (see BlueskyProvider::refresh()) would
+     * present an already-consumed, single-use refresh token and get the
+     * whole grant revoked — precisely the harm this lock exists to
+     * prevent. Re-reading here, inside the acquired lock, is also what
+     * makes markBroken()'s own anti-spam guard correct under contention:
+     * that guard reads $integration->disabled off whatever instance it's
+     * handed, so a stale copy would see disabled=false even after another
+     * call already flipped it, and would re-notify the owner. fresh()
+     * uses newQueryWithoutScopes() (see Integration's BelongsToOrganization),
+     * so this works with no OrganizationContext set exactly like the
+     * scheduler's own call path; it still respects SoftDeletes, so a row
+     * deleted while we waited comes back null and is treated as nothing
+     * left to do rather than an exception.
      */
     public function refresh(Integration $integration): void
+    {
+        try {
+            Cache::lock("token-refresh:{$integration->id}", 30)
+                ->block(5, function () use ($integration): void {
+                    $current = $integration->fresh();
+
+                    if ($current === null) {
+                        return;
+                    }
+
+                    $this->refreshLocked($current);
+                });
+        } catch (LockTimeoutException) {
+            return;
+        }
+    }
+
+    private function refreshLocked(Integration $integration): void
     {
         $provider = $this->providers->get($integration->provider_identifier);
 
@@ -120,11 +188,13 @@ class TokenRefreshService
             return;
         }
 
-        $integration->token = $auth->token;
-        $integration->refresh_token = $auth->refreshToken ?? $integration->refresh_token;
-        $integration->token_expires_at = $auth->expiresAt;
-        $integration->refresh_needed = false;
-        $integration->save();
+        DB::transaction(function () use ($integration, $auth): void {
+            $integration->token = $auth->token;
+            $integration->refresh_token = $auth->refreshToken ?? $integration->refresh_token;
+            $integration->token_expires_at = $auth->expiresAt;
+            $integration->refresh_needed = false;
+            $integration->save();
+        });
     }
 
     /**

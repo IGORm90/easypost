@@ -2,6 +2,7 @@
 
 use App\Enums\PostState;
 use App\Enums\RepeatUnit;
+use App\Jobs\PublishPostJob;
 use App\Models\Integration;
 use App\Models\Organization;
 use App\Models\Post;
@@ -83,7 +84,7 @@ it('fully replaces the chains on PUT', function () {
         ->and($posts[1]->parent_post_id)->toBe($posts[0]->id);
 });
 
-it('moves a draft to QUEUE on PUT when type becomes schedule', function () {
+it('moves a draft to SCHEDULED on PUT when type becomes schedule', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
@@ -98,11 +99,15 @@ it('moves a draft to QUEUE on PUT when type becomes schedule', function () {
     ]);
 
     $response->assertOk();
-    expect($group->fresh()->state)->toBe(PostState::QUEUE);
-    expect(Post::sole()->state)->toBe(PostState::QUEUE);
+    // Durable-scheduling rewrite: type=schedule lands on SCHEDULED, not
+    // QUEUE — nothing is dispatched until DueDispatchService's per-minute
+    // claim actually picks it up. See App\Enums\PostState's docblock.
+    expect($group->fresh()->state)->toBe(PostState::SCHEDULED);
+    expect(Post::sole()->state)->toBe(PostState::SCHEDULED);
+    Queue::assertNotPushed(PublishPostJob::class);
 });
 
-it('refuses to move an already-queued group back to draft', function () {
+it('refuses to move an already-scheduled group back to draft', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
@@ -119,7 +124,7 @@ it('refuses to move an already-queued group back to draft', function () {
     ]);
 
     $response->assertStatus(422);
-    expect($group->fresh()->state)->toBe(PostState::QUEUE);
+    expect($group->fresh()->state)->toBe(PostState::SCHEDULED);
 });
 
 it("forbids PUT scheduling into another organization's integration", function () {
@@ -172,15 +177,19 @@ it('refuses to PUT a group that already has a released segment', function () {
     expect(Post::sole()->release_id)->toBe('remote-1');
 });
 
-it('allows retrying an ERROR group by moving it back to QUEUE on PUT', function () {
+it('allows re-scheduling an ERROR group by moving it back to SCHEDULED on PUT', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
     $group = createDraftGroup($org, $integration, 'failed attempt');
     // No release_id anywhere: the group genuinely never published, it
     // just failed before reaching the network — the exact case
-    // ERROR->QUEUE (PostStateMachine's declared retry transition) exists
-    // for.
+    // ERROR->SCHEDULED (PostStateMachine's declared retry transition)
+    // exists for. This is the generic PUT edit path, not
+    // POST .../retry (PostGroupService::retry()), which claims straight
+    // into QUEUE and dispatches immediately — see
+    // tests/Feature/Publishing/RescheduleTest.php's `retry()` coverage
+    // for that QUEUE-and-immediate-dispatch case.
     $group->update(['state' => PostState::ERROR, 'error' => 'provider timed out']);
     Post::query()->where('post_group_id', $group->id)->update(['state' => PostState::ERROR]);
 
@@ -191,8 +200,8 @@ it('allows retrying an ERROR group by moving it back to QUEUE on PUT', function 
     ]);
 
     $response->assertOk();
-    expect($group->fresh()->state)->toBe(PostState::QUEUE);
-    expect(Post::sole()->state)->toBe(PostState::QUEUE);
+    expect($group->fresh()->state)->toBe(PostState::SCHEDULED);
+    expect(Post::sole()->state)->toBe(PostState::SCHEDULED);
     expect(Post::sole()->content)->toBe('retry');
 });
 

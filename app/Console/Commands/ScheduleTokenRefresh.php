@@ -27,7 +27,7 @@ class ScheduleTokenRefresh extends Command
 {
     protected $signature = 'integrations:refresh-tokens';
 
-    protected $description = 'Dispatch a refresh job for every integration whose token expires within 2 hours.';
+    protected $description = 'Dispatch a refresh job for every integration whose token expires within the configured proactive window (see config(\'publishing.token_refresh_window_days\')).';
 
     public function handle(TokenRefreshService $service): int
     {

@@ -38,27 +38,48 @@ use App\Services\Posts\PostStateMachine;
 it('allows queue to published', function () {
     expect(PostStateMachine::can(PostState::QUEUE, PostState::PUBLISHED))->toBeTrue();
 });
-it('allows draft to queue', function () {
-    expect(PostStateMachine::can(PostState::DRAFT, PostState::QUEUE))->toBeTrue();
+it('allows draft to scheduled', function () {
+    expect(PostStateMachine::can(PostState::DRAFT, PostState::SCHEDULED))->toBeTrue();
+});
+it('allows scheduled to queue (claimed by the dispatcher)', function () {
+    expect(PostStateMachine::can(PostState::SCHEDULED, PostState::QUEUE))->toBeTrue();
+});
+it('allows scheduled to scheduled (re-saving a reschedule)', function () {
+    expect(PostStateMachine::can(PostState::SCHEDULED, PostState::SCHEDULED))->toBeTrue();
+});
+it('allows queue to scheduled (un-claim on a forward reschedule)', function () {
+    expect(PostStateMachine::can(PostState::QUEUE, PostState::SCHEDULED))->toBeTrue();
 });
 it('allows queue to error', function () {
     expect(PostStateMachine::can(PostState::QUEUE, PostState::ERROR))->toBeTrue();
 });
-it('allows error to queue as a retry', function () {
-    expect(PostStateMachine::can(PostState::ERROR, PostState::QUEUE))->toBeTrue();
+it('allows error to scheduled as a retry', function () {
+    expect(PostStateMachine::can(PostState::ERROR, PostState::SCHEDULED))->toBeTrue();
 });
 it('allows draft to draft', function () {
     expect(PostStateMachine::can(PostState::DRAFT, PostState::DRAFT))->toBeTrue();
 });
 
+it('forbids draft to queue directly, skipping scheduled', function () {
+    expect(PostStateMachine::can(PostState::DRAFT, PostState::QUEUE))->toBeFalse();
+});
 it('forbids draft to published, skipping the queue', function () {
     expect(PostStateMachine::can(PostState::DRAFT, PostState::PUBLISHED))->toBeFalse();
 });
 it('forbids draft to error', function () {
     expect(PostStateMachine::can(PostState::DRAFT, PostState::ERROR))->toBeFalse();
 });
+it('forbids scheduled to draft', function () {
+    expect(PostStateMachine::can(PostState::SCHEDULED, PostState::DRAFT))->toBeFalse();
+});
+it('forbids scheduled to published, skipping the queue', function () {
+    expect(PostStateMachine::can(PostState::SCHEDULED, PostState::PUBLISHED))->toBeFalse();
+});
 it('forbids error to draft', function () {
     expect(PostStateMachine::can(PostState::ERROR, PostState::DRAFT))->toBeFalse();
+});
+it('forbids error to queue directly, skipping scheduled', function () {
+    expect(PostStateMachine::can(PostState::ERROR, PostState::QUEUE))->toBeFalse();
 });
 it('forbids error to published', function () {
     expect(PostStateMachine::can(PostState::ERROR, PostState::PUBLISHED))->toBeFalse();

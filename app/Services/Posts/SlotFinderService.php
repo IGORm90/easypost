@@ -109,11 +109,19 @@ class SlotFinderService
      * segment on the SAME integration at the exact candidate instant
      * blocks it, but a post scheduled to a different channel at the same
      * moment does not — posting to two different networks at once is the
-     * normal case (a cross-posted campaign), not a conflict. Only QUEUE/
-     * PUBLISHED groups count: a DRAFT's `publish_date` is optional,
-     * unvalidated placeholder data (see PostGroupService's docblock), not
-     * a real commitment to that instant, so it must not block a real
-     * scheduling decision.
+     * normal case (a cross-posted campaign), not a conflict. Only
+     * SCHEDULED/QUEUE/PUBLISHED groups count: a DRAFT's `publish_date` is
+     * optional, unvalidated placeholder data (see PostGroupService's
+     * docblock), not a real commitment to that instant, so it must not
+     * block a real scheduling decision.
+     *
+     * `SCHEDULED` (durable-scheduling rewrite): a post durably waiting
+     * for its due date sits here for the whole time between scheduling
+     * and publish — `QUEUE` now means "claimed, a job exists right now",
+     * a window normally lasting seconds. Dropping `SCHEDULED` from this
+     * list would mean almost every real upcoming post no longer counts
+     * as occupying its slot at all, defeating this method's entire
+     * purpose.
      */
     private function isOccupied(Integration $integration, Carbon $candidate): bool
     {
@@ -121,7 +129,7 @@ class SlotFinderService
             ->where('integration_id', $integration->id)
             ->whereHas('group', function ($query) use ($candidate): void {
                 $query->where('publish_date', $candidate)
-                    ->whereIn('state', [PostState::QUEUE, PostState::PUBLISHED]);
+                    ->whereIn('state', [PostState::SCHEDULED, PostState::QUEUE, PostState::PUBLISHED]);
             })
             ->exists();
     }

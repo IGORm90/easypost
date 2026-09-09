@@ -15,9 +15,12 @@ use Throwable;
 
 /**
  * Publishes one `PostGroup` to every channel it was scheduled to.
- * Dispatched by `PostGroupService` with `->delay($group->publish_date)`
- * whenever a group enters `QUEUE` (create, update, or a date change) —
- * see that class.
+ * Dispatched, ID-only, by three call sites: `DueDispatchService`'s
+ * per-minute claim (delayed to the row's own `publish_date`, bounded by
+ * `dispatch_lookahead_seconds`), `PostGroupService::claimAndDispatch()`
+ * (immediate — `type=now`/retry), and `MissedPostsService`'s recovery
+ * redispatch (immediate, with a freshly-bumped `queue_version` — see
+ * `uniqueId()` below).
  *
  * Deliberately thin: carries only the group's id (a plain string, not
  * the model — `SerializesModels` would rehydrate it via
@@ -40,15 +43,37 @@ use Throwable;
  * an earlier revision dropped `final` to accommodate a Mockery partial
  * mock; that was unnecessary and is reverted.
  *
- * ShouldBeUnique, keyed on the group id ($uniqueId()): the primary
- * defence against two instances of this job running the SAME group
- * concurrently — stronger than relying solely on `PublishService`'s own
- * per-channel row locks (see that class's docblock, idempotency point
- * 4), the same reasoning `RefreshIntegrationTokenJob` documents for
- * `Integration`. $tries/$backoff/$uniqueFor below are the literal values
- * this task's brief specifies (reproduced verbatim, not derived, unlike
+ * ShouldBeUnique, keyed on the group id AND `queueVersion` ($uniqueId()):
+ * the primary defence against two instances of this job running the SAME
+ * generation of a group concurrently — stronger than relying solely on
+ * `PublishService`'s own per-channel row locks (see that class's
+ * docblock, idempotency point 4), the same reasoning
+ * `RefreshIntegrationTokenJob` documents for `Integration`.
+ * $tries/$backoff/$uniqueFor below are the literal values this task's
+ * brief specifies (reproduced verbatim, not derived, unlike
  * `RefreshIntegrationTokenJob`'s schedule-derived numbers) — 4 attempts,
  * gaps of 1m/5m/15m between them, and a 3600s (1h) unique-lock TTL.
+ *
+ * Post-review fix (P1, durable-scheduling rewrite): `uniqueId()` used to
+ * be `postGroupId` alone. That meant a redispatch could NEVER reach the
+ * queue while any lock for that group — however stale — was still held,
+ * which is exactly the failure mode `MissedPostsService`'s recovery path
+ * exists to escape: after a total loss of the QUEUE Redis instance, this
+ * job itself is gone, but its `ShouldBeUnique` lock lives in `Cache`,
+ * typically on a SEPARATE Redis instance kept alive on purpose (see
+ * `docs/DEPLOYMENT.md`'s queue/cache split) — so the lock survives an
+ * outage the job does not, and a version-blind key would force recovery
+ * to wait out that lock's full TTL before it could act at all.
+ * Incorporating `queueVersion` means recovery's redispatch (which bumps
+ * the version first — see `MissedPostsService::dispatchRedispatch()`)
+ * gets its OWN lock key, independent of whatever an old generation's key
+ * is doing — safe to dispatch immediately, regardless of that old lock's
+ * fate, because a stale-version job that DOES still fire simply no-ops
+ * on `PublishService::lockGroupIfQueued()`'s version check, and
+ * `publishChannel()`'s own per-row `release_id` check is what actually
+ * prevents a duplicate publish either way (see that class's docblock,
+ * idempotency accounting) — `ShouldBeUnique` here is a quality-of-life
+ * dedup, never the safety-critical layer.
  *
  * Retry semantics under this project's queue driver (QUEUE_CONNECTION=redis):
  * `release()` DOES consume one of $tries — `LuaScripts::pop()` increments
@@ -140,9 +165,16 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
         $this->queue = 'publish';
     }
 
+    /**
+     * `postGroupId:queueVersion`, not `postGroupId` alone — see the class
+     * docblock's "Post-review fix" note. A colon separator is safe here:
+     * `postGroupId` is always a ulid (`[0-9A-Za-z]{26}`, no colons), so
+     * there is no ambiguity between e.g. group `X` version `12` and group
+     * `X:1` version `2`.
+     */
     public function uniqueId(): string
     {
-        return $this->postGroupId;
+        return "{$this->postGroupId}:{$this->queueVersion}";
     }
 
     /**

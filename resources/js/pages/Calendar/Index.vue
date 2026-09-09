@@ -45,7 +45,7 @@ const view = ref<CalendarView>('month');
  * URL — see usePostsStore.fetchList().
  */
 const MODES: DisplayMode[] = ['grid', 'list'];
-const STATES: PostStateFilter[] = ['all', 'DRAFT', 'QUEUE', 'PUBLISHED', 'ERROR'];
+const STATES: PostStateFilter[] = ['all', 'DRAFT', 'SCHEDULED', 'QUEUE', 'PUBLISHED', 'ERROR'];
 
 const mode = ref<DisplayMode>(MODES.includes(route.query.mode as DisplayMode) ? (route.query.mode as DisplayMode) : 'grid');
 const stateFilter = ref<PostStateFilter>(

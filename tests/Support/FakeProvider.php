@@ -62,6 +62,15 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     /** @var list<string> integration ids refresh() was called for, in call order. */
     private array $refreshedIntegrationIds = [];
 
+    /**
+     * @var list<?string> the `refresh_token` value actually carried at
+     *                    the moment refresh() was called, in call order. Exists so a
+     *                    test can prove WHICH token a call presented — plain id
+     *                    tracking above can't distinguish a caller with the current row
+     *                    from one still holding a stale, already-rotated instance.
+     */
+    private array $refreshedTokens = [];
+
     /** @var array{succeedCount: int, message: string}|null */
     private ?array $nextPartialFailure = null;
 
@@ -212,6 +221,7 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     public function refresh(Integration $i): AuthResultDto
     {
         $this->refreshedIntegrationIds[] = $i->id;
+        $this->refreshedTokens[] = $i->refresh_token;
 
         if ($this->nextRefreshException !== null) {
             $exception = $this->nextRefreshException;
@@ -232,6 +242,12 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
     public function refreshedIntegrationIds(): array
     {
         return $this->refreshedIntegrationIds;
+    }
+
+    /** @return list<?string> */
+    public function refreshedTokens(): array
+    {
+        return $this->refreshedTokens;
     }
 
     /**
@@ -526,6 +542,7 @@ class FakeProvider implements SocialProviderInterface, SupportsOptions, Supports
         $this->publishedChains = [];
         $this->publishedSegments = [];
         $this->refreshedIntegrationIds = [];
+        $this->refreshedTokens = [];
 
         return $this;
     }

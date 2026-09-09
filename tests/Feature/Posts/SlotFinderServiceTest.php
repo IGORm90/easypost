@@ -59,6 +59,34 @@ it('returns the next free slot skipping occupied ones', function () {
     expect($slot->eq(Carbon::parse('2026-08-10 14:00:00', 'UTC')))->toBeTrue();
 });
 
+it('treats a SCHEDULED group as occupying its slot, not only QUEUE', function () {
+    // Durable-scheduling rewrite: almost every real upcoming post sits
+    // at SCHEDULED, not QUEUE (which now means "claimed right now" — a
+    // window normally lasting seconds) — see isOccupied()'s docblock.
+    $org = Organization::factory()->create();
+    OrganizationContext::set($org);
+
+    Carbon::setTestNow(Carbon::parse('2026-08-10 08:00:00', 'UTC'));
+
+    $integration = Integration::factory()->for($org)->create();
+    IntegrationTimeSlot::factory()->for($integration)->create(['minutes_from_week_start' => 10 * 60]);
+    IntegrationTimeSlot::factory()->for($integration)->create(['minutes_from_week_start' => 14 * 60]);
+
+    $group = PostGroup::factory()->for($org)->create([
+        'state' => PostState::SCHEDULED,
+        'publish_date' => Carbon::parse('2026-08-10 10:00:00', 'UTC'),
+    ]);
+    Post::factory()->for($group, 'group')->create([
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'state' => PostState::SCHEDULED,
+    ]);
+
+    $slot = app(SlotFinderService::class)->findNextFreeSlot($integration->id);
+
+    expect($slot->eq(Carbon::parse('2026-08-10 14:00:00', 'UTC')))->toBeTrue();
+});
+
 it('falls back to now plus one hour when no slots are configured', function () {
     $org = Organization::factory()->create();
     OrganizationContext::set($org);

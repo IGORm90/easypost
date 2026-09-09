@@ -60,25 +60,41 @@ it('leaves the model untouched when a transition is rejected', function () {
 it('persists an allowed transition on Post', function () {
     $post = makePost(PostState::DRAFT);
 
+    app(PostStateMachine::class)->transition($post, PostState::SCHEDULED);
+
+    expect($post->fresh()->state)->toBe(PostState::SCHEDULED);
+});
+
+it('persists a retry transition on Post from ERROR back to SCHEDULED', function () {
+    $post = makePost(PostState::ERROR);
+
+    app(PostStateMachine::class)->transition($post, PostState::SCHEDULED);
+
+    expect($post->fresh()->state)->toBe(PostState::SCHEDULED);
+});
+
+it('persists the claim transition on Post from SCHEDULED to QUEUE', function () {
+    $post = makePost(PostState::SCHEDULED);
+
     app(PostStateMachine::class)->transition($post, PostState::QUEUE);
 
     expect($post->fresh()->state)->toBe(PostState::QUEUE);
 });
 
-it('persists a retry transition on Post from ERROR back to QUEUE', function () {
-    $post = makePost(PostState::ERROR);
+it('persists the un-claim transition on Post from QUEUE back to SCHEDULED', function () {
+    $post = makePost(PostState::QUEUE);
 
-    app(PostStateMachine::class)->transition($post, PostState::QUEUE);
+    app(PostStateMachine::class)->transition($post, PostState::SCHEDULED);
 
-    expect($post->fresh()->state)->toBe(PostState::QUEUE);
+    expect($post->fresh()->state)->toBe(PostState::SCHEDULED);
 });
 
 it('operates on PostGroup exactly like Post, sharing the same table', function () {
     $group = PostGroup::factory()->create(['state' => PostState::DRAFT]);
 
-    app(PostStateMachine::class)->transition($group, PostState::QUEUE);
+    app(PostStateMachine::class)->transition($group, PostState::SCHEDULED);
 
-    expect($group->fresh()->state)->toBe(PostState::QUEUE);
+    expect($group->fresh()->state)->toBe(PostState::SCHEDULED);
 });
 
 it('forbids PostGroup published to queue, exactly like Post', function () {

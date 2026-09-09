@@ -1,5 +1,6 @@
 <?php
 
+use App\Console\Commands\DispatchDuePostsCommand;
 use App\Console\Commands\ScheduleTokenRefresh;
 use App\Jobs\ScanMissedPostsJob;
 use App\Jobs\SendDigestEmailJob;
@@ -39,12 +40,52 @@ Schedule::command(ScheduleTokenRefresh::class)
     ->onOneServer();
 
 /*
+ * Durable-scheduling rewrite: the claim step that replaces dispatching a
+ * delayed job at save time. `PostGroupService` no longer puts anything
+ * on the queue when a post is scheduled — it only writes `SCHEDULED` +
+ * `publish_date` to Postgres, which is now the sole durable record of
+ * the schedule. This command claims every `SCHEDULED` row due within
+ * `publishing.dispatch_lookahead_seconds` and dispatches a real
+ * `PublishPostJob` for each — see `DueDispatchService`.
+ *
+ * `Schedule::command()`, not `Schedule::job()`: see `ScanMissedPostsJob`'s
+ * registration below for why that distinction matters. Here it matters
+ * MORE — the claim loop below can run several batches
+ * (`dispatch_max_batches`), and `withoutOverlapping()` must cover the
+ * whole loop, not just a single push.
+ *
+ * `onOneServer()`: same reasoning as `ScheduleTokenRefresh` — "only one
+ * claim pass per minute, however many app servers exist" by
+ * construction. Note this is a second, cheap layer, not the thing that
+ * makes concurrent claims safe: `DueDispatchService`'s
+ * `FOR UPDATE SKIP LOCKED` claim query is safe even without it (see
+ * `tests/Feature/Publishing/DispatchDuePostsTest.php`'s concurrency
+ * test), the same relationship `ScanMissedPostsJob`'s own `ShouldBeUnique`
+ * has to ITS `withoutOverlapping()`/`onOneServer()`.
+ */
+Schedule::command(DispatchDuePostsCommand::class)
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+/*
  * Task 32: the missed-posts safety net — see MissedPostsService's
  * docblock for the two holes this recovers from (a crash/outage between
  * commit and dispatch, and any ShouldBeUnique swallow that isn't one of
  * PostGroupService's already-hardened reschedule paths). Both leave a
  * group sitting at QUEUE with no live job working it, which is exactly
  * what this scan finds.
+ *
+ * `->everyFiveMinutes()`, not `->everyTenMinutes()` — a stuck row is
+ * never more than one scan tick from being noticed, matching
+ * `config('publishing.stuck_after_seconds')`'s own 300s default (see
+ * that key's docblock). This IS the whole recovery-time bound now:
+ * `MissedPostsService::redispatchIfOrphaned()` acts unconditionally the
+ * moment it sees a stuck row — no separate probe/legitimacy step gates
+ * whether to redispatch (see that class's docblock for why). So the
+ * worst case after a total loss of the queue's Redis instance is
+ * genuinely ≤5 minutes: at most one `stuck_after_seconds` window plus
+ * the time until the next scan tick, never a duplicate.
  *
  * Schedule::job(), not Schedule::command(): ScanMissedPostsJob is a
  * plain ShouldQueue job (matching PublishPostJob's own shape), not an
@@ -59,7 +100,7 @@ Schedule::command(ScheduleTokenRefresh::class)
  * `Schedule::job()` registers a `CallbackEvent` whose callback only
  * PUSHES the job onto the queue — the mutex (and onOneServer()'s
  * cross-server lock) is released the instant that push returns, not
- * when ScanMissedPostsJob::handle() finishes. So two scheduler ticks 10
+ * when ScanMissedPostsJob::handle() finishes. So two scheduler ticks 5
  * minutes apart are still prevented from double-pushing, but nothing
  * here stops a genuinely slow scan from still being mid-run on a worker
  * when the NEXT push lands, or from two independently-pushed executions
@@ -72,7 +113,7 @@ Schedule::command(ScheduleTokenRefresh::class)
  * thing that makes concurrent scans safe.
  */
 Schedule::job(new ScanMissedPostsJob)
-    ->everyTenMinutes()
+    ->everyFiveMinutes()
     ->withoutOverlapping()
     ->onOneServer();
 

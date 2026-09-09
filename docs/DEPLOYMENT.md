@@ -15,7 +15,13 @@ Nine long-running services plus one one-shot init container
   `PublishPostJob` and every other queued job (welcome emails, reconnect
   notices, etc.).
 - **scheduler** — runs `php artisan schedule:run` every 60 seconds (token
-  refresh sweeps, digest emails).
+  refresh sweeps, digest emails, and — durable-scheduling rewrite —
+  `posts:dispatch-due`, the per-minute claim that turns a `SCHEDULED` post
+  into a real `PublishPostJob` once it's actually due; see
+  `App\Enums\PostState`'s docblock and `DueDispatchService`). This
+  container being down does not lose any scheduled post — Postgres, not
+  Redis, is the durable record — it only delays publishing until the
+  container comes back, by however long it was down.
 - **node** — runs the Vite dev server (`npm run dev`) for the SPA frontend,
   reachable at `http://localhost:5173`; also where the README's frontend
   commands (`npx vitest run`, `npm run build`) are meant to be run.
@@ -64,6 +70,21 @@ required after cloning, and after any dependency change.
 7. Rebuild frontend assets (`npm run build`) if `resources/js` changed, and
    make sure they're served from wherever `public/build` is expected in
    production (the bind-mount setup here is dev-only).
+8. **For the durable-scheduling release specifically**, run
+   `php artisan posts:backfill-durable-scheduling` — but only now, **after**
+   step 5. That command converts every leftover `QUEUE` post group (from
+   before this release) to `SCHEDULED`. It is deliberately NOT part of the
+   migration in step 4: migrations run before `php`/`horizon`/`scheduler`
+   restart, so a migration that rewrote `QUEUE` rows to `SCHEDULED` there
+   would leave a window where the database already meant the new thing while
+   every still-running process had old code loaded, expecting `QUEUE` to mean
+   "a delayed job exists" — an old delayed job firing in that window would
+   find its row `SCHEDULED`, silently no-op, and (in the old code) nothing
+   would ever pick it back up. Running this command manually, after the
+   restart, means the new dispatcher (`posts:dispatch-due`, scheduled every
+   minute) is already live by the time any row changes meaning. Safe to
+   re-run if you're ever unsure whether it already ran — a second run
+   converts zero rows.
 
 ## Troubleshooting
 

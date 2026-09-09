@@ -441,7 +441,14 @@ class DigestService
         return new DigestSummary(
             published: $this->fetchSection($organizationIds, PostState::PUBLISHED, 'publish_date', $weekStart, $now),
             failed: $this->fetchSection($organizationIds, PostState::ERROR, 'notified_at', $weekStart, $now),
-            scheduled: $this->fetchSection($organizationIds, PostState::QUEUE, 'publish_date', $now, $upcomingEnd),
+            // Durable-scheduling rewrite: an upcoming post durably sits
+            // at SCHEDULED (nothing on the queue yet) for however long
+            // remains until its publish_date — QUEUE now means "claimed
+            // by DueDispatchService, a PublishPostJob exists right now",
+            // a window normally lasting seconds. Querying QUEUE here
+            // would show almost nothing in the "coming up" section — see
+            // App\Enums\PostState's docblock.
+            scheduled: $this->fetchSection($organizationIds, PostState::SCHEDULED, 'publish_date', $now, $upcomingEnd),
         );
     }
 

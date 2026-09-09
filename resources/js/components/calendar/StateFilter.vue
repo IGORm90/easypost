@@ -3,20 +3,26 @@ import { useI18n } from 'vue-i18n';
 
 /**
  * "all" plus every `PostState`, in the order a person reads a post's
- * life: not started, waiting, done, broken. `ERROR` is a segment of its
- * own rather than something folded into "all" — finding the posts that
- * failed is the question the calendar grid cannot answer at all (its
- * error banner only ever speaks about the visible month), and it is a
- * large part of why this list exists.
+ * life: not started, waiting, claimed, done, broken. `ERROR` is a
+ * segment of its own rather than something folded into "all" — finding
+ * the posts that failed is the question the calendar grid cannot answer
+ * at all (its error banner only ever speaks about the visible month),
+ * and it is a large part of why this list exists.
+ *
+ * `SCHEDULED` vs `QUEUE` (durable-scheduling rewrite): `SCHEDULED` is a
+ * post durably waiting for its due date with nothing on the queue yet;
+ * `QUEUE` is claimed — a publish job genuinely exists for it right now,
+ * normally for only the few seconds/minutes until it actually runs. See
+ * `App\Enums\PostState`'s docblock on the backend.
  */
-export type PostStateFilter = 'all' | 'DRAFT' | 'QUEUE' | 'PUBLISHED' | 'ERROR';
+export type PostStateFilter = 'all' | 'DRAFT' | 'SCHEDULED' | 'QUEUE' | 'PUBLISHED' | 'ERROR';
 
 defineProps<{ modelValue: PostStateFilter }>();
 const emit = defineEmits<{ 'update:modelValue': [PostStateFilter] }>();
 
 const { t } = useI18n();
 
-const states: PostStateFilter[] = ['all', 'DRAFT', 'QUEUE', 'PUBLISHED', 'ERROR'];
+const states: PostStateFilter[] = ['all', 'DRAFT', 'SCHEDULED', 'QUEUE', 'PUBLISHED', 'ERROR'];
 </script>
 
 <template>

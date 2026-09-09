@@ -36,7 +36,7 @@ it('offers every post state plus "all", and emits the one clicked', async () => 
     const w = mount(StateFilter, { props: { modelValue: 'all' }, global: { plugins: [i18n] } });
 
     const labels = w.findAll('button').map((button) => button.text());
-    expect(labels).toEqual(['All', 'Drafts', 'Scheduled', 'Published', 'Failed']);
+    expect(labels).toEqual(['All', 'Drafts', 'Scheduled', 'Publishing', 'Published', 'Failed']);
 
     await w.findAll('button')[1].trigger('click');
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['DRAFT']);

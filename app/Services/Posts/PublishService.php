@@ -25,6 +25,8 @@ use App\Social\ProviderRegistry;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
 
 /**
  * Owns the actual act of publishing a `PostGroup` to every channel it was
@@ -335,7 +337,22 @@ class PublishService
                 ->lockForUpdate()
                 ->first();
 
-            if ($group === null || $group->state !== PostState::QUEUE) {
+            if ($group === null) {
+                Log::info('publish.abandon_guard_skipped', [
+                    'post_group_id' => $postGroupId,
+                    'reason' => 'group_not_found',
+                ]);
+
+                return;
+            }
+
+            if ($group->state !== PostState::QUEUE) {
+                Log::info('publish.abandon_guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'not_queued',
+                    'state' => $group->state->value,
+                ]);
+
                 return;
             }
 
@@ -346,6 +363,13 @@ class PublishService
             // isDueNow()'s due-date grace (checked next) would not by
             // itself have caught it.
             if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+                Log::info('publish.abandon_guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'stale_queue_version',
+                    'job_queue_version' => $queueVersion,
+                    'current_queue_version' => $group->queue_version,
+                ]);
+
                 return;
             }
 
@@ -362,6 +386,12 @@ class PublishService
             // isDueNow()'s docblock for why this predicate must stay a
             // single shared source of truth between the two callers.
             if (! $this->isDueNow($group)) {
+                Log::info('publish.abandon_guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'not_due_yet',
+                    'publish_date' => $group->publish_date?->toIso8601String(),
+                ]);
+
                 return;
             }
 
@@ -453,15 +483,71 @@ class PublishService
                 ->lockForUpdate()
                 ->first();
 
-            if ($group === null || $group->state !== PostState::QUEUE) {
+            if ($group === null) {
+                Log::info('publish.guard_skipped', [
+                    'post_group_id' => $postGroupId,
+                    'reason' => 'group_not_found',
+                ]);
+
+                return null;
+            }
+
+            if ($group->state !== PostState::QUEUE) {
+                Log::info('publish.guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'not_queued',
+                    'state' => $group->state->value,
+                ]);
+
                 return null;
             }
 
             if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+                Log::info('publish.guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'stale_queue_version',
+                    'job_queue_version' => $queueVersion,
+                    'current_queue_version' => $group->queue_version,
+                ]);
+
                 return null;
             }
 
             if (! $this->isDueNow($group)) {
+                Log::info('publish.guard_skipped', [
+                    'post_group_id' => $group->id,
+                    'reason' => 'not_due_yet',
+                    'publish_date' => $group->publish_date?->toIso8601String(),
+                ]);
+
+                // Durable-scheduling rewrite, guard 3: this claim's
+                // group has since been rescheduled materially forward —
+                // normally impossible to observe here at all, because
+                // every PostGroupService reschedule path (update(),
+                // updateDate()) already un-claims a QUEUE group back to
+                // SCHEDULED the instant it moves publish_date, well
+                // before this job ever gets this far (see those methods'
+                // docblocks). Kept as a defensive backstop for whatever
+                // this invariant doesn't cover — a direct DB write, a
+                // future bug — rather than leaving the row stranded at
+                // QUEUE with no live job until MissedPostsService's
+                // stuck-row scan eventually notices it.
+                PostGroup::withoutGlobalScope('organization')
+                    ->whereKey($group->id)
+                    ->update(['state' => PostState::SCHEDULED->value, 'last_dispatched_at' => null]);
+
+                // Posts move with the group — guardEditable()'s pending-post
+                // lock (state=QUEUE AND release_id IS NULL) exists to
+                // protect a genuinely in-flight segment; leaving these at
+                // QUEUE after the group itself has un-claimed would make
+                // every future edit lock rows that are not actually being
+                // worked on by anything.
+                Post::withoutGlobalScope('organization')
+                    ->where('post_group_id', $group->id)
+                    ->whereNull('release_id')
+                    ->where('state', PostState::QUEUE->value)
+                    ->update(['state' => PostState::SCHEDULED->value]);
+
                 return null;
             }
 
@@ -716,11 +802,25 @@ class PublishService
             //   group's pending post rows FOR UPDATE (i.e. go through
             //   `guardEditable()`).
             //
-            // It holds today — `update()` and `updateDate()` both call
-            // `guardEditable()`, `retry()` only accepts a group already
-            // in ERROR (nothing is in flight for it), and
-            // `MissedPostsService` never bumps. A new bump path that
-            // skips those row locks would slip past this read and
+            // It holds today for the reason above — `update()` and
+            // `updateDate()` both call `guardEditable()`, and `retry()`
+            // only accepts a group already in ERROR (nothing is in
+            // flight for it). `MissedPostsService::dispatchRedispatch()`
+            // is the one deliberate exception: post-review (round 3) it
+            // DOES bump `queue_version`, on a group it found stuck at
+            // QUEUE with no row lock at all. That is safe for a different
+            // reason than the row-lock argument above — not because a
+            // concurrent writer would see the new version or be refused,
+            // but because `PublishPostJob::uniqueId()` is version-aware,
+            // so the redispatch it triggers can never collide with
+            // whatever the stuck generation's own job is doing, and the
+            // stuck generation's next `queue_version` check (here, or in
+            // `finalizeGroupState()`) cleanly no-ops once it sees itself
+            // superseded (proven safe by `PublishRaceTest`'s "two
+            // genuinely concurrent `publishGroup()` runs" test). Any
+            // OTHER new bump path that skips `guardEditable()`'s row
+            // locks — without ALSO being safe by the version-aware-key
+            // argument recovery relies on — would slip past this read and
             // reopen Critical 2 exactly as it was reproduced in
             // `PublishRaceTest`, with no test necessarily going red.
             //
@@ -803,6 +903,8 @@ class PublishService
                 if ($preparationFailure !== null) {
                     throw $preparationFailure;
                 }
+
+                $this->enforceProviderThrottle($integration->provider_identifier);
 
                 $results = $provider->post($integration, $chain);
 
@@ -908,6 +1010,95 @@ class PublishService
         }
 
         return $this->isDueNow($group);
+    }
+
+    /**
+     * QUEUE.md Task 7: a shared, cross-tenant, per-provider publish
+     * budget, enforced centrally so a burst of posts across many
+     * organizations for the SAME network still respects one ceiling —
+     * e.g. Reddit's or LinkedIn's own rate limit, which every tenant on
+     * this installation shares regardless of which one happens to hit
+     * it first.
+     *
+     * Deliberately NOT job middleware, despite that being QUEUE.md's own
+     * literal suggestion: `PublishPostJob` publishes a whole `PostGroup`
+     * across potentially SEVERAL channels/providers in one `handle()`
+     * call (see `publishGroup()`'s per-integration loop above) — a
+     * single job-level rate limit cannot express "channel A's provider
+     * is over budget, channel B's isn't" for the same job execution.
+     * This method is called from exactly the place that already
+     * isolates one provider's one network call —
+     * `publishLockedChannel()`, immediately before `$provider->post()` —
+     * and reuses the EXISTING `ProviderRateLimitException` ->
+     * `PublishRetryNeededException` -> `PublishPostJob::release()`
+     * pipeline verbatim: throwing here is indistinguishable, to every
+     * caller up the stack, from the network itself having returned a
+     * 429. No new job middleware, no new catch arm, no new retry logic.
+     *
+     * `RateLimiter` (cache-backed), not a bespoke counter: already
+     * atomic and already shared across every worker/tenant process
+     * without any locking primitive of its own — the same reason
+     * `MissedPostsService`'s probe and `TokenRefreshService::refresh()`'s
+     * lock (see that method's docblock) both reach for `Cache` rather
+     * than an in-process counter.
+     *
+     * `config('social.rate_limits')`, not `config('publishing.php')` —
+     * that file's own docblock states it is deliberately provider-
+     * agnostic; a table keyed by provider identifier belongs in
+     * `config/social.php`, which already declares itself "the ONLY
+     * place provider identifiers are wired." No entry for a given
+     * identifier means unthrottled — every provider this install ships
+     * starts that way until a real ceiling is tuned in.
+     *
+     * Post-review fix (round 4): hit-then-check, not check-then-hit.
+     * `RateLimiter::hit()` is a single atomic cache increment (Redis'
+     * `INCRBY`, see `RedisStore::increment()`) whose RETURN VALUE is the
+     * post-increment count including this attempt — the exact idiom
+     * `AuthService::attemptLogin()` already documents fixing this same
+     * class of bug for the login throttle: "the previous
+     * tooManyAttempts() (read) ... hit() (write) sequence left a window
+     * where concurrent requests could each read a stale 'not yet at the
+     * limit' count before any of them recorded a hit, letting a burst
+     * slip past MAX_ATTEMPTS." `PasswordResetService`,
+     * `EmailVerificationService` and `ShareService` all follow the same
+     * shape. This method was the one outlier that reintroduced the
+     * separate-read-then-write anti-pattern its own codebase already
+     * warns against — two concurrent publish workers could both pass a
+     * `tooManyAttempts()` read before either recorded a `hit()`, both
+     * proceeding to call the network during the exact burst this limiter
+     * exists to contain.
+     *
+     * Deliberately no compensating `decrement()` on the refused branch,
+     * again matching `AuthService`. A refused attempt still counts, so
+     * the counter can overshoot `max` under sustained load — harmless
+     * here: `RateLimiter::increment()` sets the companion `:timer` key
+     * with `Cache::add()`, i.e. only when absent, so the window's end is
+     * fixed at the FIRST hit and an inflated count changes neither
+     * `availableIn()` nor when the budget resets. A `decrement()` would
+     * buy nothing and add a second round-trip plus a new "died between
+     * the two calls" failure mode.
+     */
+    private function enforceProviderThrottle(string $providerIdentifier): void
+    {
+        $limit = config("social.rate_limits.{$providerIdentifier}");
+
+        if ($limit === null) {
+            return;
+        }
+
+        $key = "provider-throttle:{$providerIdentifier}";
+
+        // The count returned already includes THIS attempt, so `>` (not
+        // `>=`): with max => 1, the first caller sees 1 and proceeds, the
+        // second sees 2 and is refused.
+        $attempts = RateLimiter::hit($key, $limit['decay_seconds']);
+
+        if ($attempts > $limit['max']) {
+            throw new ProviderRateLimitException(
+                "This installation's own shared rate limit for the {$providerIdentifier} network was reached; the network was not contacted.",
+                RateLimiter::availableIn($key),
+            );
+        }
     }
 
     /**

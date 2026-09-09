@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Notifications\RecurrencePausedNotification;
 use App\Services\Posts\PublishService;
 use App\Support\OrganizationContext;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -61,21 +62,31 @@ it('creates the next occurrence once the current one publishes', function () {
 
     $next = PostGroup::withoutGlobalScope('organization')->whereKeyNot($group->id)->sole();
 
+    // Durable-scheduling rewrite: the successor lands on SCHEDULED, not
+    // QUEUE — and nothing is dispatched at spawn time at all, however
+    // far out its date is. DueDispatchService claims it later, whenever
+    // it is actually due — see spawnRecurrence()'s docblock.
+    // Durable-scheduling rewrite (Task 6): spawnRecurrence() jitters the
+    // computed date by up to config('publishing.jitter_seconds') — the
+    // exact instant is JitterTest's job; here it only needs to stay
+    // within that window of the un-jittered target.
+    $expectedDate = $group->publish_date->copy()->addDays(2);
+    $jitterWindow = (int) config('publishing.jitter_seconds');
+
     expect($group->fresh()->state)->toBe(PostState::PUBLISHED)
-        ->and($next->state)->toBe(PostState::QUEUE)
-        ->and($next->publish_date->toIso8601String())->toBe($group->publish_date->copy()->addDays(2)->toIso8601String())
+        ->and($next->state)->toBe(PostState::SCHEDULED)
+        ->and(abs($next->publish_date->diffInSeconds($expectedDate, false)))->toBeLessThanOrEqual($jitterWindow)
         // The rule travels with the occurrence, or the series stops after one hop.
         ->and($next->repeat_unit)->toBe(RepeatUnit::DAY)
         ->and($next->repeat_interval)->toBe(2)
         // Points at the ROOT of the series, not at its predecessor.
         ->and($next->repeat_parent_id)->toBe($group->id)
         ->and($next->repeat_spawned_at)->toBeNull()
-        ->and($next->queue_version)->toBe(1)
         // None of the predecessor's publish history comes along.
         ->and($next->share_token)->toBeNull()
         ->and($next->error)->toBeNull();
 
-    Queue::assertPushed(PublishPostJob::class, fn (PublishPostJob $job) => $job->postGroupId === $next->id && $job->queueVersion === 1);
+    Queue::assertNotPushed(PublishPostJob::class);
 });
 
 it('points every later occurrence at the first post of the series', function () {
@@ -87,9 +98,18 @@ it('points every later occurrence at the first post of the series', function () 
     app(PublishService::class)->publishGroup($root->id);
     $second = PostGroup::withoutGlobalScope('organization')->whereKeyNot($root->id)->sole();
 
-    // Make the second occurrence due, then publish it too.
+    // Durable-scheduling rewrite: a freshly spawned successor lands on
+    // SCHEDULED, not QUEUE (see RecurrenceService/PostGroupService::spawnRecurrence()'s
+    // docblock) — nothing is dispatched until DueDispatchService claims
+    // it. Force it straight into QUEUE here, simulating that claim
+    // directly (group AND its posts — the dispatcher always flips both
+    // atomically, see DueDispatchService::claimBatch()): this test's
+    // focus is the repeat_parent_id chain across hops, not the claim
+    // mechanics DispatchDuePostsTest already covers.
     $second->forceFill(['publish_date' => now()])->save();
-    app(PublishService::class)->publishGroup($second->id);
+    DB::table('post_groups')->where('id', $second->id)->update(['state' => PostState::QUEUE->value]);
+    DB::table('posts')->where('post_group_id', $second->id)->update(['state' => PostState::QUEUE->value]);
+    app(PublishService::class)->publishGroup($second->fresh()->id);
 
     $third = PostGroup::withoutGlobalScope('organization')
         ->whereNotIn('id', [$root->id, $second->id])
@@ -129,7 +149,7 @@ it('copies the thread, its media and its tags into the next occurrence', functio
         ->and($copied[0]->content)->toBe('root')
         ->and($copied[0]->integration_id)->toBe($integration->id)
         ->and($copied[0]->settings)->toBe(['some_channel_option' => true])
-        ->and($copied[0]->state)->toBe(PostState::QUEUE)
+        ->and($copied[0]->state)->toBe(PostState::SCHEDULED)
         // A fresh chain, not a second claim on the release the network already has.
         ->and($copied[0]->release_id)->toBeNull()
         ->and($copied[1]->content)->toBe('reply')

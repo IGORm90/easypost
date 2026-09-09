@@ -8,6 +8,7 @@ use App\Models\OrganizationUser;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Models\User;
+use App\Services\Posts\DueDispatchService;
 use App\Services\Posts\PostGroupService;
 use App\Services\Posts\PublishService;
 use App\Social\Exceptions\ProviderPermanentException;
@@ -249,10 +250,16 @@ it('an edit landing mid-run never leaves the edited post unpublishable (Critical
         $group = PostGroup::query()->whereKey($fx['group']->id)->firstOrFail();
         $posts = Post::query()->where('post_group_id', $group->id)->get();
 
-        expect($group->state)->toBe(PostState::QUEUE)
+        // Durable-scheduling rewrite: update()'s type=schedule now lands
+        // the edit on SCHEDULED, not QUEUE — nothing is dispatched at
+        // edit time any more (see PostGroupService::resolveTargetState()'s
+        // docblock). The group's own state is exactly the assertion C1
+        // protects: SCHEDULED (the edit's generation durably owns the
+        // row), never ERROR.
+        expect($group->state)->toBe(PostState::SCHEDULED)
             ->and($group->queue_version)->toBe(2)
             ->and($posts)->toHaveCount(2)
-            ->and($posts->every(fn (Post $post): bool => $post->state === PostState::QUEUE))->toBeTrue()
+            ->and($posts->every(fn (Post $post): bool => $post->state === PostState::SCHEDULED))->toBeTrue()
             ->and($posts->every(fn (Post $post): bool => $post->release_id === null))->toBeTrue();
 
         // ... and the edit's own generation still publishes when its time
@@ -264,11 +271,25 @@ it('an edit landing mid-run never leaves the edited post unpublishable (Critical
         // race-connection rows until teardown — and the cleanup below,
         // which deletes those rows through the race connection, would
         // block on them forever. A child commits normally.
+        //
+        // DueDispatchService::dispatchDue() (not a direct publishGroup()
+        // call): the group is SCHEDULED now, so the production path to
+        // publishing it is the durable claim step, exactly as a real
+        // per-minute tick would perform it — claiming SCHEDULED->QUEUE
+        // and dispatching PublishPostJob, which runs synchronously here
+        // (QUEUE_CONNECTION=sync in tests) and reads queue_version fresh
+        // at claim time.
         expect(publishRaceRun(function () use ($group, $log): void {
             Carbon::setTestNow($group->publish_date->addSecond());
+            // DueDispatchService's claim query compares against Postgres'
+            // own now() (real wall-clock, unaffected by Carbon::setTestNow()
+            // above) — widen the lookahead so the claim query's window
+            // covers the gap regardless of how far setTestNow() moved PHP's
+            // clock. See the identical note in MvpFlowTest.
+            config(['publishing.dispatch_lookahead_seconds' => 7200]);
             $provider = fakeProvider();
 
-            app(PublishService::class)->publishGroup($group->id, $group->queue_version);
+            app(DueDispatchService::class)->dispatchDue();
 
             file_put_contents($log, count($provider->publishedChains())."\n", FILE_APPEND | LOCK_EX);
         }))->toBe('ok');
@@ -345,21 +366,34 @@ it('a calendar drag landing mid-run never publishes the dragged channel at the o
         $group = PostGroup::query()->whereKey($fx['group']->id)->firstOrFail();
         $postB = Post::query()->whereKey($fx['postB']->id)->firstOrFail();
 
+        // Durable-scheduling rewrite: updateDate() un-claims a QUEUE
+        // group back to SCHEDULED rather than staying QUEUE (nothing is
+        // dispatched at drag time any more — see that method's
+        // docblock). The dragged generation still durably owns the row
+        // (queue_version 2, the new date) — a superseded run must not
+        // settle it (that is C1's half of the same fix) — it is simply
+        // no longer QUEUE at all, since no job exists for it yet.
         expect($postB->release_id)->toBeNull()
-            ->and($postB->state)->toBe(PostState::QUEUE)
+            ->and($postB->state)->toBe(PostState::SCHEDULED)
             ->and($group->queue_version)->toBe(2)
             ->and($group->publish_date->isAfter(now()->addMinutes(30)))->toBeTrue()
-            // The dragged generation still owns the group: a superseded
-            // run must not settle it (that is C1's half of the same fix).
-            ->and($group->state)->toBe(PostState::QUEUE);
+            ->and($group->state)->toBe(PostState::SCHEDULED);
 
         // The drag's own generation publishes channel B at the NEW time
         // (in a forked child — see the identical note in the C1 test).
+        // DueDispatchService::dispatchDue(), not a direct publishGroup()
+        // call — see the identical note in the C1 test above.
         expect(publishRaceRun(function () use ($group, $log): void {
             Carbon::setTestNow($group->publish_date->addSecond());
+            // DueDispatchService's claim query compares against Postgres'
+            // own now() (real wall-clock, unaffected by Carbon::setTestNow()
+            // above) — widen the lookahead so the claim query's window
+            // covers the gap regardless of how far setTestNow() moved PHP's
+            // clock. See the identical note in MvpFlowTest.
+            config(['publishing.dispatch_lookahead_seconds' => 7200]);
             $provider = fakeProvider();
 
-            app(PublishService::class)->publishGroup($group->id, $group->queue_version);
+            app(DueDispatchService::class)->dispatchDue();
 
             file_put_contents(
                 $log,

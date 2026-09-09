@@ -5,7 +5,6 @@ use App\Models\Organization;
 use App\Models\OrganizationUser;
 use App\Models\User;
 use App\Services\Integrations\OAuthStateService;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -90,41 +89,9 @@ it('consumes a state atomically: two genuinely concurrent callbacks yield exactl
     }
 });
 
-/**
- * Points the 'redis' cache store at a Redis connection unique to this
- * process — see the file docblock for why this is required inside every
- * forked racer before it touches Cache/OAuthStateService. `Cache::purge()`
- * drops CacheManager's already-resolved 'redis' store instance (inherited
- * from the parent via fork, and pinned to the OLD connection name) so the
- * next Cache call re-resolves using the connection name just configured,
- * rather than reusing the inherited one.
- */
-function raceUseFreshRedisConnection(): void
-{
-    $connectionName = 'race_redis_'.getmypid();
-
-    // Cloned from 'cache' (config('cache.stores.redis.connection')'s
-    // ORIGINAL default before this function overrides it below), not
-    // 'default': the two point at different Redis logical databases
-    // (REDIS_DB vs REDIS_CACHE_DB) — cloning the wrong one would make
-    // every child silently read/write an empty database instead of the
-    // one the state was actually stored in.
-    config(['database.redis.'.$connectionName => config('database.redis.cache')]);
-    config(['cache.stores.redis.connection' => $connectionName]);
-    config(['cache.stores.redis.lock_connection' => $connectionName]);
-
-    // RedisManager (bound as the 'redis' singleton) snapshots
-    // config('database.redis') once, in its constructor — it does not
-    // re-read config on every connection() call. Since that singleton
-    // was already resolved in the parent (generate() above touched
-    // Cache, which touched Redis, before this process ever forked), the
-    // inherited instance's snapshot predates $connectionName and
-    // wouldn't know about it. forgetInstance() drops it so the next
-    // resolution rebuilds RedisManager from current config — this is
-    // the Redis-manager-level counterpart to Cache::purge('redis') just
-    // below, which does the equivalent for CacheManager's resolved
-    // store.
-    app()->forgetInstance('redis');
-
-    Cache::purge('redis');
-}
+// raceUseFreshRedisConnection() used to live here. Post-review fix (round
+// 4): promoted to tests/Pest.php alongside raceConcurrently()/raceCreate()/
+// raceAwaitBarrier(), since ProviderThrottleTest now needs the identical
+// Redis-race setup and a helper declared in one test file only works on a
+// full-suite run (see tests/Pest.php's own "Publishing-pipeline fixtures"
+// comment for why every shared racer helper lives there).

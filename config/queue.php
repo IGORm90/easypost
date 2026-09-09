@@ -68,9 +68,25 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            // Must stay strictly above every Horizon supervisor's own
+            // `timeout` (90s on `publish`, the longest-running queue) —
+            // see config/horizon.php and AGENTS.md's "hard rules". A
+            // job still legitimately running at the moment retry_after
+            // elapses is otherwise considered lost and popped a SECOND
+            // time by another worker, which for `publish` means sending
+            // a customer's post twice. 300 leaves real headroom.
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 300),
             'block_for' => null,
-            'after_commit' => false,
+            // Durable-scheduling rewrite: dispatch now happens from
+            // DispatchDuePostsCommand's claim loop, entirely outside any
+            // caller's own transaction, so this is belt-and-braces
+            // rather than load-bearing today. It stays `true` so any
+            // FUTURE dispatch site added inside a transaction fails
+            // safe (waits for commit) instead of silently reintroducing
+            // the "worker sees the job before the row is visible" race
+            // PostGroupService::claimAndDispatchNow()'s docblock
+            // describes at length.
+            'after_commit' => true,
         ],
 
         'deferred' => [

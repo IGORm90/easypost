@@ -51,6 +51,142 @@ it('refreshes an expiring token', function () {
         ->and($fresh->disabled)->toBeFalse();
 });
 
+// --- Task 8: service-level lock around a single integration's refresh ----
+
+it('skips a refresh entirely while another refresh for the SAME integration already holds the lock', function () {
+    // Proves the fix the review asked for directly: several providers
+    // rotate single-use refresh tokens, so two genuinely concurrent
+    // refreshes for the same integration would mean the second presents
+    // an already-consumed token and the provider revokes the whole grant.
+    // Simulated the same way the existing ShouldBeUnique test above does
+    // — by acquiring the exact lock TokenRefreshService::refresh() itself
+    // takes, rather than relying on two real overlapping calls (PHP is
+    // single-threaded within one test process, so nothing would actually
+    // race).
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $lock = Cache::lock("token-refresh:{$integration->id}", 30);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        app(TokenRefreshService::class)->refresh($integration);
+
+        expect(fakeProvider()->refreshedIntegrationIds())->toBe([])
+            ->and($integration->fresh()->token)->toBe('old-token');
+    } finally {
+        $lock->release();
+    }
+})->group('slow'); // waits out refresh()'s block(5, ...) before giving up
+
+it('refreshes normally once the other holder has released the lock', function () {
+    // Unlike the previous test, this one genuinely proves "released ⇒
+    // refresh happens" rather than just "uncontended ⇒ refresh happens":
+    // it acquires the exact lock refresh() takes, releases it BEFORE
+    // calling refresh(), and only then asserts the refresh went through.
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $lock = Cache::lock("token-refresh:{$integration->id}", 30);
+    expect($lock->get())->toBeTrue();
+    $lock->release();
+
+    app(TokenRefreshService::class)->refresh($integration);
+
+    expect($integration->fresh()->token)->not->toBe('old-token');
+});
+
+// --- Post-review fix (round 4, P1): never act on a stale in-memory
+// Integration once the lock is finally acquired --------------------------
+
+it('presents the CURRENT refresh token to the provider, not a stale one held before the lock was acquired', function () {
+    // Proves the exact defect the review found: TokenRefreshService::refresh()
+    // used to hand refreshLocked() the very $integration instance the
+    // caller passed in, without re-reading it once the lock was actually
+    // acquired. Simulates job B here: it loaded $stale before job A (not
+    // modeled directly — its effect is applied straight to the row) had
+    // already rotated the refresh_token and committed. Several providers
+    // (see BlueskyProvider::refresh()) use whatever refresh_token the
+    // Integration instance carries, so presenting $stale's copy after
+    // acquiring the lock would submit an already-consumed token and get
+    // the whole grant revoked — the harm the lock was added to prevent in
+    // the first place; re-reading inside the lock is what actually closes
+    // it, not the lock alone.
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token' => 'old-token',
+        'refresh_token' => 'stale-refresh-token',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $stale = $integration->fresh();
+
+    // A prior holder rotates the token and commits, exactly as a first
+    // concurrent refresh() call would while this one waited on the lock.
+    $integration->update(['refresh_token' => 'current-refresh-token']);
+
+    // Captured BEFORE refresh(), not after: fakeProvider() resets the
+    // fake's recorded calls every time it's invoked (see tests/Pest.php),
+    // so calling it only at assertion time would wipe the very call this
+    // test is trying to observe.
+    $provider = fakeProvider();
+
+    app(TokenRefreshService::class)->refresh($stale);
+
+    expect($provider->refreshedTokens())->toBe(['current-refresh-token']);
+});
+
+it('does not re-notify the owner when a stale instance is asked to refresh an already-broken integration', function () {
+    // The quieter half of the same root cause: markBroken()'s anti-spam
+    // guard reads $alreadyBroken off whatever instance it's handed. A
+    // stale instance loaded before another call already disabled the
+    // channel would read disabled=false and re-notify — defeating the
+    // "must not spam" guarantee documented on refresh(). Re-reading
+    // inside the lock fixes this the same way it fixes token staleness.
+    Notification::fake();
+
+    $org = Organization::factory()->create();
+    $owner = $org->owner;
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $stale = $integration->fresh();
+
+    $integration->update(['disabled' => true, 'refresh_needed' => true]);
+    Notification::assertNothingSent();
+
+    fakeProvider()->failNextRefreshWith(new ProviderAuthException('revoked'));
+    app(TokenRefreshService::class)->refresh($stale);
+
+    Notification::assertNothingSent();
+});
+
+it('does nothing, cleanly, when the integration was deleted while this call waited on the lock', function () {
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create([
+        'provider_identifier' => 'fake',
+        'token_expires_at' => now()->addMinutes(30),
+    ]);
+
+    $stale = $integration->fresh();
+    $integration->delete();
+
+    app(TokenRefreshService::class)->refresh($stale);
+
+    expect(fakeProvider()->refreshedIntegrationIds())->toBe([]);
+});
+
 it('marks the integration as broken when refresh fails with auth error', function () {
     Notification::fake();
 
@@ -113,7 +249,7 @@ it('enumerates due integrations across every tenant with no organization context
     $notYetDue = Integration::factory()->create([
         'organization_id' => $orgA->id,
         'provider_identifier' => 'fake',
-        'token_expires_at' => now()->addHours(5),
+        'token_expires_at' => now()->addDays(10),
     ]);
 
     expect(OrganizationContext::get())->toBeNull();
@@ -472,7 +608,7 @@ it('dispatches nothing for a disabled, soft-deleted, not-yet-due, or non-refresh
     $trashed->delete();
     Integration::factory()->for($org)->create([
         'provider_identifier' => 'fake',
-        'token_expires_at' => now()->addHours(5),
+        'token_expires_at' => now()->addDays(10),
     ]);
     Integration::factory()->for($org)->create([
         'provider_identifier' => 'telegram',

@@ -19,6 +19,7 @@ use Illuminate\Bus\UniqueLock;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
@@ -113,24 +114,43 @@ class PostGroupService
         $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($data) {
             $this->resolveIntegrations($data['posts']);
 
-            $targetState = $data['type'] === 'draft' ? PostState::DRAFT : PostState::QUEUE;
+            $targetState = $this->targetStateForType($data['type']);
 
-            $group = PostGroup::create([
+            // Minted here, explicitly, rather than left to HasUlids'
+            // creating-event default: jitter (below) needs a stable
+            // identifier to seed from BEFORE the row exists, so the
+            // scheduled instant this method computes and the id the
+            // group is actually inserted with agree. Assigned as a
+            // direct property, not through the constructor/`create()`'s
+            // mass-assignment array — `id` is deliberately absent from
+            // `$fillable`, so `PostGroup::create(['id' => $id, ...])`
+            // would silently DROP it and let `HasUlids` mint a second,
+            // DIFFERENT id in its own `creating` hook, which is exactly
+            // what happened before this was written as a direct
+            // assignment: the jitter offset and the row's real id
+            // diverged, so it publish_dated on the wrong id every time.
+            // `HasUniqueIds::setUniqueIds()` only fills a column that is
+            // still empty, so this pre-set value is what actually ships.
+            $id = (string) Str::ulid();
+            $group = new PostGroup([
                 'state' => PostState::DRAFT,
-                'publish_date' => $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null),
+                'publish_date' => $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $id),
                 ...$this->recurrenceAttributes($data),
             ]);
+            $group->id = $id;
+            $group->save();
 
-            if ($targetState !== PostState::DRAFT) {
-                $this->stateMachine->transition($group, $targetState);
-            }
-
-            // No lockGroup()/bumpQueueVersionIfQueuing() needed here,
+            // No lockGroup()/bumpQueueVersionIfNotDraft() needed here,
             // unlike every other write path below: $group->id is a
             // freshly-minted ulid nothing else can reference yet, so
             // there is no concurrent writer to serialise against. A
             // brand-new group's very first schedule generation is
-            // simply version 1.
+            // simply version 1 — set only when it matters (entering
+            // QUEUE for an immediate "publish now"; a `SCHEDULED` group
+            // has its queue_version read fresh, whatever it is, at
+            // whatever future instant `DueDispatchService` claims it).
+            $this->transitionToward($group, $targetState);
+
             if ($targetState === PostState::QUEUE) {
                 $group->queue_version = 1;
                 $group->save();
@@ -145,7 +165,7 @@ class PostGroupService
             return $group->fresh(['posts.media', 'tags']);
         });
 
-        $this->dispatchPublishIfQueued($group);
+        $this->claimAndDispatch($group);
 
         return $group;
     }
@@ -171,7 +191,7 @@ class PostGroupService
             // them carries a release_id — see this class's docblock.
             $group->posts()->delete();
 
-            $group->publish_date = $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null);
+            $group->publish_date = $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $group->id);
             // Block 4: a PUT is a full replace, recurrence included —
             // omitting the fields clears the rule, which is exactly how
             // the editor stops a series. Reaching this line at all means
@@ -179,12 +199,10 @@ class PostGroupService
             // this can only ever rewrite the rule of an occurrence that
             // has not published yet.
             $group->fill($this->recurrenceAttributes($data));
-            $this->bumpQueueVersionIfQueuing($group, $targetState);
+            $this->bumpQueueVersionIfNotDraft($group, $targetState);
             $group->save();
 
-            if ($targetState !== $group->state) {
-                $this->stateMachine->transition($group, $targetState);
-            }
+            $this->transitionToward($group, $targetState);
 
             $this->replaceChains($group, $data['posts'], $targetState);
 
@@ -195,12 +213,14 @@ class PostGroupService
             return $group->fresh(['posts.media', 'tags']);
         });
 
-        // forceRedispatch: true — see dispatchPublishIfQueued()'s
-        // docblock. update() can move an already-QUEUE group's
-        // publish_date exactly like updateDate() can (schedule type,
-        // new publish_date in the payload), so it carries the identical
-        // swallowed-redispatch risk and needs the identical fix.
-        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
+        // Only ever dispatches anything when $targetState resolved to
+        // QUEUE (type=now) — see claimAndDispatch()'s docblock. A
+        // schedule edit lands the group on SCHEDULED and dispatches
+        // nothing at all: DueDispatchService's next per-minute pass
+        // claims it, reading queue_version fresh at that moment, so
+        // there is no stale job left to fight the way the old
+        // ->delay()-based dispatch required forceRedispatch to handle.
+        $this->claimAndDispatch($group, forceRedispatch: true);
 
         return $group;
     }
@@ -306,10 +326,17 @@ class PostGroupService
      *    organization scope, so a plain read is safe there.
      *
      * Unlike `duplicate()` (which produces a DRAFT and dispatches
-     * nothing), this follows `create()`'s tail: transition into QUEUE
-     * through the state machine, `queue_version = 1` (a brand-new id
-     * nothing else can reference yet — no lock needed), and dispatch
-     * after the transaction commits.
+     * nothing), this transitions the new occurrence into `SCHEDULED` —
+     * NOT `QUEUE`, and deliberately no dispatch call at all. Before the
+     * durable-scheduling rewrite this went straight to `QUEUE` and
+     * dispatched `PublishPostJob` with `->delay($publishDate)`, which for
+     * a weekly/monthly series could mean a delayed job sitting in Redis
+     * for weeks — exactly the durability gap this whole rewrite exists
+     * to close (see `App\Enums\PostState`'s docblock). A freshly spawned
+     * successor is durable the instant this transaction commits:
+     * `DueDispatchService`'s per-minute claim picks it up on its own,
+     * reading `queue_version` fresh at whatever future instant it
+     * actually claims the row.
      */
     public function spawnRecurrence(PostGroup $source, CarbonInterface $publishDate): PostGroup
     {
@@ -318,10 +345,17 @@ class PostGroupService
 
         /** @var PostGroup $group */
         $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($source, $publishDate, $organization) {
-            $group = PostGroup::create([
+            // Minted and assigned directly, exactly like create() — see
+            // that method's comment (`id` is deliberately absent from
+            // `$fillable`, so this must NOT go through mass assignment)
+            // and applyJitter()'s docblock for why a fixed seed is safe
+            // here specifically (spawnRecurrence() only ever runs once
+            // per predecessor, behind RecurrenceService's own claim()).
+            $id = (string) Str::ulid();
+            $group = new PostGroup([
                 'organization_id' => $organization->id,
                 'state' => PostState::DRAFT,
-                'publish_date' => $publishDate,
+                'publish_date' => $this->applyJitter($publishDate, $id),
                 'created_by' => $source->created_by,
                 // The rule travels with the occurrence — without this the
                 // series would stop after exactly one hop.
@@ -332,10 +366,10 @@ class PostGroupService
                 // series, never at its immediate predecessor.
                 'repeat_parent_id' => $source->repeat_parent_id ?? $source->id,
             ]);
-
-            $this->stateMachine->transition($group, PostState::QUEUE);
-            $group->queue_version = 1;
+            $group->id = $id;
             $group->save();
+
+            $this->stateMachine->transition($group, PostState::SCHEDULED);
 
             $this->copyChainsWithoutScope($source, $group);
 
@@ -346,8 +380,6 @@ class PostGroupService
 
             return $group->fresh(['posts.media', 'tags']);
         });
-
-        $this->dispatchPublishIfQueued($group);
 
         return $group;
     }
@@ -386,7 +418,7 @@ class PostGroupService
                 'order' => $post->order,
                 'content' => $post->content,
                 'settings' => $post->settings,
-                'state' => PostState::QUEUE,
+                'state' => PostState::SCHEDULED,
             ]);
 
             $this->attachMedia($copy, $post->media->pluck('id')->all());
@@ -396,77 +428,55 @@ class PostGroupService
     }
 
     /**
-     * The calendar's drag-and-drop endpoint (`PATCH .../date`). Fixed
-     * post-review (finding 1): moving `publish_date` here used to
-     * dispatch nothing, leaving whatever `PublishPostJob` was already
-     * queued for the OLD date to fire at the old time regardless — for a
-     * `QUEUE` group, that meant a rescheduled post being published early,
-     * at the time it was originally scheduled for rather than the new
-     * one. `dispatchPublishIfQueued()` below is a no-op for a `draft`
-     * group (same guard `create()`/`update()` use), so this stays safe
-     * to call unconditionally.
+     * The calendar's drag-and-drop endpoint (`PATCH .../date`).
+     * `UpdatePostDateRequest` enforces `after:now`, so `$publishDate` is
+     * always a real future instant — this never has to handle "drag onto
+     * right now".
      *
-     * `forceRedispatch: true` — second post-review correction (finding
-     * 1, round 2). `PublishPostJob`'s `ShouldBeUnique` lock is a real
-     * `Cache` lock acquired at DISPATCH time with a fixed 3600s TTL,
-     * completely independent of `->delay()` — see
-     * `Illuminate\Bus\UniqueLock::acquire()`. Without force-releasing it
-     * first, a multi-drag calendar session (the normal way this endpoint
-     * is used, not an edge case) would see only the FIRST drag's
-     * dispatch actually reach the queue: every subsequent drag within
-     * the following hour silently drops (`UniqueJobSkipped`, now logged
-     * — see `App\Listeners\LogUniqueJobSkipped` — but still dropped),
-     * leaving the job for the FIRST drag's date as the only one that
-     * will ever run. Dragging later than that stale job's date means it
-     * exits harmlessly on `PublishService::lockGroupIfQueued()`'s
-     * due-date guard (see that method) and — because a plain `return`
-     * from `handle()` is a SUCCESSFUL completion, not a failure —
-     * finishes, releases its own lock, and is gone: nothing in
-     * `failed_jobs`, `failed()` never runs, and the post is never
-     * published, with no record anywhere that it should have been.
-     * Dragging earlier publishes hours late. `dispatchPublishIfQueued()`
-     * below force-releases the lock immediately before its own dispatch
-     * call, so THIS dispatch always wins the race for the lock — the
-     * worst remaining case is a stale job from an even-earlier drag that
-     * simply no-ops on the due-date guard once this one supersedes it.
-     * That guard, plus `PublishService::publishChannel()`'s per-row
-     * `lockForUpdate()`/`release_id` filter, are what keep this safe
-     * against the duplicate-publish risk force-releasing a lock would
-     * otherwise reopen — see `dispatchPublishIfQueued()`'s docblock.
-     *
-     * Final-review correction (Critical 2): "wins the race for the lock"
-     * above is about the DISPATCH race only — which job instance gets
-     * enqueued — and an earlier revision of this docblock overstated it
-     * as covering the publish race too. It never did. A run that is
-     * ALREADY in flight when this method commits holds no lock this
-     * method competes for: `PublishService::lockGroupIfQueued()` commits
-     * its group lock immediately (the per-channel commit boundary), and
-     * a drag landing between two of that run's channels used to change
-     * nothing the remaining channels checked — they re-locked their own
-     * rows on `release_id IS NULL AND state = QUEUE`, both still true
-     * after a reschedule, and published at the OLD time. What actually
-     * closes that is `publishChannel()` re-reading `queue_version` and
-     * `publish_date` INSIDE its own transaction, immediately before the
-     * provider call, and aborting the channel when this method's
-     * `bumpQueueVersionIfQueuing()` has moved past it. Proven with two
-     * forked processes in `tests/Feature/Publishing/PublishRaceTest.php`.
+     * Durable-scheduling rewrite: this used to be the most delicate
+     * method in this class — moving a `QUEUE` group's date meant force-
+     * releasing and re-dispatching a delayed `PublishPostJob`, with three
+     * paragraphs of reasoning about which of two racing dispatches "wins"
+     * the `ShouldBeUnique` lock. None of that exists any more. A `DRAFT`
+     * or already-`SCHEDULED` group just gets a new `publish_date`; a
+     * `QUEUE` group (claimed — a job already exists for it) is UN-claimed
+     * back to `SCHEDULED` in the same write. Either way, nothing is
+     * dispatched here at all: `DueDispatchService`'s next per-minute pass
+     * finds the row `SCHEDULED` with the new date and claims it exactly
+     * once, whenever it is actually due. The stale job from the OLD
+     * claim (if any) finds `state !== QUEUE` on
+     * `PublishService::lockGroupIfQueued()` and exits as a harmless no-op
+     * — releasing its `ShouldBeUnique` lock the instant it does, so
+     * nothing is left to race the next legitimate claim either.
      */
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
-        $group = DB::transaction(function () use ($group, $publishDate) {
+        return DB::transaction(function () use ($group, $publishDate) {
             $group = $this->lockGroup($group);
             $this->guardEditable($group);
 
             $group->publish_date = $publishDate;
-            $this->bumpQueueVersionIfQueuing($group, $group->state);
-            $group->save();
+
+            if ($group->state === PostState::QUEUE) {
+                $this->bumpQueueVersionIfNotDraft($group, PostState::SCHEDULED);
+                $group->save();
+                $this->stateMachine->transition($group, PostState::SCHEDULED);
+
+                // Posts move with the group — same reasoning as
+                // PublishService::lockGroupIfQueued()'s un-claim branch:
+                // guardEditable()'s pending-post lock only means anything
+                // while these rows are genuinely QUEUE.
+                Post::query()
+                    ->where('post_group_id', $group->id)
+                    ->whereNull('release_id')
+                    ->where('state', PostState::QUEUE->value)
+                    ->update(['state' => PostState::SCHEDULED->value]);
+            } else {
+                $group->save();
+            }
 
             return $group;
         });
-
-        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
-
-        return $group;
     }
 
     /**
@@ -501,6 +511,13 @@ class PostGroupService
      * showing a stale "the channel rejected the post" is a product bug,
      * not a display nuance.
      *
+     * `transitionToward()`, not a direct `ERROR -> QUEUE` transition:
+     * `PostStateMachine::TRANSITIONS` has no such entry any more (see
+     * that class's docblock) — retrying now passes through `SCHEDULED`
+     * first, immediately followed by the claim into `QUEUE`, both inside
+     * this same transaction. Segment-level transitions below go through
+     * the identical two-hop path for the same reason.
+     *
      * The `state === ERROR` check below runs against `$group` AFTER
      * `lockGroup()` has re-read and locked its row (Task 31 review
      * finding 2) — every other guard in this pipeline
@@ -525,12 +542,12 @@ class PostGroupService
                 ]);
             }
 
-            $this->stateMachine->transition($group, PostState::QUEUE);
-
             $group->publish_date = Carbon::now();
             $group->error = null;
-            $this->bumpQueueVersionIfQueuing($group, $group->state);
+            $this->bumpQueueVersionIfNotDraft($group, PostState::QUEUE);
             $group->save();
+
+            $this->transitionToward($group, PostState::QUEUE);
 
             $group->posts()
                 ->where('state', PostState::ERROR->value)
@@ -538,13 +555,13 @@ class PostGroupService
                 ->get()
                 ->each(function (Post $post): void {
                     $post->error = null;
-                    $this->stateMachine->transition($post, PostState::QUEUE);
+                    $this->transitionToward($post, PostState::QUEUE);
                 });
 
             return $group->fresh(['posts.media', 'tags']);
         });
 
-        $this->dispatchPublishIfQueued($group, forceRedispatch: true);
+        $this->claimAndDispatch($group, forceRedispatch: true);
 
         return $group;
     }
@@ -664,55 +681,145 @@ class PostGroupService
      * scheduled post. A draft created WITH an explicit date keeps
      * exactly that date — this only fills in the gap when the caller
      * gave none.
+     *
+     * `$groupId` seeds `applyJitter()` for `type=schedule` only — see
+     * that method's docblock. Never applied to `now` (the user is
+     * watching; publishing early would violate `PublishService::
+     * PUBLISH_DATE_GRACE_SECONDS`) or `draft` (no schedule commitment
+     * exists yet to spread).
      */
-    private function resolvePublishDate(string $type, ?string $publishDate): ?CarbonInterface
+    private function resolvePublishDate(string $type, ?string $publishDate, string $groupId): ?CarbonInterface
     {
         return match ($type) {
             'now' => Carbon::now(),
-            'schedule' => Carbon::parse($publishDate),
+            'schedule' => $this->applyJitter(Carbon::parse($publishDate), $groupId),
             'draft' => $publishDate !== null ? Carbon::parse($publishDate) : Carbon::now(),
             default => null,
         };
     }
 
     /**
-     * Only two transitions are ever requested here: DRAFT (stay/enter
-     * draft) and QUEUE (schedule/publish-now). Moving OUT of DRAFT is
-     * always allowed (DRAFT->QUEUE); moving INTO DRAFT is only a no-op
-     * (already DRAFT) — PostStateMachine has no QUEUE->DRAFT or
-     * ERROR->DRAFT entry (see its docblock: those simply aren't
-     * transitions this product supports), so a request that would
-     * require one is rejected here as a normal validation failure
-     * (422) rather than reaching PostStateMachine::transition() and
-     * throwing InvalidStateTransition, which is reserved for
-     * programming errors, not user input.
+     * Durable-scheduling rewrite (Task 6): spreads `$date` within
+     * `config('publishing.jitter_seconds')` seconds either side,
+     * deterministically seeded from `$seed` — never `random_int()`, or
+     * re-saving the same post (any edit that re-runs `resolvePublishDate()`
+     * without changing the date) would walk the jittered instant a
+     * little further every time. `crc32()`, not a cryptographic hash:
+     * this only needs to decorrelate a thundering herd of tenants who
+     * all picked the same round number (e.g. every "12:00" schedule
+     * publishing in the same instant and exhausting a shared per-
+     * provider rate limit for everyone at once), not to resist anyone
+     * choosing their own id to land on a specific offset — there is
+     * nothing to gain by doing so.
+     *
+     * `$seed` is always the group's own id, including for
+     * `spawnRecurrence()` — safe there specifically because
+     * `RecurrenceService::spawnNext()`'s `claim()` (a conditional UPDATE
+     * on `repeat_spawned_at`) is taken BEFORE `spawnRecurrence()` is ever
+     * called and never retried once claimed, so a successor's id/jitter
+     * pair is computed exactly once, never recomputed across a redelivery
+     * the way `create()`'s could be re-submitted by a client retry.
      */
-    private function resolveTargetState(PostState $current, string $type): PostState
+    private function applyJitter(CarbonInterface $date, string $seed): CarbonInterface
     {
-        if ($type !== 'draft') {
-            return PostState::QUEUE;
+        $window = (int) config('publishing.jitter_seconds');
+
+        if ($window <= 0) {
+            return $date;
         }
 
-        if ($current !== PostState::DRAFT) {
-            throw ValidationException::withMessages([
-                'type' => ["Cannot move a post from {$current->value} back to draft."],
-            ]);
-        }
+        $offsetSeconds = (crc32($seed) % (2 * $window + 1)) - $window;
 
-        return PostState::DRAFT;
+        return $date->copy()->addSeconds($offsetSeconds);
     }
 
     /**
-     * Dispatches Task 30's `PublishPostJob` for `$group` iff it just
-     * entered `QUEUE` — a no-op for `draft`. Delayed until
-     * `$group->publish_date`: for `type=schedule` that is the future
-     * instant the user picked; for `type=now`, `resolvePublishDate()`
-     * already stamped it to (approximately) `now()`, so the delay is
-     * effectively zero.
+     * Three transitions are ever requested here: DRAFT (stay/enter
+     * draft), SCHEDULED (`type=schedule` — durable, waiting; nothing is
+     * dispatched), and QUEUE (`type=now` — claimed and dispatched
+     * immediately, see `claimAndDispatch()`). Moving OUT of DRAFT is
+     * always allowed; moving INTO DRAFT is only a no-op (already DRAFT)
+     * — `PostStateMachine` has no `*->DRAFT` entry other than
+     * `DRAFT->DRAFT` (see its docblock: those simply aren't transitions
+     * this product supports), so a request that would require one is
+     * rejected here as a normal validation failure (422) rather than
+     * reaching `PostStateMachine::transition()` and throwing
+     * `InvalidStateTransition`, which is reserved for programming
+     * errors, not user input.
+     */
+    private function resolveTargetState(PostState $current, string $type): PostState
+    {
+        if ($type === 'draft') {
+            if ($current !== PostState::DRAFT) {
+                throw ValidationException::withMessages([
+                    'type' => ["Cannot move a post from {$current->value} back to draft."],
+                ]);
+            }
+
+            return PostState::DRAFT;
+        }
+
+        return $this->targetStateForType($type);
+    }
+
+    /**
+     * `create()`'s equivalent of `resolveTargetState()` — no existing
+     * `$current` state to validate a `draft` request against (a brand
+     * new group is always `DRAFT` already), so this is the strictly
+     * simpler "what does this `type` mean" half, shared by both.
+     */
+    private function targetStateForType(string $type): PostState
+    {
+        return match ($type) {
+            'draft' => PostState::DRAFT,
+            'now' => PostState::QUEUE,
+            default => PostState::SCHEDULED,
+        };
+    }
+
+    /**
+     * Transitions `$model` toward `$target`, inserting the mandatory
+     * `SCHEDULED` hop first when jumping straight from `DRAFT`/`ERROR`
+     * to `QUEUE` — `PostStateMachine::TRANSITIONS` has no direct
+     * `DRAFT->QUEUE` or `ERROR->QUEUE` entry (every claim durably passes
+     * through `SCHEDULED`, even one this class immediately claims itself
+     * for `type=now`/retry). A no-op when `$model` is already at
+     * `$target`, so every call site can call this unconditionally rather
+     * than repeating `if ($target !== $model->state)` at each one.
+     */
+    private function transitionToward(Post|PostGroup $model, PostState $target): void
+    {
+        if ($model->state === $target) {
+            return;
+        }
+
+        if ($target === PostState::QUEUE && $model->state !== PostState::SCHEDULED) {
+            $this->stateMachine->transition($model, PostState::SCHEDULED);
+        }
+
+        $this->stateMachine->transition($model, $target);
+    }
+
+    /**
+     * Dispatches `PublishPostJob` for `$group` iff it just entered
+     * `QUEUE` — a no-op for `DRAFT` and, since the durable-scheduling
+     * rewrite, for `SCHEDULED` too: a `type=schedule` save never reaches
+     * `QUEUE` at all any more, and is durable the instant this method's
+     * caller commits, with no dispatch of any kind — `DueDispatchService`
+     * claims it later. This method exists only for the two cases that
+     * genuinely need a job to exist RIGHT NOW: `type=now`
+     * (create()/update()) and a manual retry — both transition the group
+     * straight into `QUEUE` and expect it to actually start publishing
+     * immediately, not wait for the next per-minute tick.
      *
-     * Deliberately called AFTER `create()`/`update()`'s own
-     * `DB::transaction()` has fully committed, never from inside it.
-     * Two independent reasons, both hard requirements:
+     * No `->delay()`: unlike the pre-rewrite version of this method,
+     * every call site here already means "this is due right now" — a
+     * scheduled post for a future date never reaches this method as
+     * `QUEUE` in the first place (see `resolveTargetState()`).
+     *
+     * Deliberately called AFTER the caller's own `DB::transaction()` has
+     * fully committed, never from inside it. Two independent reasons,
+     * both hard requirements:
      *
      *  - Durability: dispatching before commit risks a worker picking
      *    the job up and querying for a group the transaction hasn't
@@ -730,65 +837,59 @@ class PostGroupService
      *    do (its own `$group->fresh(['posts.media', 'tags'])` call, for
      *    one). Dispatching only after the closure has returned avoids
      *    this entirely — this method has no further scoped work to do
-     *    afterwards. Every existing Post CRUD test that schedules or
-     *    publishes-now (CreatePostTest, UpdatePostTest, PostMediaTest)
-     *    now calls `Queue::fake()` for exactly this reason — a real
-     *    dispatch() on the sync driver would otherwise run
-     *    `PublishPostJob` for real, inline, in the middle of tests that
-     *    have nothing to do with publishing.
-     *    `tests/Feature/Publishing/PublishPostJobTest.php` is what
-     *    exercises the job for real, by constructing and calling it
-     *    directly rather than through dispatch().
+     *    afterwards. Every existing Post CRUD test that publishes-now
+     *    (CreatePostTest, UpdatePostTest, PostMediaTest) calls
+     *    `Queue::fake()` for exactly this reason — a real dispatch() on
+     *    the sync driver would otherwise run `PublishPostJob` for real,
+     *    inline, in the middle of tests that have nothing to do with
+     *    publishing. `tests/Feature/Publishing/PublishPostJobTest.php`
+     *    is what exercises the job for real, by constructing and calling
+     *    it directly rather than through dispatch().
      *
-     * $forceRedispatch (post-review addition, finding 1 round 2):
-     * force-releases `PublishPostJob`'s `ShouldBeUnique` lock for `$group`
-     * immediately before dispatching — see `update()`/`updateDate()`'s
-     * docblocks for why a redispatch on a RESCHEDULE otherwise gets
-     * silently dropped by that lock for up to an hour, which is a
-     * missed-publish bug, not a merely-annoying one. `false` for
-     * `create()`: a brand-new group cannot already hold a lock from an
-     * earlier dispatch for the SAME group id (`uniqueId()` is the
-     * group's own freshly-minted ulid), so there is nothing to release
-     * there and no reason to pay the extra cache round-trip on the
-     * common path. Releasing a lock that isn't held is a harmless no-op
-     * either way (`Illuminate\Bus\UniqueLock::release()` -> `Cache::lock(...)
-     * ->forceRelease()`, which simply deletes a cache key that may not
-     * exist) — `true` is never unsafe to pass, only unnecessary on
-     * `create()`.
+     * $forceRedispatch (post-review addition, finding 1 round 2, kept
+     * through the durable-scheduling rewrite): force-releases
+     * `PublishPostJob`'s `ShouldBeUnique` lock for `$group` immediately
+     * before dispatching. `false` for `create()`: a brand-new group
+     * cannot already hold a lock from an earlier dispatch for the SAME
+     * group id (`uniqueId()` is the group's own freshly-minted ulid), so
+     * there is nothing to release there and no reason to pay the extra
+     * cache round-trip on the common path. `true` everywhere else this
+     * is called (an existing group re-entering QUEUE): re-editing to
+     * "publish now" a group that was already claimed once (or retrying
+     * one whose previous attempt's lock has not yet expired) must not
+     * silently drop, and releasing a lock that isn't held is a harmless
+     * no-op either way (`Illuminate\Bus\UniqueLock::release()` ->
+     * `Cache::lock(...)->forceRelease()`, which simply deletes a cache
+     * key that may not exist).
      *
      * Safety: force-releasing this lock reopens exactly the race
      * `ShouldBeUnique` exists to prevent — a second dispatch for the
      * SAME group now can reach the queue while an earlier one is still
      * pending/executing. Two guards, both already in place, are what
      * keep that race from ever producing a duplicate publish: the due-
-     * date check in `PublishService::lockGroupIfQueued()` (a stale job —
-     * the one whose lock was just force-released — that pops LATE simply
-     * no-ops instead of publishing early) and `publishChannel()`'s own
-     * per-row `lockForUpdate()` + `release_id IS NULL` filter (even two
-     * genuinely-concurrent runs of the SAME group can only ever publish
-     * a given segment once — see `PublishService`'s class docblock,
-     * idempotency point 4). Force-releasing without either of those
-     * would have been unsafe; with both, the worst case is a stale job
-     * that does nothing.
+     * date/state check in `PublishService::lockGroupIfQueued()` (a stale
+     * job — the one whose lock was just force-released — that pops LATE
+     * simply no-ops instead of publishing early) and `publishChannel()`'s
+     * own per-row `lockForUpdate()` + `release_id IS NULL` filter (even
+     * two genuinely-concurrent runs of the SAME group can only ever
+     * publish a given segment once — see `PublishService`'s class
+     * docblock, idempotency point 4). Force-releasing without either of
+     * those would have been unsafe; with both, the worst case is a stale
+     * job that does nothing.
      *
-     * `last_dispatched_at` (Task 32 review, round 2): stamped here, the
-     * ONE place in this class that actually calls
-     * `PublishPostJob::dispatch()`, immediately before that call —
-     * `MissedPostsService::lockCouldStillBeLegitimate()` needs to know
-     * WHEN a dispatch's `ShouldBeUnique` lock was actually acquired
-     * (dispatch time, independent of `->delay()`) to bound whether a
-     * still-held lock could legitimately belong to it; `publish_date`
-     * alone is the wrong anchor whenever a dispatch happens well after
-     * it, which every `forceRedispatch: true` caller here does by
-     * construction (a reschedule to "now", a manual retry). A plain
-     * column write, not folded into the caller's own transaction: this
-     * method already runs deliberately AFTER that transaction commits
-     * (see the class docblock), and the dispatch call immediately below
-     * is about to succeed or no-op for reasons entirely independent of
-     * this column, so there is nothing here worth an extra `lockForUpdate()`
-     * round-trip over.
+     * `last_dispatched_at`/`dispatch_attempts`: stamped here, alongside
+     * every other place a `PublishPostJob` is actually dispatched
+     * (`DueDispatchService::claimBatch()`, `MissedPostsService::dispatchRedispatch()`)
+     * — `MissedPostsService`'s stuck-row scan needs both to be accurate
+     * for ANY dispatch, not only ones that went through the durable
+     * per-minute claim. A plain column write, not folded into the
+     * caller's own transaction: this method already runs deliberately
+     * AFTER that transaction commits (see above), and the dispatch call
+     * immediately below is about to succeed or no-op for reasons
+     * entirely independent of this column, so there is nothing here
+     * worth an extra `lockForUpdate()` round-trip over.
      */
-    private function dispatchPublishIfQueued(PostGroup $group, bool $forceRedispatch = false): void
+    private function claimAndDispatch(PostGroup $group, bool $forceRedispatch = false): void
     {
         if ($group->state !== PostState::QUEUE) {
             return;
@@ -801,13 +902,16 @@ class PostGroupService
         // extra database round trip, for no benefit. Ordering this
         // first removes that widening entirely; it has no dependency on
         // the force-release having happened first.
-        PostGroup::query()->whereKey($group->id)->update(['last_dispatched_at' => now()]);
+        PostGroup::query()->whereKey($group->id)->update([
+            'last_dispatched_at' => now(),
+            'dispatch_attempts' => DB::raw('dispatch_attempts + 1'),
+        ]);
 
         if ($forceRedispatch) {
             app(UniqueLock::class)->release(new PublishPostJob($group->id, $group->queue_version));
         }
 
-        PublishPostJob::dispatch($group->id, $group->queue_version)->delay($group->publish_date);
+        PublishPostJob::dispatch($group->id, $group->queue_version);
     }
 
     /**
@@ -841,7 +945,7 @@ class PostGroupService
      *    the current schedule published; the version-based replacement
      *    must be at least as robust. Locking the row here, then bumping
      *    the LOCKED instance's own already-current in-memory value by a
-     *    plain `+ 1` (see `bumpQueueVersionIfQueuing()`) and saving it
+     *    plain `+ 1` (see `bumpQueueVersionIfNotDraft()`) and saving it
      *    together with `publish_date` in the SAME transaction, restores
      *    that: the lock forces a concurrent caller to wait until this
      *    transaction commits, then re-read the row fresh, so the
@@ -883,19 +987,29 @@ class PostGroupService
      * never as a separate write issued after commit, which is what let
      * the date and the version drift out of sync under a race.
      *
-     * A no-op unless `$resultingState` is `QUEUE`: nothing about a
-     * `DRAFT` write needs a fresh dispatch generation, since nothing is
-     * about to be dispatched for it.
+     * A no-op unless `$resultingState` is `SCHEDULED` or `QUEUE`: nothing
+     * about a `DRAFT` write needs a fresh dispatch generation, since
+     * nothing is about to be dispatched for it. Durable-scheduling
+     * rewrite (widened from "unless QUEUE" alone): a `type=schedule` edit
+     * of an already-`QUEUE` group now lands on `SCHEDULED`, not `QUEUE`
+     * — see `updateDate()`/`update()` — so "re-entering the pipeline"
+     * has to cover both resulting states, or a schedule-edit-away-from-
+     * ERROR would skip the `notified_at` reset below exactly the way
+     * Task 32 review finding 1 originally found for QUEUE. Bumping the
+     * version on a `SCHEDULED` result is harmless even where it isn't
+     * strictly needed (`DueDispatchService` reads whatever value is
+     * current at claim time regardless): it still correctly invalidates
+     * any job dispatched under an OLDER generation of this row.
      *
      * Task 32 review finding 1 (CRITICAL): also clears `notified_at`
      * here, in the SAME place `queue_version` is bumped — every path
-     * that re-enters `QUEUE` (a fresh dispatch generation) goes through
-     * this one method, `retry()` included. Without this, a group
-     * `MissedPostsService::notifyFailed()` already emailed once stays
-     * permanently un-notifiable: the customer retries, it fails again,
-     * `notifyFailed()`'s `whereNull('notified_at')` filter skips it
-     * forever, and — because `retry()` also clears `error` on the way
-     * back into `QUEUE` — `post_groups.error` never gets rewritten
+     * that re-enters the publish pipeline (a fresh dispatch generation)
+     * goes through this one method, `retry()` included. Without this, a
+     * group `MissedPostsService::notifyFailed()` already emailed once
+     * stays permanently un-notifiable: the customer retries, it fails
+     * again, `notifyFailed()`'s `whereNull('notified_at')` filter skips
+     * it forever, and — because `retry()` also clears `error` on the way
+     * back into the pipeline — `post_groups.error` never gets rewritten
      * either (`buildErrorSummary()` is gated on the exact same
      * never-reached notify pass), leaving `GET /api/posts/errors` and
      * the calendar rendering a genuinely re-failed post with no reason
@@ -903,9 +1017,9 @@ class PostGroupService
      * makes "this is a fresh generation" apply to the notify flag too,
      * not just to `PublishPostJob`'s own staleness check.
      */
-    private function bumpQueueVersionIfQueuing(PostGroup $group, PostState $resultingState): void
+    private function bumpQueueVersionIfNotDraft(PostGroup $group, PostState $resultingState): void
     {
-        if ($resultingState === PostState::QUEUE) {
+        if ($resultingState !== PostState::DRAFT) {
             $group->queue_version = $group->queue_version + 1;
             $group->notified_at = null;
         }

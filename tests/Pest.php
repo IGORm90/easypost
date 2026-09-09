@@ -9,6 +9,7 @@ use App\Models\PostGroup;
 use App\Models\User;
 use App\Social\ProviderRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Tests\Support\FakeProvider;
@@ -203,6 +204,63 @@ function raceCreate(string $class, array $attributes)
     $model->setConnection('race')->save();
 
     return $model;
+}
+
+/**
+ * Points the 'redis' cache store at a Redis connection unique to this
+ * process, for any race whose contested state lives in the cache rather
+ * than (or in addition to) the database — e.g. OAuthStateAtomicityTest's
+ * state token, or ProviderThrottleTest's shared rate-limit counter.
+ * Originally lived only in OAuthStateAtomicityTest.php; promoted here
+ * (post-review, round 4) once a second test file needed it — same reason
+ * every other cross-file racer helper on this page lives here instead of
+ * in one test file (see the "Publishing-pipeline fixtures" comment above):
+ * a subset run only loads the file(s) matching the filter, and a helper
+ * declared in File A is undefined to File B on such a run.
+ *
+ * `phpunit.xml` forces CACHE_STORE=array for the suite, and ArrayStore is
+ * a plain PHP array in process memory — fork() gives each child an
+ * independent copy, so it cannot prove anything about cross-process
+ * exclusion. A racer must first do `config(['cache.default' => 'redis'])`
+ * (in the parent, before forking) and then call this function as the
+ * FIRST thing inside its own closure, after the fork.
+ *
+ * `fork()` also duplicates the parent's already-open Redis socket into
+ * every child — two children issuing commands over that one inherited
+ * socket concurrently would corrupt the RESP protocol stream for both, the
+ * same problem raceConcurrently()'s own DB-connection trick solves for
+ * Postgres. Pointing at a connection name unique to this child's pid,
+ * never resolved before the fork, forces Laravel to open a brand-new
+ * socket on first use instead of touching the inherited one, while still
+ * talking to the exact same external Redis server — so state the parent
+ * (or another child) already wrote is visible immediately.
+ */
+function raceUseFreshRedisConnection(): void
+{
+    $connectionName = 'race_redis_'.getmypid();
+
+    // Cloned from 'cache' (config('cache.stores.redis.connection')'s
+    // ORIGINAL default before this function overrides it below), not
+    // 'default': the two point at different Redis logical databases
+    // (REDIS_DB vs REDIS_CACHE_DB) — cloning the wrong one would make
+    // every child silently read/write an empty database instead of the
+    // one the contested state actually lives in.
+    config(['database.redis.'.$connectionName => config('database.redis.cache')]);
+    config(['cache.stores.redis.connection' => $connectionName]);
+    config(['cache.stores.redis.lock_connection' => $connectionName]);
+
+    // RedisManager (bound as the 'redis' singleton) snapshots
+    // config('database.redis') once, in its constructor — it does not
+    // re-read config on every connection() call. If that singleton was
+    // already resolved in the parent before the fork, the inherited
+    // instance's snapshot predates $connectionName and wouldn't know
+    // about it. forgetInstance() drops it so the next resolution rebuilds
+    // RedisManager from current config — the Redis-manager-level
+    // counterpart to Cache::purge('redis') just below, which does the
+    // equivalent for CacheManager's resolved store.
+    app()->forgetInstance('redis');
+
+    Cache::purge('redis');
 }
 
 /*

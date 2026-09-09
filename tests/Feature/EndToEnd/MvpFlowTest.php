@@ -6,8 +6,8 @@ use App\Models\Integration;
 use App\Models\PostGroup;
 use App\Models\User;
 use App\Services\Billing\PlanLimitService;
+use App\Services\Posts\DueDispatchService;
 use App\Services\Posts\PublishService;
-use Carbon\CarbonInterface;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -98,21 +98,14 @@ it('covers the full mvp flow end to end', function () {
         ],
     ])->assertCreated()->json('id');
 
-    // 5. The publish job was queued for this exact group, delayed until
-    // the requested publish_date. Asserting the group id alone would
-    // still pass if PostGroupService stopped calling ->delay($group->
-    // publish_date) at dispatch time (PostGroupService.php) — Queue::
-    // assertPushed's closure receives the job instance, and Queueable's
-    // ->delay() sets $job->delay directly on it, so it can (and must) be
-    // checked here.
+    // 5. Durable-scheduling rewrite: a `type=schedule` save no longer
+    // puts anything on the queue at all — the group is durably
+    // `SCHEDULED` in Postgres, and nothing is dispatched until
+    // DueDispatchService's per-minute claim actually picks it up. See
+    // App\Enums\PostState's docblock.
     $group = PostGroup::find($groupId);
-
-    Queue::assertPushed(
-        PublishPostJob::class,
-        fn (PublishPostJob $job): bool => $job->postGroupId === $groupId
-            && $job->delay instanceof CarbonInterface
-            && $job->delay->equalTo($group->publish_date)
-    );
+    expect($group->state)->toBe(PostState::SCHEDULED);
+    Queue::assertNotPushed(PublishPostJob::class);
 
     // 6. The post is visible on the calendar.
     $calendar = $this->getJson('/api/calendar?'.http_build_query([
@@ -129,7 +122,20 @@ it('covers the full mvp flow end to end', function () {
     // refuses to publish a group whose publish_date is still materially
     // in the future (see that method's docblock) — a real worker would
     // only ever pick this job up once its delay has elapsed.
+    //
+    // DueDispatchService's claim query compares against Postgres' own
+    // `now()`, which `$this->travelTo()` below (a PHP/Carbon-only
+    // freeze) does not move — widening the lookahead window here is
+    // this test's stand-in for "wait a full hour", not a change to the
+    // dispatcher itself. `PublishService::lockGroupIfQueued()`'s own
+    // due-date check DOES use PHP's `now()`, which travelTo() does
+    // move, so it needs the travel exactly as before.
+    config(['publishing.dispatch_lookahead_seconds' => 7200]);
     $this->travelTo(now()->addHours(2));
+
+    app(DueDispatchService::class)->dispatchDue();
+    expect(PostGroup::find($groupId)->state)->toBe(PostState::QUEUE);
+
     app(PublishService::class)->publishGroup($groupId);
 
     expect(PostGroup::find($groupId)->state)->toBe(PostState::PUBLISHED);

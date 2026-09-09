@@ -419,12 +419,116 @@ it('does nothing when the group is not in the QUEUE state', function () {
         ->and($group->fresh()->state)->toBe(PostState::DRAFT);
 });
 
+// --- Guard-reason logging (post-review fix) --------------------------------
+//
+// QUEUE.md's guard sequence calls for a log line at every clean exit —
+// each of lockGroupIfQueued()'s no-op branches used to return silently,
+// leaving an operator with nothing to grep for when a post simply never
+// published.
+
+it('logs the reason when the group row no longer exists', function () {
+    Log::shouldReceive('info')->once()->with('publish.guard_skipped', [
+        'post_group_id' => 'nonexistent-id',
+        'reason' => 'group_not_found',
+    ]);
+
+    app(PublishService::class)->publishGroup('nonexistent-id');
+});
+
+it('logs the reason when the group is not QUEUE', function () {
+    $org = Organization::factory()->create();
+    $group = PostGroup::factory()->create(['organization_id' => $org->id, 'state' => PostState::DRAFT]);
+
+    Log::shouldReceive('info')->once()->with('publish.guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'not_queued',
+        'state' => PostState::DRAFT->value,
+    ]);
+
+    app(PublishService::class)->publishGroup($group->id);
+});
+
+it('logs the reason when the queue_version no longer matches', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+
+    Log::shouldReceive('info')->once()->with('publish.guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'stale_queue_version',
+        'job_queue_version' => 999,
+        'current_queue_version' => $group->queue_version,
+    ]);
+
+    app(PublishService::class)->publishGroup($group->id, 999);
+});
+
+it('logs the reason when a claimed group is not materially due yet, before un-claiming it', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org, now()->addHours(8));
+
+    Log::shouldReceive('info')->once()->with('publish.guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'not_due_yet',
+        'publish_date' => $group->publish_date->toIso8601String(),
+    ]);
+
+    app(PublishService::class)->publishGroup($group->id);
+});
+
+it('logs the reason when abandonGroup() no-ops because the group is not QUEUE', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+
+    app(PublishService::class)->publishGroup($group->id);
+    expect($group->fresh()->state)->toBe(PostState::PUBLISHED);
+
+    Log::shouldReceive('info')->once()->with('publish.abandon_guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'not_queued',
+        'state' => PostState::PUBLISHED->value,
+    ]);
+
+    app(PublishService::class)->abandonGroup($group->id, 'irrelevant');
+});
+
+it('logs the reason when abandonGroup() no-ops because the queue_version is stale', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+
+    Log::shouldReceive('info')->once()->with('publish.abandon_guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'stale_queue_version',
+        'job_queue_version' => 999,
+        'current_queue_version' => $group->queue_version,
+    ]);
+
+    app(PublishService::class)->abandonGroup($group->id, 'irrelevant', 999);
+});
+
+it('logs the reason when abandonGroup() no-ops because the group has since been rescheduled further out', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org, now()->addHours(6));
+
+    Log::shouldReceive('info')->once()->with('publish.abandon_guard_skipped', [
+        'post_group_id' => $group->id,
+        'reason' => 'not_due_yet',
+        'publish_date' => $group->publish_date->toIso8601String(),
+    ]);
+
+    app(PublishService::class)->abandonGroup($group->id, 'irrelevant', $group->queue_version);
+});
+
 // --- Stale schedule / rescheduling (review finding 1) ---------------------
 
-it('does not publish a group whose publish_date is still materially in the future', function () {
+it('does not publish a group whose publish_date is still materially in the future, and un-claims it back to SCHEDULED', function () {
     // Simulates a stale job: dispatched for an old publish_date that has
     // since been moved further out (PostGroupService::updateDate()), but
     // this particular job instance still reflects the OLD schedule.
+    //
+    // Durable-scheduling rewrite: PublishService::lockGroupIfQueued()'s
+    // guard 3 now un-claims a group it finds materially not-yet-due back
+    // to SCHEDULED (and its pending posts alongside it), rather than
+    // leaving it stranded at QUEUE — see that method's docblock.
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
@@ -434,8 +538,9 @@ it('does not publish a group whose publish_date is still materially in the futur
     app(PublishService::class)->publishGroup($group->id);
 
     expect($provider->publishedChains())->toHaveCount(0)
-        ->and($posts[0]->fresh()->state)->toBe(PostState::QUEUE)
-        ->and($group->fresh()->state)->toBe(PostState::QUEUE);
+        ->and($posts[0]->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($group->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($group->fresh()->last_dispatched_at)->toBeNull();
 });
 
 it('does publish a group whose publish_date has just passed, within the grace window', function () {
@@ -451,21 +556,16 @@ it('does publish a group whose publish_date has just passed, within the grace wi
         ->and($group->fresh()->state)->toBe(PostState::PUBLISHED);
 });
 
-it('redispatches PublishPostJob when the calendar moves publish_date, even while an earlier dispatch still holds the unique lock', function () {
-    // Review finding 1, round 2: PublishPostJob's ShouldBeUnique lock is
-    // a real Cache lock, acquired at dispatch() time with a fixed 3600s
-    // TTL independent of ->delay() and NOT touched by Queue::fake() —
-    // Illuminate\Foundation\Bus\PendingDispatch::shouldDispatch() checks
-    // it via the real cache before Queue::fake() ever sees the push.
-    // Without updateDate()'s forceRedispatch fix, a lock already held
-    // for this group (simulating an earlier drag's still-pending
-    // dispatch, or create()'s own dispatch moments earlier — a
-    // multi-drag calendar session, not an edge case) would silently
-    // swallow this one, per PendingDispatch::shouldDispatch() dispatching
-    // UniqueJobSkipped and returning false instead of pushing. Acquiring
-    // the lock manually first, exactly like
-    // TokenRefreshTest's equivalent ShouldBeUnique coverage, proves the
-    // fix directly rather than relying on real timing.
+it('un-claims a QUEUE group on a calendar drag, regardless of any lock an earlier dispatch might still hold, and dispatches nothing', function () {
+    // Durable-scheduling rewrite: this used to prove updateDate()'s
+    // forceRedispatch fix — a real ShouldBeUnique lock held for the
+    // group had to be force-released or the redispatch would silently
+    // swallow (PendingDispatch::shouldDispatch() -> UniqueJobSkipped).
+    // updateDate() no longer dispatches ANYTHING at all (see that
+    // method's docblock): a drag just un-claims a QUEUE group back to
+    // SCHEDULED, so there is no redispatch to swallow and this pre-
+    // existing lock is simply irrelevant to the outcome — proving that
+    // is the point of still acquiring it here.
     Queue::fake();
 
     $org = Organization::factory()->create();
@@ -483,11 +583,11 @@ it('redispatches PublishPostJob when the calendar moves publish_date, even while
         'publish_date' => $newDate->toIso8601String(),
     ])->assertOk();
 
-    Queue::assertPushed(PublishPostJob::class, 1);
-    Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id);
+    expect(PostGroup::find($group->id)->state)->toBe(PostState::SCHEDULED);
+    Queue::assertNotPushed(PublishPostJob::class);
 });
 
-it('redispatches successfully across two consecutive reschedules of the same group (a multi-drag session)', function () {
+it('un-claims across two consecutive reschedules of the same group (a multi-drag session), dispatching nothing either time', function () {
     Queue::fake();
 
     $org = Organization::factory()->create();
@@ -501,12 +601,15 @@ it('redispatches successfully across two consecutive reschedules of the same gro
     publishableChannel($org, $group, ['channel A']);
 
     app(PostGroupService::class)->updateDate($group, now()->addHours(5));
-    app(PostGroupService::class)->updateDate($group, now()->addHours(10));
+    // Second drag starts from SCHEDULED (the first drag's un-claim) —
+    // updateDate() only transitions state when it finds QUEUE, so this
+    // one is a plain publish_date write.
+    $finalDate = now()->addHours(10);
+    app(PostGroupService::class)->updateDate($group, $finalDate);
 
-    // Both drags reached the queue — never just the first, which is
-    // exactly the bug: pre-fix, the second (and every subsequent) drag
-    // within the same hour would have been silently dropped.
-    Queue::assertPushed(PublishPostJob::class, 2);
+    expect($group->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($group->fresh()->publish_date->isSameSecond($finalDate))->toBeTrue();
+    Queue::assertNotPushed(PublishPostJob::class);
 });
 
 it('logs when a ShouldBeUnique dispatch is silently skipped', function () {
@@ -522,10 +625,46 @@ it('logs when a ShouldBeUnique dispatch is silently skipped', function () {
             ->once()
             ->with('unique_job.skipped', [
                 'job' => PublishPostJob::class,
-                'unique_id' => $group->id,
+                'unique_id' => "{$group->id}:{$group->queue_version}",
             ]);
 
         PublishPostJob::dispatch($group->id, $group->queue_version);
+    } finally {
+        $lock->release();
+    }
+});
+
+it('is version-aware: a lock held for one queue_version does not block a dispatch for a different one (post-review fix, P1)', function () {
+    // The whole point of the fix: MissedPostsService's recovery must be
+    // able to redispatch a NEW generation of a group without ever being
+    // blocked by whatever is left of an OLD generation's ShouldBeUnique
+    // lock — including a lock that has outlived the job it belonged to
+    // (see PublishPostJob's class docblock and MissedPostsService's own
+    // class docblock for the total-Redis-loss scenario this exists for).
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+
+    $oldGeneration = new PublishPostJob($group->id, 1);
+    $lock = Cache::lock(UniqueLock::getKey($oldGeneration), 3600);
+    expect($lock->get())->toBeTrue();
+
+    try {
+        // A dispatch for the SAME version is still correctly deduped —
+        // this is not a blanket bypass of ShouldBeUnique.
+        Log::shouldReceive('warning')->once()->with('unique_job.skipped', [
+            'job' => PublishPostJob::class,
+            'unique_id' => "{$group->id}:1",
+        ]);
+        PublishPostJob::dispatch($group->id, 1);
+        Queue::assertNotPushed(PublishPostJob::class);
+
+        // A dispatch for a DIFFERENT version — exactly what a recovery
+        // redispatch does after bumping queue_version — reaches the
+        // queue regardless of the old lock still being held.
+        PublishPostJob::dispatch($group->id, 2);
+        Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id && $job->queueVersion === 2);
     } finally {
         $lock->release();
     }
@@ -696,7 +835,29 @@ it('never throws on a provider returning fewer results than the chain, and retri
 
 // --- Wiring: PostGroupService dispatches this job ------------------------
 
-it('dispatches PublishPostJob, delayed to publish_date, when a group is created already QUEUE', function () {
+it('dispatches PublishPostJob immediately when a group is created type=now, already QUEUE', function () {
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    actingAsMember($org);
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+
+    $this->postJson('/api/posts', [
+        'type' => 'now',
+        'posts' => [
+            ['integration_id' => $integration->id, 'value' => [['content' => 'hello']]],
+        ],
+    ])->assertCreated();
+
+    $group = PostGroup::sole();
+    expect($group->state)->toBe(PostState::QUEUE);
+
+    Queue::assertPushed(PublishPostJob::class, function (PublishPostJob $job) use ($group): bool {
+        return $job->postGroupId === $group->id;
+    });
+});
+
+it('durable-scheduling rewrite: a type=schedule create dispatches nothing at all, however soon it is due', function () {
     Queue::fake();
 
     $org = Organization::factory()->create();
@@ -713,10 +874,8 @@ it('dispatches PublishPostJob, delayed to publish_date, when a group is created 
     ])->assertCreated();
 
     $group = PostGroup::sole();
-
-    Queue::assertPushed(PublishPostJob::class, function (PublishPostJob $job) use ($group): bool {
-        return $job->postGroupId === $group->id;
-    });
+    expect($group->state)->toBe(PostState::SCHEDULED);
+    Queue::assertNotPushed(PublishPostJob::class);
 });
 
 it('does not dispatch anything for a draft group', function () {

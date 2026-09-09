@@ -36,6 +36,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property CarbonInterface|null $publish_date
  * @property int $queue_version
  * @property CarbonInterface|null $last_dispatched_at
+ * @property int $dispatch_attempts
  * @property string|null $created_by
  * @property string|null $error
  * @property CarbonInterface|null $notified_at
@@ -63,6 +64,7 @@ class PostGroup extends Model
         'share_token',
         'queue_version',
         'last_dispatched_at',
+        'dispatch_attempts',
         'repeat_unit',
         'repeat_interval',
         'repeat_until',
@@ -81,6 +83,7 @@ class PostGroup extends Model
             'queue_version' => 'integer',
             'notified_at' => 'datetime',
             'last_dispatched_at' => 'datetime',
+            'dispatch_attempts' => 'integer',
             'repeat_unit' => RepeatUnit::class,
             'repeat_interval' => 'integer',
             'repeat_until' => 'datetime',

@@ -352,11 +352,11 @@ it('buckets published, failed, and scheduled groups correctly and respects each 
     ]);
     $scheduled = PostGroup::factory()->create([
         'organization_id' => $org->id,
-        'state' => PostState::QUEUE,
+        'state' => PostState::SCHEDULED,
         'publish_date' => now()->addDays(3),
     ]);
 
-    // Out of every window: published too long ago, and a QUEUE group
+    // Out of every window: published too long ago, and a SCHEDULED group
     // scheduled beyond the coming week.
     $stalePublished = PostGroup::factory()->create([
         'organization_id' => $org->id,
@@ -365,7 +365,7 @@ it('buckets published, failed, and scheduled groups correctly and respects each 
     ]);
     $farFuture = PostGroup::factory()->create([
         'organization_id' => $org->id,
-        'state' => PostState::QUEUE,
+        'state' => PostState::SCHEDULED,
         'publish_date' => now()->addDays(30),
     ]);
 

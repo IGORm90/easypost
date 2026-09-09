@@ -14,10 +14,13 @@ use App\Services\Posts\Exceptions\InvalidStateTransition;
  * together) — both share the exact same lifecycle and the exact same
  * rules, so one table serves both rather than duplicating it per model.
  *
- * Allowed transitions: `DRAFT->QUEUE`, `QUEUE->PUBLISHED`,
- * `QUEUE->ERROR`, `ERROR->QUEUE` (retry), `DRAFT->DRAFT` (re-saving a
- * draft). Everything else — including every transition FROM `PUBLISHED`
- * — throws `InvalidStateTransition`.
+ * Allowed transitions: `DRAFT->SCHEDULED`, `SCHEDULED->QUEUE` (claimed
+ * by `DispatchDuePostsCommand`), `QUEUE->PUBLISHED`, `QUEUE->ERROR`,
+ * `QUEUE->SCHEDULED` (un-claim: `PublishService::lockGroupIfQueued()`
+ * finds the row rescheduled forward out from under a stale claim),
+ * `ERROR->SCHEDULED` (retry), `DRAFT->DRAFT` and `SCHEDULED->SCHEDULED`
+ * (re-saving a draft / a reschedule). Everything else — including every
+ * transition FROM `PUBLISHED` — throws `InvalidStateTransition`.
  *
  * `PUBLISHED` is deliberately terminal: it has no entry in
  * self::TRANSITIONS at all, so no future edit to this table can
@@ -36,9 +39,10 @@ class PostStateMachine
      * @var array<string, list<string>>
      */
     private const array TRANSITIONS = [
-        PostState::DRAFT->value => [PostState::DRAFT->value, PostState::QUEUE->value],
-        PostState::QUEUE->value => [PostState::PUBLISHED->value, PostState::ERROR->value],
-        PostState::ERROR->value => [PostState::QUEUE->value],
+        PostState::DRAFT->value => [PostState::DRAFT->value, PostState::SCHEDULED->value],
+        PostState::SCHEDULED->value => [PostState::SCHEDULED->value, PostState::QUEUE->value],
+        PostState::QUEUE->value => [PostState::PUBLISHED->value, PostState::ERROR->value, PostState::SCHEDULED->value],
+        PostState::ERROR->value => [PostState::SCHEDULED->value],
         // PostState::PUBLISHED has no entry: no key means no allowed
         // targets, checked via ?? [] below. This is what makes PUBLISHED
         // terminal.

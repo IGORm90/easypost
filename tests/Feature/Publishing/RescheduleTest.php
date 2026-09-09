@@ -35,16 +35,20 @@ afterEach(function () {
 
 // --- Reschedule cancels the stale job via queue_version --------------------
 
-it('bumps queue_version every time a QUEUE group is (re)dispatched', function () {
+it('bumps queue_version whenever a QUEUE group is claimed, and un-claims (with a bump) on reschedule', function () {
     Queue::fake();
 
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
 
+    // type=now: the only create() path that both enters QUEUE and
+    // dispatches immediately — see PostGroupService::resolveTargetState()'s
+    // docblock. type=schedule dispatches nothing at creation at all any
+    // more, so it cannot exercise "a QUEUE group is dispatched" the way
+    // this test's title requires.
     $this->postJson('/api/posts', [
-        'type' => 'schedule',
-        'publish_date' => now()->addHour()->toIso8601String(),
+        'type' => 'now',
         'posts' => [
             ['integration_id' => $integration->id, 'value' => [['content' => 'hello']]],
         ],
@@ -53,54 +57,57 @@ it('bumps queue_version every time a QUEUE group is (re)dispatched', function ()
     $group = PostGroup::sole();
     $firstVersion = $group->queue_version;
 
-    expect($firstVersion)->toBeGreaterThan(0);
+    expect($firstVersion)->toBeGreaterThan(0)
+        ->and($group->state)->toBe(PostState::QUEUE);
 
     Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id && $job->queueVersion === $firstVersion);
 
+    // A drag while still QUEUE (job dispatched, not yet run) un-claims
+    // back to SCHEDULED — see PostGroupService::updateDate()'s docblock
+    // — bumping queue_version so the already-dispatched job's captured
+    // version is stale, and dispatching nothing new at all.
     $this->patchJson("/api/posts/{$group->id}/date", [
         'publish_date' => now()->addHours(2)->toIso8601String(),
     ])->assertOk();
 
     $group->refresh();
-    expect($group->queue_version)->toBeGreaterThan($firstVersion);
+    expect($group->queue_version)->toBeGreaterThan($firstVersion)
+        ->and($group->state)->toBe(PostState::SCHEDULED);
 
-    Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id && $job->queueVersion === $group->queue_version);
+    Queue::assertPushed(PublishPostJob::class, 1);
 });
 
 it('a stale job cannot publish after a reschedule even when its own due-date check alone would let it through', function () {
-    // The realistic case: a job dispatched for the OLD schedule fires
-    // (a redelivery, or simply because ShouldBeUnique's lock briefly
-    // allowed a duplicate dispatch to slip through — see
-    // PostGroupService::dispatchPublishIfQueued()'s docblock). Its OWN
-    // publish_date/due-date check (PublishService::isDueNow()) only
+    // The realistic case: a job dispatched for an OLDER schedule
+    // generation fires (a redelivery, or simply because ShouldBeUnique's
+    // lock briefly allowed a duplicate dispatch to slip through). Its
+    // OWN publish_date/due-date check (PublishService::isDueNow()) only
     // rejects a date materially in the FUTURE, so once the group's new
     // date has also arrived, that check alone would happily let a stale
     // job through. queue_version is what still stops it, compared
     // atomically inside the very same lockForUpdate() transaction that
     // decides whether to act — see PublishService::lockGroupIfQueued().
     //
-    // Queue::fake() is required here for a reason distinct from the
-    // usual CRUD-test footgun: without it, updateDate()'s own real
-    // dispatch would run PublishPostJob SYNCHRONOUSLY (QUEUE_CONNECTION
-    // is 'sync' in tests) with the CURRENT (non-stale) queue_version,
-    // publishing the group for real before this test ever gets to
-    // exercise the STALE call it actually wants to prove is a no-op.
-    Queue::fake();
-
+    // Durable-scheduling rewrite: this used to drive the reschedule
+    // through PostGroupService::updateDate(), which USED to redispatch a
+    // live job carrying the fresh version. updateDate() no longer
+    // dispatches anything (a reschedule un-claims to SCHEDULED instead
+    // — see that method's docblock), so it can no longer produce "a
+    // fresh generation, still QUEUE, due now" the way this invariant
+    // needs to be exercised. The bump-and-reclaim this test needs is
+    // exactly what DueDispatchService's claim (or a `type=now` edit)
+    // produces in production — reproduced directly here to isolate the
+    // queue_version check itself from those mechanisms' own coverage
+    // elsewhere (DispatchDuePostsTest, this file's first test).
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
-    // updateDate() now locks its own row via an org-scoped query — see
-    // PostGroupService::lockGroup()'s docblock — so a direct (non-HTTP)
-    // call needs OrganizationContext set by hand, same as the retry()
-    // tests below.
-    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addMinute());
     publishableChannel($org, $group, ['channel A']);
 
     $staleVersion = $group->queue_version;
 
-    app(PostGroupService::class)->updateDate($group, now()->subSecond());
+    $group->update(['queue_version' => $staleVersion + 1, 'publish_date' => now()->subSecond()]);
 
     app(PublishService::class)->publishGroup($group->fresh()->id, $staleVersion);
 
@@ -109,16 +116,13 @@ it('a stale job cannot publish after a reschedule even when its own due-date che
 });
 
 it('the redispatched job, carrying the current queue_version, does publish once due', function () {
-    Queue::fake();
-
     $provider = fakeProvider();
 
     $org = Organization::factory()->create();
-    OrganizationContext::set($org);
     $group = queuedGroup($org, now()->addMinute());
     publishableChannel($org, $group, ['channel A']);
 
-    app(PostGroupService::class)->updateDate($group, now()->subSecond());
+    $group->update(['queue_version' => $group->queue_version + 1, 'publish_date' => now()->subSecond()]);
     $group->refresh();
 
     app(PublishService::class)->publishGroup($group->id, $group->queue_version);
@@ -281,7 +285,7 @@ it('refuses to delete a group while a publish for it is genuinely in flight, nev
     }
 });
 
-it('two genuinely concurrent updateDate() calls (a calendar double-drag) still leave the group publishing exactly once', function () {
+it('two genuinely concurrent update() type=now calls (a double-click "publish now") still leave the group publishing exactly once', function () {
     // Review finding 1 (CRITICAL): the bug this proves fixed. An earlier
     // revision bumped queue_version via Eloquent's increment(), called
     // AFTER the caller's own transaction had already committed — which
@@ -299,11 +303,22 @@ it('two genuinely concurrent updateDate() calls (a calendar double-drag) still l
     // under its own lock, so whichever matched the current schedule
     // published regardless of interleaving.
     //
+    // Durable-scheduling rewrite: this used to drive both racers through
+    // updateDate(), which USED to dispatch a live job on every call.
+    // updateDate() no longer dispatches anything at all (see that
+    // method's docblock) — a double-drag now just un-claims/re-writes
+    // publish_date with no race to speak of. `update()`'s `type=now`
+    // path is what still both re-locks the row (`lockGroup()`), bumps
+    // `queue_version` under that lock (`bumpQueueVersionIfNotDraft()`),
+    // and claims + dispatches immediately (`claimAndDispatch()`) — the
+    // exact shape this regression needs a double-click on "publish now"
+    // to reproduce.
+    //
     // A sequential Pest call can never reproduce this — each call's
     // transaction fully commits before the next starts — so this uses
     // the project's real pcntl_fork() harness (tests/Pest.php), exactly
     // like the delete-vs-publish race above. QUEUE_CONNECTION is 'sync'
-    // in tests, so each racer's own updateDate() call dispatches its
+    // in tests, so each racer's own update() call dispatches its
     // PublishPostJob INLINE, synchronously, the instant its own
     // transaction commits — which is exactly what lets a single racer
     // closure exercise "commit the reschedule, then attempt to publish"
@@ -322,7 +337,7 @@ it('two genuinely concurrent updateDate() calls (a calendar double-drag) still l
     ]);
     $group = raceCreate(PostGroup::class, [
         'organization_id' => $organization->id,
-        'state' => PostState::QUEUE,
+        'state' => PostState::SCHEDULED,
         'publish_date' => now()->addHour(),
         'queue_version' => 1,
     ]);
@@ -331,27 +346,29 @@ it('two genuinely concurrent updateDate() calls (a calendar double-drag) still l
         'organization_id' => $organization->id,
         'integration_id' => $integration->id,
         'order' => 0,
-        'content' => 'double-dragged',
+        'content' => 'double-clicked',
         'settings' => [],
-        'state' => PostState::QUEUE,
+        'state' => PostState::SCHEDULED,
     ]);
 
     try {
-        $racer = function () use ($group, $organization) {
+        $racer = function () use ($group, $organization, $integration) {
             OrganizationContext::set(Organization::query()->findOrFail($organization->id));
 
-            // Both racers reschedule to a date already in the past —
-            // guaranteed due the instant either one's inline dispatch
-            // runs, so this exercises the full commit-then-publish path
-            // for both, not just the version bookkeeping.
-            app(PostGroupService::class)->updateDate(
+            // Both racers click "publish now" on the same group at once.
+            app(PostGroupService::class)->update(
                 PostGroup::query()->findOrFail($group->id),
-                now()->subSecond(),
+                [
+                    'type' => 'now',
+                    'posts' => [
+                        ['integration_id' => $integration->id, 'value' => [['content' => 'published now']]],
+                    ],
+                ],
             );
         };
 
         // A racer whose own inline publish succeeds first leaves the
-        // group PUBLISHED — the OTHER racer's updateDate() then hits
+        // group PUBLISHED — the OTHER racer's update() then hits
         // guardEditable()'s "already published" guard and legitimately
         // fails (409). Which racer wins that race is not deterministic,
         // so this asserts the outcome that must hold regardless: the
@@ -360,7 +377,11 @@ it('two genuinely concurrent updateDate() calls (a calendar double-drag) still l
 
         OrganizationContext::set($organization);
         $freshGroup = PostGroup::query()->whereKey($group->id)->first();
-        $freshPost = Post::query()->whereKey($post->id)->first();
+        // Not $post->id: the winning racer's update() does a full
+        // replace (guardEditable()'s "safe to fully replace" contract —
+        // see PostGroupService's class docblock), deleting the original
+        // fixture post and creating a fresh one in its place.
+        $freshPost = Post::query()->where('post_group_id', $group->id)->first();
 
         expect($freshGroup)->not->toBeNull()
             // The load-bearing assertion: under the pre-fix bug both

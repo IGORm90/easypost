@@ -241,7 +241,8 @@
     },
     "state": {
       "DRAFT": "Draft",
-      "QUEUE": "Scheduled",
+      "SCHEDULED": "Scheduled",
+      "QUEUE": "Publishing",
       "PUBLISHED": "Published",
       "ERROR": "Publishing failed"
     },
@@ -285,14 +286,16 @@
       "states": {
         "all": "All",
         "DRAFT": "Drafts",
-        "QUEUE": "Scheduled",
+        "SCHEDULED": "Scheduled",
+        "QUEUE": "Publishing",
         "PUBLISHED": "Published",
         "ERROR": "Failed"
       },
       "empty": {
         "all": "No posts yet. Compose one and it will show up here.",
         "DRAFT": "No drafts. Anything you start without scheduling lands here.",
-        "QUEUE": "Nothing is scheduled right now.",
+        "SCHEDULED": "Nothing is scheduled right now.",
+        "QUEUE": "Nothing is publishing right now.",
         "PUBLISHED": "Nothing has published yet.",
         "ERROR": "Nothing has failed to publish. That is the good outcome."
       },

@@ -134,6 +134,31 @@ it('redispatches a group stuck at QUEUE well past its publish date', function ()
         && $job->queueVersion === $group->fresh()->queue_version);
 });
 
+it('bumps queue_version on redispatch, alongside dispatch_attempts, and dispatches with the new version (post-review fix, P1)', function () {
+    // Post-review fix: an earlier revision deliberately did NOT bump
+    // queue_version here, reasoning "this is not a reschedule". That
+    // reasoning predates PublishPostJob::uniqueId() becoming
+    // version-aware — a recovery redispatch now needs its own generation
+    // so it can never be blocked by whatever is left of the OLD
+    // generation's ShouldBeUnique lock. See dispatchRedispatch()'s
+    // docblock.
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    $group = overdueGroup($org, now()->subMinutes(20));
+    $originalVersion = $group->queue_version;
+    $originalAttempts = $group->dispatch_attempts;
+
+    app(MissedPostsService::class)->scan();
+
+    $fresh = $group->fresh();
+    expect($fresh->queue_version)->toBe($originalVersion + 1)
+        ->and($fresh->dispatch_attempts)->toBe($originalAttempts + 1);
+
+    Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id
+        && $job->queueVersion === $originalVersion + 1);
+});
+
 it('logs a warning when it redispatches an orphaned group', function () {
     // Log::shouldReceive(), not Log::spy()+shouldHaveReceived() — see
     // ImpersonationTest's identical note: the latter's assertion method
@@ -152,12 +177,16 @@ it('logs a warning when it redispatches an orphaned group', function () {
     app(MissedPostsService::class)->scan();
 });
 
-it('does not touch a group whose publish date is not overdue yet', function () {
+it('does not touch a group dispatched recently, still inside the stuck_after_seconds window', function () {
     Queue::fake();
 
     $org = Organization::factory()->create();
-    // Within the OVERDUE_MINUTES (15) grace window.
-    overdueGroup($org, now()->subMinutes(5));
+    // Durable-scheduling rewrite: "overdue" is decided by
+    // last_dispatched_at, not publish_date — see redispatchOrphaned()'s
+    // docblock. A group claimed a moment ago is not stuck, regardless of
+    // how far in the past its publish_date happens to be.
+    $group = overdueGroup($org, now()->subMinutes(20));
+    $group->update(['last_dispatched_at' => now()->subSeconds(10)]);
 
     app(MissedPostsService::class)->scan();
 
@@ -179,173 +208,55 @@ it('does not touch a group that is not QUEUE at all', function () {
     Queue::assertNotPushed(PublishPostJob::class);
 });
 
-// --- Mid-retry groups must be left alone -----------------------------------
+// --- Unconditional redispatch is safe even alongside a held lock -----------
 
-it('does not touch a group that is legitimately mid-retry, and logs nothing for it', function () {
-    // PublishPostJob's own backoff schedule ([60, 300, 900] across 4
-    // tries) can keep a group at QUEUE, past its publish_date, for
-    // roughly 21 minutes while genuinely retrying — well past this
-    // scanner's own 15-minute OVERDUE_MINUTES threshold. The mechanism
-    // that must save it is the ShouldBeUnique lock, not the date
-    // threshold: this test holds the EXACT lock a real in-flight
-    // PublishPostJob dispatch would hold (same pattern as
-    // TokenRefreshTest's "never even queues a second refresh job..."
-    // case) and proves the scanner backs off completely — no dispatch,
-    // no warning logged — rather than merely "no duplicate eventually".
+it('redispatches a stuck group with a bumped queue_version even while an OLD generation\'s lock is still held', function () {
+    // Post-review fix (round 3): this replaces the old probe/legitimacy
+    // tests entirely — there is no lock probe left to prove "leaked" or
+    // "still legitimate" about. What actually needs proving now is the
+    // thing that makes dropping the probe safe: a held lock for the OLD
+    // queue_version must not block (and is never even consulted before)
+    // a redispatch under the NEW, bumped queue_version — see the class
+    // docblock and PublishPostJob's own docblock for why
+    // `uniqueId()` being version-aware makes this always safe.
     Queue::fake();
 
     $org = Organization::factory()->create();
     $group = overdueGroup($org, now()->subMinutes(20));
 
-    Log::shouldReceive('warning')->never();
-
-    $inFlight = new PublishPostJob($group->id, $group->queue_version);
-    $lock = Cache::lock(UniqueLock::getKey($inFlight), 3600);
+    $oldGeneration = new PublishPostJob($group->id, $group->queue_version);
+    $lock = Cache::lock(UniqueLock::getKey($oldGeneration), 3600);
     expect($lock->get())->toBeTrue();
-
-    try {
-        app(MissedPostsService::class)->scan();
-
-        Queue::assertNotPushed(PublishPostJob::class);
-    } finally {
-        $lock->release();
-    }
-});
-
-// --- Leaked locks: bounded, observable recovery -----------------------------
-
-it('treats a lock that has clearly outlived any legitimate attempt as a leak, force-releases it, logs at error, and still redispatches', function () {
-    // Review finding 3, with the round-3 honesty correction folded in:
-    // a hard-killed worker (SIGKILL mid-handle()) never runs
-    // CallQueuedHandler's release path at all, so the ShouldBeUnique
-    // lock can in principle sit held with NO live job behind it — the
-    // scanner must not simply decline forever. In production this
-    // branch is a defensive backstop rather than a routine path (see
-    // lockCouldStillBeLegitimate()'s and redispatchIfOrphaned()'s
-    // docblocks: last_dispatched_at is stamped at the same instant the
-    // lock is acquired, so the bound and the lock's own Redis TTL
-    // expire at essentially the same moment — the probe almost never
-    // sees "held" and the bound say "no" at once). This test forces
-    // that otherwise-rare state directly by holding the lock itself
-    // and never releasing it, standing in for exactly the crashed-
-    // worker case the backstop exists for.
-    Queue::fake();
-
-    $org = Organization::factory()->create();
-    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
-    $group = overdueGroup($org, now()->subSeconds($uniqueFor + 120));
-
-    Log::shouldReceive('error')
-        ->once()
-        ->withArgs(fn (string $message, array $context) => $message === 'missed_posts.leaked_lock'
-            && $context['post_group_id'] === $group->id);
-    Log::shouldReceive('warning')
-        ->once()
-        ->withArgs(fn (string $message, array $context) => $message === 'missed_posts.leaked_lock_redispatched'
-            && $context['post_group_id'] === $group->id);
-
-    $leaked = new PublishPostJob($group->id, $group->queue_version);
-    $lockKey = UniqueLock::getKey($leaked);
-    $lock = Cache::lock($lockKey, $uniqueFor);
-    expect($lock->get())->toBeTrue();
-    // Deliberately never released by this test itself — the whole
-    // point is that nothing ever will, unless the scanner does it.
+    // Deliberately never released — standing in for a lock that has
+    // outlived the job it belonged to (a crashed worker, or one
+    // surviving on a separate, undamaged cache instance after a total
+    // loss of the queue's own Redis instance — see docs/DEPLOYMENT.md).
 
     try {
         app(MissedPostsService::class)->scan();
 
         Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id
-            && $job->queueVersion === $group->fresh()->queue_version);
+            && $job->queueVersion === $group->fresh()->queue_version
+            && $job->queueVersion !== $oldGeneration->queueVersion);
     } finally {
-        Cache::lock($lockKey)->forceRelease();
+        Cache::lock(UniqueLock::getKey($oldGeneration))->forceRelease();
     }
 });
 
-it('does not treat a lock as leaked while it could still legitimately belong to a live attempt', function () {
-    // The other side of the same bound: a lock held well within
-    // publish_date + uniqueFor must NOT be force-released or logged as
-    // a leak, even though it is well past this scanner's own 15-minute
-    // OVERDUE_MINUTES threshold (matches "does not touch a group that
-    // is legitimately mid-retry" above, but asserts the leak-specific
-    // log/force-release never fire).
-    Queue::fake();
-
-    $org = Organization::factory()->create();
-    $group = overdueGroup($org, now()->subMinutes(20));
-
-    Log::shouldReceive('error')->never();
-    Log::shouldReceive('warning')->never();
-
-    $inFlight = new PublishPostJob($group->id, $group->queue_version);
-    $lock = Cache::lock(UniqueLock::getKey($inFlight), 3600);
-    expect($lock->get())->toBeTrue();
-
-    try {
-        app(MissedPostsService::class)->scan();
-
-        Queue::assertNotPushed(PublishPostJob::class);
-    } finally {
-        $lock->release();
-    }
-});
-
-it('does not treat the scanner\'s own previous redispatch as a leak on the next tick', function () {
-    // Review finding (round 2, CRITICAL regression from round 1's fix):
-    // an earlier revision of lockCouldStillBeLegitimate() anchored the
-    // leak bound on publish_date alone. Since dispatchRedispatch() (and
-    // every forceRedispatch: true caller in PostGroupService) dispatches
-    // at now(), not at publish_date, that bound was wrong the moment a
-    // dispatch happens after publish_date — which is exactly what THIS
-    // CLASS's own redispatch does on every call. The traced consequence:
-    // once now() - publish_date exceeds uniqueFor, EVERY subsequent
-    // tick would declare a leak, force-release a lock a live retry
-    // chain (started by this class's own previous redispatch) still
-    // legitimately holds, and redispatch again — amplifying a backlog
-    // instead of draining it. publish_date here is deliberately set far
-    // enough in the past that the OLD bound would already have failed;
-    // last_dispatched_at (what a real prior redispatch would have
-    // stamped) is recent, which is what must save it now.
-    Queue::fake();
-
-    $org = Organization::factory()->create();
-    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
-    $group = overdueGroup($org, now()->subSeconds($uniqueFor + 600));
-    $group->update(['last_dispatched_at' => now()->subMinutes(5)]);
-
-    Log::shouldReceive('error')->never();
-    Log::shouldReceive('warning')->never();
-
-    $stillRetrying = new PublishPostJob($group->id, $group->queue_version);
-    $lock = Cache::lock(UniqueLock::getKey($stillRetrying), $uniqueFor);
-    expect($lock->get())->toBeTrue();
-
-    try {
-        app(MissedPostsService::class)->scan();
-
-        Queue::assertNotPushed(PublishPostJob::class);
-    } finally {
-        $lock->release();
-    }
-});
-
-it('does not declare a leak on the second tick after a real first-tick dispatch, with last_dispatched_at written by production code, not a fixture', function () {
-    // Review (round 3): the test above proves lockCouldStillBeLegitimate()'s
-    // BOUND, but it stamps last_dispatched_at directly on the fixture —
-    // grep over tests/ would find only that hand-written stamp, so
-    // deleting either production write
-    // (PostGroupService::dispatchPublishIfQueued() or this class's own
-    // dispatchRedispatch()) would leave every test green. This test
-    // covers the WRITE too: tick 1 is a genuine scan() that actually
-    // dispatches PublishPostJob (sync queue runs it inline against the
-    // real fake provider), which fails transiently and releases itself
-    // WITHOUT finishing — leaving the real ShouldBeUnique lock held,
-    // exactly like a job genuinely mid-retry, and (if and only if
-    // production code actually wrote it) a fresh last_dispatched_at on
-    // the group. Tick 2 must read that lock as still legitimate.
-    // publish_date is set far enough in the past that either the old
-    // publish_date-only bound OR a last_dispatched_at that was never
-    // actually written by dispatchRedispatch() would immediately fail
-    // this on the second tick.
+it('does not redispatch again on the second tick, immediately after a real first-tick dispatch, with last_dispatched_at written by production code, not a fixture', function () {
+    // This test covers the WRITE, not a legitimacy check (that
+    // mechanism is gone — see the class docblock): tick 1 is a genuine
+    // scan() that actually dispatches PublishPostJob (sync queue runs
+    // it inline against the real fake provider), which fails
+    // transiently and releases itself WITHOUT finishing. Tick 2 runs
+    // immediately afterward, with no time travel in between — if
+    // `dispatchRedispatch()` had NOT actually written a fresh
+    // `last_dispatched_at` (e.g. a regression reverting to a stale or
+    // missing stamp), the group would still look stuck and tick 2 would
+    // wrongly redispatch it again. publish_date is set far enough in
+    // the past that only a genuinely-fresh `last_dispatched_at` — not
+    // publish_date — can keep tick 2 from matching
+    // `redispatchOrphaned()`'s own query.
     $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
 
     $org = Organization::factory()->create();
@@ -374,37 +285,38 @@ it('does not declare a leak on the second tick after a real first-tick dispatch,
     expect($afterFirstTick->last_dispatched_at)->not->toBeNull()
         ->and($afterFirstTick->state)->toBe(PostState::QUEUE);
 
-    // Tick 2 must find nothing to complain about: the lock from tick
-    // 1's real dispatch is still genuinely held, and lockCouldStillBeLegitimate()
-    // must read it as legitimate off the last_dispatched_at production
-    // code actually wrote a moment ago — not declare a leak, not
-    // force-release, not redispatch again.
+    // Tick 2 must find nothing to redispatch: last_dispatched_at is
+    // still fresh (tick 1 stamped it a moment ago), well inside
+    // stuck_after_seconds, so redispatchOrphaned()'s own query does not
+    // even select this row a second time.
     Log::shouldReceive('error')->never();
     Log::shouldReceive('warning')->never();
 
     app(MissedPostsService::class)->scan();
 });
 
-it('does not declare a leak after PostGroupService dispatches for real, with last_dispatched_at written by that production code path too', function () {
+it('does not redispatch again on the second tick after PostGroupService dispatches for real, with last_dispatched_at written by that production code path too', function () {
     // Companion to the test above, covering the OTHER production write
-    // site: PostGroupService::dispatchPublishIfQueued() (create(),
-    // update(), updateDate(), retry()) is the ONLY other place
+    // site: PostGroupService::claimAndDispatch() (create()/update()'s
+    // type=now, and retry()) is the ONLY other place
     // PublishPostJob::dispatch() is ever called in this codebase. The
     // test above only exercises MissedPostsService::dispatchRedispatch()'s
-    // stamp — deleting THIS class's write would leave it green. This
-    // test drives the dispatch through PostGroupService::updateDate()
-    // instead (called directly, the same way a real reschedule request
-    // would reach it), setting the NEW publish_date deep enough in the
-    // past that only a genuinely-written last_dispatched_at can save
-    // the next scan from declaring a leak.
-    $uniqueFor = (new PublishPostJob('probe', 1))->uniqueFor;
-
+    // stamp — deleting THIS class's write would leave it green.
+    //
+    // Durable-scheduling rewrite: this used to drive the dispatch
+    // through PostGroupService::updateDate(), rescheduling deep into the
+    // past to force a dispatch — updateDate() no longer dispatches
+    // anything at all (a reschedule now un-claims a QUEUE group back to
+    // SCHEDULED; see that method's docblock). `retry()` is the
+    // remaining call site that both re-enters QUEUE and dispatches
+    // immediately, so it takes over this test's job.
     $org = Organization::factory()->create();
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
     $group = PostGroup::factory()->create([
         'organization_id' => $org->id,
-        'state' => PostState::QUEUE,
-        'publish_date' => now()->addDay(),
+        'state' => PostState::ERROR,
+        'publish_date' => now()->subDay(),
+        'error' => 'previous attempt failed',
         'queue_version' => 1,
     ]);
     Post::create([
@@ -414,32 +326,27 @@ it('does not declare a leak after PostGroupService dispatches for real, with las
         'order' => 0,
         'content' => 'two-tick leak bound via PostGroupService',
         'settings' => [],
-        'state' => PostState::QUEUE,
+        'state' => PostState::ERROR,
     ]);
 
     fakeProvider()->failNextPostTransiently('simulated network blip');
 
-    // The "dispatch": a reschedule to a date already deep in the past
-    // (never something a real FormRequest would allow, but
-    // PostGroupService::updateDate() itself places no such
-    // restriction — this proves the SERVICE's own write, independent
-    // of request-layer validation). Sync queue runs the dispatched
+    // The "dispatch": retry() transitions ERROR -> SCHEDULED -> QUEUE
+    // and claims immediately. Sync queue runs the dispatched
     // PublishPostJob inline; it hits the transient failure and
     // release()s without finishing, leaving the ShouldBeUnique lock
     // held.
     OrganizationContext::set($org);
-    app(PostGroupService::class)->updateDate($group, now()->subSeconds($uniqueFor + 600));
+    app(PostGroupService::class)->retry($group);
     OrganizationContext::clear();
 
     $afterDispatch = $group->fresh();
     expect($afterDispatch->last_dispatched_at)->not->toBeNull()
         ->and($afterDispatch->state)->toBe(PostState::QUEUE);
 
-    // The scan must find nothing to complain about: the lock from the
-    // updateDate()-triggered dispatch is still genuinely held, and
-    // lockCouldStillBeLegitimate() must read it as legitimate off the
-    // last_dispatched_at PostGroupService actually wrote — not declare
-    // a leak, not force-release, not redispatch again.
+    // The scan must find nothing to redispatch: last_dispatched_at is
+    // fresh (PostGroupService's retry() just wrote it), well inside
+    // stuck_after_seconds.
     Log::shouldReceive('error')->never();
     Log::shouldReceive('warning')->never();
 
@@ -468,16 +375,15 @@ it('a scanner redispatch racing a genuinely in-flight publish calls the provider
     // Racer 1 stands in for "the ORIGINAL PublishPostJob attempt,
     // already running" — it calls PublishService::publishGroup()
     // directly, WITHOUT ever going through PublishPostJob::dispatch(),
-    // so it never acquires the ShouldBeUnique cache lock at all. This
-    // is deliberate: it proves the no-duplicate-publish guarantee holds
-    // even in the state this class's own docblock calls out as the
-    // genuinely dangerous one — the cache lock already gone (a leaked
-    // lock, or simply a far-scheduled post — see
-    // lockCouldStillBeLegitimate()'s docblock) while a real attempt is
-    // still in flight via Postgres's own per-row lock alone. Racer 2 is
-    // the scanner's redispatch path, exactly as production dispatches
-    // it (sync queue in tests runs the dispatched PublishPostJob
-    // inline).
+    // so it never acquires the ShouldBeUnique cache lock at all. This is
+    // exactly the situation this class's redispatch now runs in
+    // unconditionally, every time (see the class docblock: there is no
+    // lock probe left to consult before redispatching) — proving the
+    // no-duplicate-publish guarantee holds via Postgres's own per-row
+    // lock alone, with no ShouldBeUnique lock in the picture at all.
+    // Racer 2 is the scanner's redispatch path, exactly as production
+    // dispatches it (sync queue in tests runs the dispatched
+    // PublishPostJob inline).
     config(['database.connections.race' => config('database.connections.pgsql')]);
     DB::purge('race');
 
@@ -822,4 +728,61 @@ it('dispatches the scan through ScanMissedPostsJob exactly as the scheduler runs
 
     expect(OrganizationContext::get())->toBeNull();
     Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id);
+});
+
+// --- Recovery attempt cap ---------------------------------------------------
+
+it('abandons a group to ERROR instead of redispatching once dispatch_attempts reaches the cap, and logs it', function () {
+    Queue::fake();
+    Log::shouldReceive('error')->once()->withArgs(
+        fn (string $message, array $context): bool => $message === 'missed_posts.attempt_cap_exceeded'
+            && $context['dispatch_attempts'] === config('publishing.max_dispatch_attempts')
+    );
+    Log::shouldReceive('info')->byDefault();
+
+    $org = Organization::factory()->create();
+    $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
+    $group = PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->subMinutes(20),
+        'queue_version' => 1,
+        'last_dispatched_at' => now()->subMinutes(10),
+        'dispatch_attempts' => config('publishing.max_dispatch_attempts'),
+    ]);
+    Post::create([
+        'post_group_id' => $group->id,
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'order' => 0,
+        'content' => 'stuck forever',
+        'settings' => [],
+        'state' => PostState::QUEUE,
+    ]);
+
+    app(MissedPostsService::class)->scan();
+
+    Queue::assertNotPushed(PublishPostJob::class);
+    expect($group->fresh()->state)->toBe(PostState::ERROR)
+        ->and(Post::withoutGlobalScope('organization')->sole()->state)->toBe(PostState::ERROR);
+});
+
+it('does not abandon a group whose dispatch_attempts is still below the cap — it redispatches instead', function () {
+    Queue::fake();
+
+    $org = Organization::factory()->create();
+    $group = PostGroup::factory()->create([
+        'organization_id' => $org->id,
+        'state' => PostState::QUEUE,
+        'publish_date' => now()->subMinutes(20),
+        'queue_version' => 1,
+        'last_dispatched_at' => now()->subMinutes(10),
+        'dispatch_attempts' => config('publishing.max_dispatch_attempts') - 1,
+    ]);
+
+    app(MissedPostsService::class)->scan();
+
+    Queue::assertPushed(fn (PublishPostJob $job): bool => $job->postGroupId === $group->id);
+    expect($group->fresh()->state)->toBe(PostState::QUEUE)
+        ->and($group->fresh()->dispatch_attempts)->toBe(config('publishing.max_dispatch_attempts'));
 });

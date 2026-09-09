@@ -28,6 +28,7 @@ class PostGroupFactory extends Factory
             'share_token' => null,
             'queue_version' => 0,
             'last_dispatched_at' => null,
+            'dispatch_attempts' => 0,
         ];
     }
 }

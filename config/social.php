@@ -39,4 +39,39 @@ return [
         'meta-threads' => ThreadsProvider::class,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Per-provider publish rate limits (QUEUE.md Task 7)
+    |--------------------------------------------------------------------------
+    |
+    | identifier => ['max' => int, 'decay_seconds' => int] — a shared budget
+    | ACROSS EVERY ORGANIZATION on this installation for that one network,
+    | enforced by App\Services\Posts\PublishService::enforceProviderThrottle()
+    | immediately before the provider's own API is called. An identifier
+    | with no entry here is unthrottled — every provider starts that way.
+    |
+    | These are deliberately conservative PLACEHOLDERS, not measured
+    | ceilings — tune each one to sit BELOW the real platform limit once
+    | you have one on file for it, to leave headroom for analytics or any
+    | other API traffic sharing the same budget. A limit set exactly at
+    | the platform's own published ceiling leaves no margin at all.
+    |
+    | Belongs here, not in config/publishing.php — that file is
+    | deliberately provider-agnostic (see its own docblock); this file
+    | already declares itself the ONLY place provider identifiers are
+    | wired, which a rate-limit table keyed by identifier is a natural
+    | extension of. tests/Unit/Architecture/ProviderIsolationTest only
+    | greps app/, never config/, so a provider identifier appearing here
+    | does not trip it.
+    |
+    */
+    'rate_limits' => [
+        'reddit' => ['max' => 50, 'decay_seconds' => 60],
+        'telegram' => ['max' => 25, 'decay_seconds' => 1],
+        'bluesky' => ['max' => 100, 'decay_seconds' => 300],
+        'facebook-page' => ['max' => 200, 'decay_seconds' => 3600],
+        'instagram' => ['max' => 200, 'decay_seconds' => 3600],
+        'meta-threads' => ['max' => 200, 'decay_seconds' => 3600],
+    ],
+
 ];
