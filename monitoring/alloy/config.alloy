@@ -1,0 +1,63 @@
+// Only the four containers that emit the product's request, application and
+// queue logs enter Loki. Scraping every Compose container would recursively
+// ingest Loki/Alloy/Grafana's own logs and make operational queries noisy.
+discovery.docker "easypost" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "easypost" {
+  targets = discovery.docker.easypost.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "nginx|php|horizon|scheduler"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+}
+
+// The labels below are intentionally bounded. Request, organization, user,
+// post and integration IDs remain JSON fields and are extracted at query time;
+// indexing any of them would create an unbounded number of Loki streams.
+loki.source.docker "easypost" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.easypost.output
+  labels     = { app = "easypost" }
+  forward_to = [loki.process.easypost.receiver]
+}
+
+loki.process "easypost" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.json {
+    expressions = {
+      level_name = "level_name",
+      channel    = "channel",
+    }
+  }
+
+  // Monolog emits uppercase level_name values. Normalize once at ingestion so
+  // all dashboard and alert selectors can use `level=\"error\"` consistently.
+  stage.template {
+    source   = "level_name"
+    template = "{{ ToLower .Value }}"
+  }
+
+  stage.labels {
+    values = {
+      level   = "level_name",
+      channel = "channel",
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

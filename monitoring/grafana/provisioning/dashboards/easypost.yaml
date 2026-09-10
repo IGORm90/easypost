@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: EasyPost
+    orgId: 1
+    folder: EasyPost
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

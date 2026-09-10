@@ -1,12 +1,26 @@
-COMPOSE = docker compose -f docker/compose.yaml
+# Compose otherwise resolves interpolation from docker/.env (next to the
+# Compose file), while this project stores its deployment values at .env.
+# Passing it explicitly makes profile-only values such as Grafana's admin
+# password available to Compose without injecting every application secret
+# into the Grafana container through env_file.
+COMPOSE = docker compose --env-file .env -f docker/compose.yaml
 
-.PHONY: up down sh test migrate ensure-test-db setup seed
+.PHONY: up down sh test migrate ensure-test-db setup seed monitoring-up monitoring-down
 
 up:
 	$(COMPOSE) up -d --build
 
 down:
 	$(COMPOSE) down
+
+# Monitoring is profile-gated so the normal development stack and CI do not
+# spend the additional memory on Loki, Alloy and Grafana. These targets do
+# not affect the default services or their persistent application data.
+monitoring-up:
+	$(COMPOSE) --profile monitoring up -d
+
+monitoring-down:
+	$(COMPOSE) --profile monitoring rm -sf loki alloy grafana
 
 sh:
 	$(COMPOSE) exec php sh

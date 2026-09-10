@@ -1,0 +1,115 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: easypost-observability
+    folder: EasyPost
+    interval: 1m
+    rules:
+      - uid: easypost-log-pipeline-dead
+        title: EasyPost log pipeline dead
+        condition: A
+        noDataState: Alerting
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: No EasyPost log line reached Loki in ten minutes.
+          description: This detects a broken Alloy-to-Loki path, but cannot distinguish it from a total application-host outage.
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: range
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="easypost"}[10m]))'
+              refId: A
+
+      - uid: easypost-error-spike
+        title: EasyPost error spike
+        condition: C
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: The five-minute error rate is over five times the preceding hour baseline.
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: range
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: 'sum(rate({app="easypost", level="error"}[5m]))'
+              refId: A
+          - refId: B
+            queryType: range
+            relativeTimeRange: { from: 7200, to: 3600 }
+            datasourceUid: loki
+            model:
+              expr: 'sum(rate({app="easypost", level="error"}[1h] offset 1h))'
+              refId: B
+          - refId: C
+            queryType: ''
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: math
+              expression: '$A > 5 * $B'
+              refId: C
+
+      - uid: easypost-publish-auth-failures
+        title: EasyPost publish authentication failures
+        condition: C
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: At least three authentication failures occurred across at least two integrations in fifteen minutes.
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: range
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="easypost", service="horizon", channel="jobs"} | json message="message", failure_kind="context.failure_kind" | message="publish.attempt" | failure_kind="auth" [15m]))'
+              refId: A
+          - refId: B
+            queryType: range
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: 'count(sum by (integration_id) (count_over_time({app="easypost", service="horizon", channel="jobs"} | json message="message", failure_kind="context.failure_kind", integration_id="context.integration_id" | message="publish.attempt" | failure_kind="auth" | label_format integration_id="{{.integration_id}}" [15m])))'
+              refId: B
+          - refId: C
+            queryType: ''
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: math
+              expression: '($A >= 3) && ($B >= 2)'
+              refId: C
+
+      - uid: easypost-publish-queue-stalled
+        title: EasyPost publish queue stalled
+        condition: A
+        noDataState: Alerting
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: No publish-queue job completed in fifteen minutes.
+          description: Loki has no Horizon pending-work metric, so an idle queue can produce this alert. Phase 6 metrics must add that cross-check.
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: range
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: 'sum(count_over_time({app="easypost", service="horizon", channel="jobs"} | json message="message", queue="context.queue" | message="job.processed" | queue="publish" [15m]))'
+              refId: A

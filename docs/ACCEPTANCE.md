@@ -447,3 +447,17 @@ pass should exercise them by hand.
   after any nginx or Docker logging-driver change: hit a real endpoint and
   confirm the same request id appears in both the nginx access line and
   the application log line.
+- **The Loki/Alloy/Grafana profile has no automated coverage.** Before using
+  it operationally, set `GRAFANA_ADMIN_PASSWORD`, then run
+  `make monitoring-up`. Confirm `easypost-logs` exists in MinIO; Grafana
+  requires the configured password; the provisioned dashboard, Loki
+  datasource, and alert rules exist without manual creation; and `curl
+  localhost:3100` is refused.
+  The configured password initializes a new `grafana-data` volume only; use
+  Grafana's Change Password action (and update the deployment secret) to
+  rotate an existing admin account.
+  Hit an API endpoint with an `X-Request-Id`, then find that id in both nginx
+  and PHP streams in Grafana Explore. Schedule and publish through the fake
+  provider to populate publish lateness/failure panels. Finally stop Alloy
+  for more than ten minutes and confirm the pipeline-dead alert fires and
+  resolves after restart. No PHP, frontend, or CI gate can prove any of this.
