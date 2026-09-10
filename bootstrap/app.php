@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AttachLogContext;
 use App\Http\Middleware\DenyWhileImpersonating;
 use App\Http\Middleware\EnforcePlanLimit;
 use App\Http\Middleware\EnsureEmailIsVerified;
@@ -54,6 +55,12 @@ return Application::configure(basePath: dirname(__DIR__))
             // is a 500 where a 403 belongs. See that class's docblock.
             'verified' => EnsureEmailIsVerified::class,
         ]);
+
+        // LOG_PLAN.md Phase 1.3. Prepended, not appended: the request id
+        // must exist before anything else in the pipeline can fail, so
+        // every subsequent log line — including one from a middleware
+        // that rejects the request — carries it.
+        $middleware->prependToGroup('api', AttachLogContext::class);
 
         // Every API response the user reads — validation errors above
         // all — must speak their language, not APP_LOCALE's. Appended to

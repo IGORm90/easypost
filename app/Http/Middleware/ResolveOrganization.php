@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Support\OrganizationContext;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -54,6 +55,12 @@ class ResolveOrganization
         }
 
         OrganizationContext::set($organization);
+
+        // LOG_PLAN.md Phase 1.3: this is the single choke point where
+        // both are known — AttachLogContext runs earlier in the api
+        // group but before authentication/tenancy resolve.
+        Context::add('organization_id', $organization->id);
+        Context::add('user_id', $user->id);
 
         return $next($request);
     }

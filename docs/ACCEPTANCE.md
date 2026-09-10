@@ -430,3 +430,20 @@ pass should exercise them by hand.
   be accepted here regardless of how thorough the walkthrough is; a real
   acceptance pass for them needs a deployment with a publicly routable
   `AWS_URL`, full stop.
+- **Structured logging is proven at the record level, never through real
+  stdout, real JSON framing via the Docker log driver, or the nginx
+  access log format.** `LogChannelsTest`, `JobInstrumentationTest`,
+  `LogContextTest`/`LogContextPropagationTest` and `PublishLoggingTest`
+  all assert against a real Monolog channel writing to a temp file or a
+  mocked `Log` facade — never against what actually lands in `docker
+  compose logs`, and never against whether the container runtime's
+  json-file driver frames each line correctly. `docker/nginx/default.conf`'s
+  JSON access log, its `$easypost_path`/`$easypost_loggable` capture (see
+  that file's comments for why a naive `$uri`- or
+  `location = /up`-based approach silently breaks it), and the
+  `fastcgi_param HTTP_X_REQUEST_ID` join with the application's own
+  `request_id` were verified by hand against the running stack while this
+  was built, but no automated gate re-checks any of it. Re-verify by hand
+  after any nginx or Docker logging-driver change: hit a real endpoint and
+  confirm the same request id appears in both the nginx access line and
+  the application log line.

@@ -138,3 +138,15 @@ Schedule::job(new SendDigestEmailJob)
     ->hourly()
     ->withoutOverlapping()
     ->onOneServer();
+
+/*
+ * LOG_PLAN.md Phase 0: Horizon already samples queue throughput and wait
+ * time on every worker tick, but keeps only the most recent snapshot in
+ * memory until `horizon:snapshot` persists one to Redis. Without this,
+ * `/horizon`'s throughput graphs are permanently empty on a fresh
+ * install — the metrics exist, nothing is writing them down.
+ */
+Schedule::command('horizon:snapshot')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();

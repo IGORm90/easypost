@@ -67,6 +67,14 @@ purpose:
 | `APP_URL` | Base URL used to build absolute links (e.g. in emails). |
 | `APP_LOCALE`, `APP_FALLBACK_LOCALE` | Must be `en` or `ru` — those are the only two translation sets shipped (`lang/en`, `lang/ru`); any other value falls through to missing-translation-key output. |
 
+### Logging
+
+| Variable | Purpose |
+|---|---|
+| `LOG_CHANNEL` | `stack` in every environment; which channels the stack fans out to is controlled by `LOG_STACK`. |
+| `LOG_STACK` | `single` in dev (a human-readable text file under `storage/logs/`). **`app,errors` in production** — JSON to stdout/stderr instead, the shape a log shipper needs. See `config/logging.php` and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)'s "Logging" section. |
+| `LOG_LEVEL` | Minimum level for the `app` channel; `errors` always logs at `error` regardless of this value, by design. |
+
 ### Database
 
 | Variable | Purpose |

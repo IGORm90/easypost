@@ -1,5 +1,7 @@
 <?php
 
+use App\Logging\RedactSensitiveContext;
+use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\NullHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
@@ -79,6 +81,44 @@ return [
             'level' => env('LOG_LEVEL', 'debug'),
             'max_files' => 3,
             'replace_placeholders' => true,
+        ],
+
+        // LOG_PLAN.md Phase 1.1. JSON to stdout/stderr — the shape Loki
+        // (or any log shipper reading the container's stdout) needs; the
+        // default text formatter has nothing to extract fields from.
+        // RedactSensitiveContext runs on every record as defence in
+        // depth (see that class's docblock); it is not the primary
+        // control.
+        'app' => [
+            'driver' => 'monolog',
+            'handler' => StreamHandler::class,
+            'with' => ['stream' => 'php://stdout'],
+            'formatter' => JsonFormatter::class,
+            'level' => env('LOG_LEVEL', 'info'),
+            'processors' => [PsrLogMessageProcessor::class, RedactSensitiveContext::class],
+        ],
+
+        // Errors and above only. Level is hardcoded, not env-driven —
+        // this channel must never go silent because LOG_LEVEL was
+        // tightened for the 'app' channel.
+        'errors' => [
+            'driver' => 'monolog',
+            'handler' => StreamHandler::class,
+            'with' => ['stream' => 'php://stderr'],
+            'formatter' => JsonFormatter::class,
+            'level' => 'error',
+            'processors' => [PsrLogMessageProcessor::class, RedactSensitiveContext::class],
+        ],
+
+        // Queue lifecycle + publish-outcome events (LOG_PLAN.md
+        // requirement 4 and Phase 1.4/1.5).
+        'jobs' => [
+            'driver' => 'monolog',
+            'handler' => StreamHandler::class,
+            'with' => ['stream' => 'php://stdout'],
+            'formatter' => JsonFormatter::class,
+            'level' => 'info',
+            'processors' => [PsrLogMessageProcessor::class, RedactSensitiveContext::class],
         ],
 
         'slack' => [

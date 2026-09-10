@@ -731,7 +731,17 @@ class PublishService
         array $preparedMedia,
         ?\Throwable $preparationFailure,
     ): array {
-        return DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion, $preparedMedia, $preparationFailure): array {
+        // LOG_PLAN.md Phase 1.5: captured by reference and logged AFTER
+        // the transaction commits, never inside it — a Log call that
+        // can throw has no business inside a transaction that decides
+        // PUBLISHED, which is terminal. Left null for every early abort
+        // above (lockedIds empty, group gone/not QUEUE, version
+        // mismatch, not due yet): nothing about THIS channel was
+        // decided in those cases, so there is nothing to report as an
+        // attempt.
+        $outcome = null;
+
+        $result = DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion, $preparedMedia, $preparationFailure, &$outcome): array {
             // Re-lock exactly the rows about to be published, inside the
             // SAME transaction as the provider call and its persistence
             // — see the class docblock's idempotency section, point 4.
@@ -853,6 +863,9 @@ class PublishService
                 // Defensive only: posts.integration_id is a restricted-
                 // on-delete foreign key, so a live Post row referencing a
                 // gone Integration should not be reachable in practice.
+                // No publish.attempt line here: with no Integration row
+                // there is no provider value to report, and this branch
+                // is unreachable in practice per the note above.
                 $this->markAllError($pending, 'The connected channel no longer exists.');
 
                 return [false, null];
@@ -867,6 +880,7 @@ class PublishService
             // this install is a permanent failure of this channel, not a
             // failure of the run.
             if (! $this->registry->has($integration->provider_identifier)) {
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'unknown_provider');
                 $this->markAllError($pending, 'This channel\'s network is no longer available on this installation.');
 
                 return [false, null];
@@ -930,6 +944,14 @@ class PublishService
                     }
                 }
 
+                $outcome = $this->publishAttemptOutcome(
+                    $integration,
+                    $postGroupId,
+                    $group,
+                    $allResolved ? 'published' : 'retry',
+                    null,
+                );
+
                 return [! $allResolved, null];
             } catch (ProviderPartialFailureException $e) {
                 foreach ($pending as $index => $post) {
@@ -937,6 +959,8 @@ class PublishService
                         $this->markPublished($post, $e->published[$index]);
                     }
                 }
+
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'retry', 'partial');
 
                 // See class docblock: a partial failure carries no
                 // reason distinguishable from transient — it is retried,
@@ -959,8 +983,12 @@ class PublishService
                 // 429 and turning a transient rate limit into a permanent,
                 // customer-visible ERROR (having hammered the
                 // rate-limited API three more times first).
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'retry', 'rate_limit');
+
                 return [true, $e->retryAfterSeconds > 0 ? $e->retryAfterSeconds : null];
             } catch (ProviderTransientException) {
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'retry', 'transient');
+
                 return [true, null];
             } catch (MediaTemporaryFileException $e) {
                 // The attachment could not be read out of storage at all
@@ -969,10 +997,12 @@ class PublishService
                 // names only the media id — never the storage key or the
                 // object's contents — because it lands in `posts.error`
                 // and is returned by `PostResource`.
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'media');
                 $this->markAllError($pending, $e->getMessage());
 
                 return [false, null];
             } catch (ProviderPermanentException $e) {
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'permanent');
                 $this->markAllError($pending, $e->getMessage());
 
                 return [false, null];
@@ -980,11 +1010,40 @@ class PublishService
                 $integration->refresh_needed = true;
                 $integration->save();
 
+                $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'auth');
                 $this->markAllError($pending, $e->getMessage());
 
                 return [false, null];
             }
         });
+
+        if ($outcome !== null) {
+            Log::channel('jobs')->info('publish.attempt', $outcome);
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return array{provider: string, integration_id: string, post_group_id: string, result: string, failure_kind: ?string, lateness_ms: int}
+     */
+    private function publishAttemptOutcome(
+        Integration $integration,
+        string $postGroupId,
+        PostGroup $group,
+        string $result,
+        ?string $failureKind,
+    ): array {
+        return [
+            'provider' => $integration->provider_identifier,
+            'integration_id' => $integration->id,
+            'post_group_id' => $postGroupId,
+            'result' => $result,
+            'failure_kind' => $failureKind,
+            // absolute: true — Carbon 3 defaults diffIn*() to a SIGNED
+            // result, and this is always reported as a magnitude.
+            'lateness_ms' => (int) now()->diffInMilliseconds($group->publish_date, true),
+        ];
     }
 
     /**

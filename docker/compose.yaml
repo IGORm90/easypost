@@ -6,9 +6,17 @@ services:
       - ../:/var/www/html
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on: [php]
+    # LOG_PLAN.md Phase 2: once all application logs go to stdout/stderr
+    # (see config/logging.php), the Docker daemon's default json-file
+    # driver has no size limit at all — a disk-fill risk on the app
+    # host that didn't exist while logs went to storage/logs/*.log with
+    # Laravel's own rotation. Capped, not switched to a different
+    # driver: the (deferred) Alloy log shipper requires json-file.
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   php:
     build: ./php
     volumes: ["../:/var/www/html"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     # `minio-init` (below) is a "condition: service_completed_successfully"
     # dependency, not merely a start-order one -- review finding 2
     # (CRITICAL): every fresh environment (CI, a new machine) started
@@ -35,6 +43,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     env_file: ../.env
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   scheduler:
     build: ./php
     command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
@@ -47,6 +56,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     env_file: ../.env
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   node:
     image: node:22-alpine
     working_dir: /var/www/html

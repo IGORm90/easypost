@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\Support\OrganizationContext;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -23,6 +24,7 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  */
 afterEach(function () {
     OrganizationContext::clear();
+    Context::flush();
 });
 
 it('rejects requests without an X-Organization header', function () {
@@ -103,6 +105,47 @@ it('admits a real member of the organization and puts it in OrganizationContext'
     expect(OrganizationContext::id())->toBe($org->id);
     expect(OrganizationContext::get())->not->toBeNull();
     expect(OrganizationContext::get()?->id)->toBe($org->id);
+});
+
+/*
+ * LOG_PLAN.md Phase 1.3: this is the single choke point where both org
+ * and user are known, so it's where organization_id/user_id are added to
+ * Context for every subsequent log record in the request (and in any job
+ * dispatched during it, since Context is dehydrated into the job payload).
+ */
+it('adds organization_id and user_id to Context when it admits a member', function () {
+    $org = Organization::factory()->create();
+    $user = User::factory()->create();
+    $org->addMember($user, OrganizationRole::ADMIN);
+
+    $request = Request::create('/api/whatever', 'GET');
+    $request->headers->set('X-Organization', $org->id);
+    $request->setUserResolver(fn () => $user);
+
+    $middleware = new ResolveOrganization;
+    $middleware->handle($request, fn ($r) => new Response);
+
+    expect(Context::get('organization_id'))->toBe($org->id);
+    expect(Context::get('user_id'))->toBe($user->id);
+});
+
+it('does not add organization_id/user_id to Context when it rejects the request', function () {
+    $organizationId = (string) Str::ulid();
+
+    $request = Request::create('/api/whatever', 'GET');
+    $request->headers->set('X-Organization', $organizationId);
+    $request->setUserResolver(fn () => new User);
+
+    $middleware = new ResolveOrganization;
+
+    try {
+        $middleware->handle($request, fn ($r) => $r);
+    } catch (HttpException) {
+        // expected
+    }
+
+    expect(Context::has('organization_id'))->toBeFalse();
+    expect(Context::has('user_id'))->toBeFalse();
 });
 
 it('rejects a real user who is authenticated but not a member of the requested organization', function () {

@@ -43,6 +43,58 @@ Nine long-running services plus one one-shot init container
 never baked into the image — a fresh `composer install` (`make setup`) is
 required after cloning, and after any dependency change.
 
+## Logging
+
+All application logs go to **stdout/stderr as JSON**, never to a file — the
+container runtime captures them, which is what any future log shipper
+(Loki/Alloy, CloudWatch, whatever) reads from. Three channels
+(`config/logging.php`):
+
+- **`app`** — general application events, level `LOG_LEVEL` (default `info`
+  in production). To stdout.
+- **`errors`** — errors and above only, level hardcoded (never env-driven,
+  so it can't go silent because `LOG_LEVEL` was tightened elsewhere). To
+  stderr.
+- **`jobs`** — queue lifecycle (`job.processed`/`job.failed`, from
+  `App\Listeners\LogJobLifecycle`) and publish outcomes
+  (`publish.attempt`, from `PublishService::publishLockedChannel()`). To
+  stdout.
+
+Production `.env` sets `LOG_STACK=app,errors`. Local dev stays
+`LOG_STACK=single` (a text file under `storage/logs/`) — nobody wants JSON
+in a terminal.
+
+Every API request carries a `request_id`, added by
+`App\Http\Middleware\AttachLogContext` (honours a client-supplied
+`X-Request-Id`, otherwise mints a ULID) and echoed back as the
+`X-Request-Id` response header. `App\Http\Middleware\ResolveOrganization`
+adds `organization_id`/`user_id` once the tenant is known. All three ride
+Laravel's `Context` facade, which Laravel dehydrates into any job dispatched
+during the request automatically. nginx's own JSON access log
+(`docker/nginx/default.conf`) reads the same id back out via
+`fastcgi_param HTTP_X_REQUEST_ID` — one id joins the access line to the
+application lines for a given request.
+
+A Monolog processor (`App\Logging\RedactSensitiveContext`) redacts any
+context/extra value whose key matches
+`token|secret|password|authorization|cookie|api[_-]?key`, at any nesting
+depth, as defence in depth. It is not the primary control: never log post
+content, media URLs, signature text, tokens, request/response bodies, or
+email addresses (log `user_id`) in the first place.
+
+Every service's container logging driver is capped
+(`logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}`
+in `docker/compose.yaml`) — once all application logs go to stdout, the
+Docker daemon's unbounded default is a disk-fill risk on the app host that
+didn't exist while logs went to a Laravel-rotated file.
+
+**Accepted technical debt:** there is currently no shipped-off-host log
+aggregation (Loki/Grafana or equivalent) — logs are readable via `docker
+compose logs` and rotate locally, nothing more. A follow-up plan will add
+that; until then, this is the operational floor: `docker compose -f
+docker/compose.yaml logs -f php nginx horizon` is how an incident gets
+read.
+
 ## Deploying a change
 
 1. Pull/build the new code.

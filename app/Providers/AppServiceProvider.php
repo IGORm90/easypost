@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Listeners\ClearOrganizationContext;
+use App\Listeners\LogJobLifecycle;
 use App\Listeners\LogUniqueJobSkipped;
 use App\Models\PostGroup;
 use App\Policies\PostPolicy;
@@ -37,6 +38,14 @@ class AppServiceProvider extends ServiceProvider
         // `PostGroupPolicy`, which is what Laravel's App\Models\X ->
         // App\Policies\XPolicy convention would look for on its own.
         Gate::policy(PostGroup::class, PostPolicy::class);
+
+        // LOG_PLAN.md Phase 1.4 — requirement 4 (job RPS/duration).
+        // Registered before ClearOrganizationContext below so a future
+        // org-derived field on the log line still sees a live context,
+        // though today it doesn't touch OrganizationContext at all.
+        Event::listen(JobProcessing::class, [LogJobLifecycle::class, 'handleProcessing']);
+        Event::listen(JobProcessed::class, [LogJobLifecycle::class, 'handleProcessed']);
+        Event::listen(JobFailed::class, [LogJobLifecycle::class, 'handleFailed']);
 
         // See App\Listeners\ClearOrganizationContext for why all three events.
         Event::listen(
