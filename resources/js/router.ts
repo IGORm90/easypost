@@ -15,6 +15,8 @@ import Calendar from './pages/Calendar/Index.vue';
 import AdminUsers from './pages/Admin/Users.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import SharedPost from './pages/Public/SharedPost.vue';
+import CreateWorkspace from './pages/Workspaces/Create.vue';
+import Workspaces from './pages/Workspaces/Index.vue';
 import { useAuthStore } from './stores/auth';
 import { useOrganizationStore } from './stores/organization';
 
@@ -36,6 +38,8 @@ const router = createRouter({
         // the placeholder AppLayout shell the root path rendered before
         // it existed.
         { path: '/', name: 'home', component: Calendar, meta: { requiresAuth: true } },
+        { path: '/workspaces', name: 'workspaces', component: Workspaces, meta: { requiresAuth: true, navSection: 'workspaces' } },
+        { path: '/workspaces/create', name: 'workspace-create', component: CreateWorkspace, meta: { requiresAuth: true, navSection: 'workspaces' } },
         { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },
         // Task 29: the media library page — also reachable as the
         // picker's "manage everything" companion via the sidebar link.

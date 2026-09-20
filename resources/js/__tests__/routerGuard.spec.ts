@@ -83,3 +83,35 @@ it('sends a signed-out visitor to the login page, not to the calendar', async ()
 
     expect(router.currentRoute.value.name).toBe('login');
 });
+
+it('allows a signed-in user without any workspace to open workspace creation', async () => {
+    meResponds({ superadmin: false });
+    const { default: router } = await import('../router');
+    await router.push('/workspaces/create');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('workspace-create');
+});
+
+it('requires a session to create a workspace', async () => {
+    get.mockRejectedValue(new Error('unauthenticated'));
+    const { default: router } = await import('../router');
+    await router.push('/workspaces/create');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('login');
+});
+
+it('allows a signed-in user without any workspace to open the workspace list', async () => {
+    meResponds({ superadmin: false });
+    const { default: router } = await import('../router');
+    await router.push('/workspaces');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('workspaces');
+});
+
+it('requires a session to view workspaces', async () => {
+    get.mockRejectedValue(new Error('unauthenticated'));
+    const { default: router } = await import('../router');
+    await router.push('/workspaces');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('login');
+});

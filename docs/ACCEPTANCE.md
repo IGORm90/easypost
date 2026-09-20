@@ -314,6 +314,43 @@ Tailwind classes — see above):
   also be present, so the status is legible to a colorblind user or in a
   screenshot printed in grayscale.
 
+### Workspace creation
+
+1. Sign in, open **Workspaces** in the sidebar (or the mobile menu), then
+   follow **Create workspace**. The header retains the organization switcher
+   but has no creation link. Check `/workspaces` and `/workspaces/create`
+   directly: a signed-out visitor must be sent to login. With no memberships,
+   the list shows an empty state and still offers creation. Workspaces stays
+   highlighted in navigation on both screens.
+2. Submit an empty or whitespace-only name, then a name longer than 255
+   characters: show the field error and send no POST. Cancel returns to the
+   workspace list without changing the selected workspace.
+3. Enter a name and submit with Enter. While the request is pending, the form
+   controls are disabled and a second submit must not create another workspace.
+4. Inspect the real `POST /api/organizations` response: HTTP 201 with root
+   `id`, `name`, `slug`, `created_at`, `updated_at` fields. The workspace must
+   immediately appear selected in the header and its calendar must open.
+5. Confirm calendar/channel requests carry the new `X-Organization`. Open
+   Workspaces: the new entry is present and marked current. Select the original
+   workspace in the header: the current marker moves immediately. Reload:
+   the selection persists. The original workspace and its data remain intact,
+   and neither workspace shows the other's posts or channels.
+6. Check real API rejection paths: 422 for an empty name in an authenticated
+   request and 401 without a session. Simulate an offline submit: keep the name
+   and explain that the list should be checked after reloading before retrying,
+   because a lost response does not prove that creation failed.
+7. Check keyboard access, narrow mobile widths, EN/RU and both themes. Long
+   workspace names must not push the header or list outside the viewport.
+   On a phone, selecting Workspaces closes the mobile menu.
+
+Vitest covers the form, validation, repeat-submit protection, navigation
+failure recovery, route guards, navigation entry points and store updates
+using a mocked API. List tests use real stores to check empty/populated states
+and the current marker updating after selection changes. Pest
+covers the real controller's authorization, response shape, validation and
+membership assignment on the test database. Neither suite proves the live
+cookie/CSRF flow or responsive browser layout; steps 1–7 remain manual checks.
+
 ## Backend built, no UI yet
 
 Recorded at MVP close-out (final review, batch 4) so the next reader does
@@ -331,6 +368,7 @@ What closed it, in case a reader is looking for where each one went:
 
 | Surface | Routes | Caller |
 | --- | --- | --- |
+| Workspace creation | `POST /api/organizations` | `pages/Workspaces/Index.vue`, reached through Workspaces in the sidebar/mobile menu, links to `pages/Workspaces/Create.vue`; creation selects the new workspace and opens its calendar. The header switcher remains for selection. |
 | Comments | `GET`/`POST /api/posts/{group}/comments` | Task 1.6 — `components/posts/CommentThread.vue`, mounted as a section of `PostEditorModal.vue` for a saved group. Append-only, matching an API with no PUT and no DELETE. |
 | Duplicate a post | `POST /api/posts/{group}/duplicate` | Task 1.2 — the calendar's post context menu. |
 | Impersonation | `POST /api/admin/impersonate/{user}`, `.../stop` | Task 1.7 — `pages/Admin/Users.vue` starts it, `components/admin/ImpersonationBanner.vue` shows it and stops it. Needed two new backend pieces of its own: `GET /api/admin/users` (there was no user list to pick from) and two new keys on `GET /api/auth/me` (`is_superadmin`, `impersonator`), without which the SPA could not tell it was impersonating at all. |

@@ -7,6 +7,7 @@
     "menu": "Меню",
     "channels": "Каналы",
     "media": "Медиа",
+    "workspaces": "Workspaces",
     "settingsProfile": "Профиль",
     "settingsTeam": "Команда",
     "settingsSets": "Наборы",
@@ -66,6 +67,27 @@
     }
   },
   "organization": {
+    "list": {
+      "title": "Workspaces",
+      "description": "Your workspaces",
+      "empty": "You have no workspaces yet.",
+      "current": "Current"
+    },
+    "create": {
+      "entry": "Create workspace",
+      "title": "Create workspace",
+      "description": "A separate space for your channels, posts and team.",
+      "nameLabel": "Workspace name",
+      "namePlaceholder": "For example, Marketing team",
+      "submit": "Create",
+      "cancel": "Cancel",
+      "required": "Enter a workspace name.",
+      "tooLong": "Use 255 characters or fewer.",
+      "error": "Couldn't complete the request. Please try again.",
+      "networkError": "The connection was interrupted. Reload and check your workspace list before trying again: the workspace may already have been created.",
+      "navigationError": "Your workspace was created, but the calendar couldn't be opened. Try opening it again.",
+      "openCalendar": "Open calendar"
+    },
     "switcher": {
       "label": "Организация",
       "empty": "Нет организаций"

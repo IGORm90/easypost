@@ -17,12 +17,12 @@ function onChange(event: Event): void {
 </script>
 
 <template>
-    <div class="flex items-center gap-2">
+    <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <label for="organization-switcher" class="sr-only">{{ t('organization.switcher.label') }}</label>
         <select
             id="organization-switcher"
             :value="organization.current?.id"
-            class="rounded-xl border border-border bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+            class="min-w-0 max-w-full truncate rounded-xl border border-border bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:max-w-xs"
             @change="onChange"
         >
             <option v-if="!auth.organizations.length" value="">{{ t('organization.switcher.empty') }}</option>

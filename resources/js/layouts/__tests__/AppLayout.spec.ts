@@ -1,7 +1,15 @@
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { nextTick, reactive } from 'vue';
 import AppLayout from '../AppLayout.vue';
 import { useAuthStore } from '../../stores/auth';
+
+const route = reactive<{ name: string; meta: { navSection?: string } }>({ name: 'home', meta: {} });
+
+vi.mock('vue-router', async (importOriginal) => ({
+    ...await importOriginal<typeof import('vue-router')>(),
+    useRoute: () => route,
+}));
 
 /**
  * Final review, Important 11: there was no navigation at all below the
@@ -12,6 +20,8 @@ import { useAuthStore } from '../../stores/auth';
  */
 function mountLayout({ superadmin = false } = {}) {
     setActivePinia(createPinia());
+    route.name = 'home';
+    route.meta = {};
     // Task 1.7: the admin destination is the one entry the sidebar hides
     // from users who cannot reach it, so the session state has to be
     // seeded before mount rather than after.
@@ -31,7 +41,7 @@ function mountLayout({ superadmin = false } = {}) {
 }
 
 /** Every destination the sidebar offers must be reachable on a phone too. */
-const DESTINATIONS = ['home', 'channels', 'media', 'settings-profile', 'settings-team', 'settings-sets', 'settings-signatures'];
+const DESTINATIONS = ['home', 'channels', 'media', 'workspaces', 'settings-profile', 'settings-team', 'settings-sets', 'settings-signatures'];
 
 function routeNames(wrapper: ReturnType<typeof mountLayout>, selector: string): string[] {
     return wrapper.findAll(`${selector} a`).map((link) => link.attributes('data-route') ?? '');
@@ -104,9 +114,29 @@ it('closes the mobile menu once a destination is chosen, so it does not cover th
     const w = mountLayout();
 
     await w.get('[data-test="mobile-nav-toggle"]').trigger('click');
-    await w.get('[data-test="mobile-nav"] a').trigger('click');
+    await w.get('[data-test="mobile-nav"] a[data-route="workspaces"]').trigger('click');
 
     expectMenuHidden(w);
+});
+
+it.each(['workspaces', 'workspace-create'])('marks Workspaces active on %s in both menus and clears it on leaving', async (name) => {
+    const wrapper = mountLayout();
+    route.name = name;
+    route.meta = { navSection: 'workspaces' };
+    await nextTick();
+
+    for (const menu of ['aside', '[data-test="mobile-nav"]']) {
+        const link = wrapper.get(`${menu} a[data-route="workspaces"]`);
+        expect(link.classes()).toContain('bg-primary-soft');
+        expect(link.classes()).toContain('text-primary');
+    }
+
+    route.name = 'home';
+    route.meta = {};
+    await nextTick();
+    for (const menu of ['aside', '[data-test="mobile-nav"]']) {
+        expect(wrapper.get(`${menu} a[data-route="workspaces"]`).classes()).not.toContain('bg-primary-soft');
+    }
 });
 
 /*

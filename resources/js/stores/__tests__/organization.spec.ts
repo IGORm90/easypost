@@ -11,9 +11,83 @@ vi.mock('../../router', () => ({ default: { push: vi.fn() } }))
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  post.mockClear()
-  get.mockClear()
+  post.mockReset()
+  get.mockReset()
   localStorage.clear()
+})
+
+it('creates and selects a workspace without refetching the session', async () => {
+  const { useOrganizationStore } = await import('../organization')
+  const { useAuthStore } = await import('../auth')
+  const old = { id: 'a', name: 'A', slug: 'a', created_at: '', updated_at: '' }
+  const created = { id: 'b', name: 'B', slug: 'b', created_at: '', updated_at: '' }
+  const auth = useAuthStore()
+  auth.organizations = [old]
+  const store = useOrganizationStore()
+  store.syncFromAuth()
+  post.mockResolvedValueOnce({ data: created })
+
+  expect(await store.create('B')).toEqual(created)
+
+  expect(post).toHaveBeenCalledExactlyOnceWith('/organizations', { name: 'B' })
+  expect(auth.organizations).toEqual([old, created])
+  expect(store.current).toEqual(created)
+  expect(localStorage.getItem('organization_id')).toBe('b')
+  expect(get).not.toHaveBeenCalled()
+  store.syncFromAuth()
+  expect(store.current).toEqual(created)
+})
+
+it('creates and selects the first workspace when the membership list is empty', async () => {
+  const { useOrganizationStore } = await import('../organization')
+  const { useAuthStore } = await import('../auth')
+  const created = { id: 'a', name: 'A', slug: 'a', created_at: '', updated_at: '' }
+  const auth = useAuthStore()
+  const store = useOrganizationStore()
+  post.mockResolvedValueOnce({ data: created })
+
+  await store.create('A')
+
+  expect(auth.organizations).toEqual([created])
+  expect(store.current).toEqual(created)
+  expect(localStorage.getItem('organization_id')).toBe('a')
+  expect(get).not.toHaveBeenCalled()
+})
+
+it('preserves the current workspace and membership list when creation fails', async () => {
+  const { useOrganizationStore } = await import('../organization')
+  const { useAuthStore } = await import('../auth')
+  const old = { id: 'a', name: 'A', slug: 'a', created_at: '', updated_at: '' }
+  const auth = useAuthStore()
+  auth.organizations = [old]
+  const store = useOrganizationStore()
+  store.syncFromAuth()
+  const error = new Error('Network error')
+  post.mockRejectedValueOnce(error)
+
+  await expect(store.create('B')).rejects.toBe(error)
+
+  expect(auth.organizations).toEqual([old])
+  expect(store.current).toEqual(old)
+  expect(localStorage.getItem('organization_id')).toBe('a')
+  expect(get).not.toHaveBeenCalled()
+})
+
+it('updates an existing membership instead of duplicating a returned workspace', async () => {
+  const { useOrganizationStore } = await import('../organization')
+  const { useAuthStore } = await import('../auth')
+  const old = { id: 'a', name: 'A', slug: 'a', created_at: '', updated_at: '' }
+  const created = { id: 'b', name: 'B', slug: 'b', created_at: '', updated_at: '' }
+  const auth = useAuthStore()
+  auth.organizations = [old, { ...created, name: 'Earlier name' }]
+  const store = useOrganizationStore()
+  post.mockResolvedValueOnce({ data: created })
+
+  await store.create('B')
+
+  expect(auth.organizations).toEqual([old, created])
+  expect(store.current).toEqual(created)
+  expect(localStorage.getItem('organization_id')).toBe('b')
 })
 
 it('switchTo() persists the chosen id to localStorage, which api/client.ts reads for the X-Organization header', async () => {

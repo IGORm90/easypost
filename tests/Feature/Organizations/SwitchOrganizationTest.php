@@ -17,16 +17,63 @@ it('lists only the organizations the authenticated user belongs to', function ()
     expect($ids)->not->toContain($other->id);
 });
 
-it('creates a new organization owned by the caller as SUPERADMIN', function () {
+it('creates a first organization owned by the caller as SUPERADMIN with a root JSON resource', function () {
     $user = User::factory()->create();
+    expect($user->organizations()->count())->toBe(0);
 
     $response = $this->actingAs($user)
         ->postJson('/api/organizations', ['name' => 'Acme Inc'])
         ->assertCreated();
 
-    $organization = Organization::find($response->json('id'));
-    expect($organization)->not->toBeNull();
+    $organization = Organization::findOrFail($response->json('id'));
+    $response->assertExactJson([
+        'id' => $organization->id,
+        'name' => 'Acme Inc',
+        'slug' => $organization->slug,
+        'created_at' => $organization->created_at->toISOString(),
+        'updated_at' => $organization->updated_at->toISOString(),
+    ]);
+    expect($organization->owner_id)->toBe($user->id);
     expect($organization->roleOf($user))->toBe(OrganizationRole::SUPERADMIN);
+});
+
+it('requires authentication to create an organization', function () {
+    $this->postJson('/api/organizations', ['name' => 'Acme Inc'])
+        ->assertUnauthorized();
+
+    $this->assertDatabaseCount('organizations', 0);
+    $this->assertDatabaseCount('organization_user', 0);
+});
+
+it('rejects invalid organization names without persisting a workspace', function (array $payload) {
+    $this->actingAs(User::factory()->create())
+        ->postJson('/api/organizations', $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('name');
+
+    $this->assertDatabaseCount('organizations', 0);
+    $this->assertDatabaseCount('organization_user', 0);
+})->with([
+    'missing name' => [[]],
+    'empty name' => [['name' => '']],
+    'whitespace name' => [['name' => '   ']],
+    'non-string name' => [['name' => ['Acme Inc']]],
+    'name longer than 255 characters' => [['name' => str_repeat('a', 256)]],
+]);
+
+it('lets a USER create a separately owned organization without changing the existing membership', function () {
+    $existing = Organization::factory()->create();
+    $user = actingAsMember($existing, 'USER');
+
+    $response = $this->postJson('/api/organizations', ['name' => 'My workspace'])
+        ->assertCreated();
+
+    $created = Organization::findOrFail($response->json('id'));
+    expect($created->id)->not->toBe($existing->id);
+    expect($created->owner_id)->toBe($user->id);
+    expect($created->roleOf($user))->toBe(OrganizationRole::SUPERADMIN);
+    expect($existing->fresh()->roleOf($user))->toBe(OrganizationRole::USER);
+    expect($user->organizations()->count())->toBe(2);
 });
 
 it('updates the current organization settings as an ADMIN', function () {

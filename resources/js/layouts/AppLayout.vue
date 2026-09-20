@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
 import ThemeToggle from '../components/ui/ThemeToggle.vue';
 import OrganizationSwitcher from '../components/OrganizationSwitcher.vue';
 import LimitToast from '../components/ui/LimitToast.vue';
@@ -9,6 +10,7 @@ import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const route = useRoute();
 
 /**
  * One list, rendered twice: the `md`-and-up sidebar and the below-`md`
@@ -22,6 +24,7 @@ const NAV_ITEMS = [
     { name: 'home', label: 'calendar.title' },
     { name: 'channels', label: 'nav.channels' },
     { name: 'media', label: 'nav.media' },
+    { name: 'workspaces', label: 'nav.workspaces' },
     { name: 'settings-profile', label: 'nav.settingsProfile' },
     { name: 'settings-team', label: 'nav.settingsTeam' },
     { name: 'settings-sets', label: 'nav.settingsSets' },
@@ -74,19 +77,19 @@ const mobileNavOpen = ref(false);
                 v-for="item in navItems"
                 :key="item.name"
                 :to="{ name: item.name }"
-                :class="NAV_LINK_CLASS"
+                :class="[NAV_LINK_CLASS, route.meta.navSection === item.name ? NAV_ACTIVE_CLASS : '']"
                 :active-class="NAV_ACTIVE_CLASS"
             >
                 {{ t(item.label) }}
             </router-link>
         </aside>
 
-        <div class="flex flex-1 flex-col">
+        <div class="flex min-w-0 flex-1 flex-col">
             <header class="flex items-center justify-between gap-4 border-b border-border bg-surface px-4 py-3">
                 <button
                     data-test="mobile-nav-toggle"
                     type="button"
-                    class="-ml-1 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
+                    class="-ml-1 shrink-0 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
                     :aria-expanded="mobileNavOpen ? 'true' : 'false'"
                     aria-controls="app-mobile-nav"
                     :aria-label="t('nav.menu')"
@@ -101,7 +104,7 @@ const mobileNavOpen = ref(false);
                     </svg>
                 </button>
                 <OrganizationSwitcher v-if="auth.user" />
-                <div class="ml-auto flex items-center gap-3">
+                <div class="ml-auto flex shrink-0 items-center gap-3">
                     <ThemeToggle />
                     <button
                         v-if="auth.user"
@@ -133,7 +136,7 @@ const mobileNavOpen = ref(false);
                     v-for="item in navItems"
                     :key="item.name"
                     :to="{ name: item.name }"
-                    :class="NAV_LINK_CLASS"
+                    :class="[NAV_LINK_CLASS, route.meta.navSection === item.name ? NAV_ACTIVE_CLASS : '']"
                     :active-class="NAV_ACTIVE_CLASS"
                     @click="mobileNavOpen = false"
                 >

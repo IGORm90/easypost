@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { api } from '../api/client';
 import { useAuthStore } from './auth';
 
 export interface Organization {
@@ -27,6 +28,20 @@ export const useOrganizationStore = defineStore('organization', {
         current: null,
     }),
     actions: {
+        /**
+         * Activates the workspace returned by creation without refetching
+         * the session: a failed follow-up fetchMe() would clear auth state
+         * even though the workspace was already created successfully.
+         */
+        async create(name: string): Promise<Organization> {
+            const { data } = await api.post<Organization>('/organizations', { name });
+            const auth = useAuthStore();
+            auth.organizations = [...auth.organizations.filter((org) => org.id !== data.id), data];
+            localStorage.setItem(STORAGE_KEY, data.id);
+            this.syncFromAuth();
+            return data;
+        },
+
         /**
          * Picks "current" out of the auth store's already-fetched
          * membership list: the previously stored id if it's still a
