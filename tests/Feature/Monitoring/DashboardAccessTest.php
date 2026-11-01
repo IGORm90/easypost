@@ -129,3 +129,19 @@ it('lets nobody delete log files through the log viewer', function (string $abil
 
     expect(Gate::forUser($platformAdmin)->allows($ability, [$subject]))->toBeFalse();
 })->with(['deleteLogFile', 'deleteLogFolder']);
+
+/*
+ * Pulse defines `viewPulse` as "allowed when APP_ENV is local" unless the
+ * app defines it first, and this stack's environment is always `local` —
+ * so by default every guest could open /pulse. PULSE_ENABLED is false under
+ * phpunit, so the route is not registered here and the gate is asserted
+ * directly; the HTTP side is a manual check (docs/ACCEPTANCE.md).
+ */
+it('grants the viewPulse gate to a platform admin only', function () {
+    $platformAdmin = User::factory()->create(['is_superadmin' => true]);
+    $ordinary = User::factory()->create(['is_superadmin' => false]);
+
+    expect(Gate::forUser($platformAdmin)->allows('viewPulse'))->toBeTrue()
+        ->and(Gate::forUser($ordinary)->allows('viewPulse'))->toBeFalse()
+        ->and(Gate::allows('viewPulse'))->toBeFalse();
+});

@@ -2,7 +2,7 @@
 
 ## Topology
 
-Nine default long-running services plus one one-shot init container
+Ten default long-running services plus one one-shot init container
 (`docker/compose.yaml`), all sharing one Compose network:
 
 - **nginx** — reverse proxy in front of PHP-FPM, serves `public/`, terminates
@@ -22,6 +22,14 @@ Nine default long-running services plus one one-shot init container
   container being down does not lose any scheduled post — Postgres, not
   Redis, is the durable record — it only delays publishing until the
   container comes back, by however long it was down.
+- **pulse** — runs `php artisan pulse:check`, the only process that samples
+  this host's CPU, memory and disk for Pulse's Servers card. Nothing else
+  runs that recorder, so with this container down the card goes stale while
+  the rest of Pulse keeps working. `PULSE_SERVER_NAME` is pinned (default
+  `easypost`): the fallback is the container hostname, which changes on every
+  recreate and would leave a stale server behind. The php image installs
+  `procps` for this container: Pulse reads CPU from `top`, and without it the
+  card records 0% with no error anywhere but the container log.
 - **node** — runs the Vite dev server (`npm run dev`) for the SPA frontend,
   reachable at `http://localhost:5173`; also where the README's frontend
   commands (`npx vitest run`, `npm run build`) are meant to be run.
@@ -98,6 +106,36 @@ docker compose -f docker/compose.yaml logs --no-log-prefix php horizon \
 `post_group_id` is on every `publish.attempt` line; `request_id` joins a web
 request to the jobs it dispatched. The same search works in Log Viewer's text
 box (below), which is the easier route for anyone without shell access.
+
+### Pulse
+
+`/pulse` (`laravel/pulse`) shows what the logs do not: slow requests, slow
+SQL (with file and line), slow jobs, slow outgoing API calls, exceptions,
+queue throughput, the most active users, and server CPU/memory/disk. It is
+the answer to "what is slow", where Horizon answers "what is queued or
+failed". Access is the same `viewMonitoring` gate, bound to `viewPulse` in
+`AppServiceProvider`. Pulse's own default is "allowed when `APP_ENV` is
+`local`", and this stack is always `local`, so without that binding every
+guest could open it.
+
+Metrics live in the application Postgres (`pulse_values`, `pulse_entries`,
+`pulse_aggregates`) and are trimmed to seven days by Pulse itself during
+ingest; there is no scheduled prune. The `storage` ingest driver writes at the
+end of each request. If Pulse ever shows up as the slow thing on its own
+slow-requests card, move to `PULSE_INGEST_DRIVER=redis` and run
+`php artisan pulse:work`.
+
+Thresholds in `config/pulse.php` are set for this product, not the package
+defaults: requests 500 ms, queries 300 ms, jobs 5 s (a publish legitimately
+spends seconds in provider calls), outgoing requests 2 s. User and cache
+cards are sampled (20% / 10%). The dashboards themselves, Livewire polling
+and `/up` are excluded from the request cards.
+
+**Outgoing URLs are collapsed to their host, and that is a security control.**
+Some providers carry the channel's bot token in the URL path, Pulse stores and
+displays the URL of every slow outgoing request, and the grouping is what
+keeps the token out of `pulse_aggregates`. Do not remove it
+(`PulseConfigTest` pins it).
 
 ### Log Viewer
 

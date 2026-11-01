@@ -501,3 +501,16 @@ pass should exercise them by hand.
   The shared `easypost-logs` volume is not exercised by the suite either:
   `docker compose exec horizon ls storage/logs` and `exec php ls
   storage/logs` must list the same files.
+- **Pulse is verified at the gate and config level, and over HTTP by hand.**
+  `PULSE_ENABLED` is `false` under phpunit, so the `/pulse` route does not
+  exist in the suite: `DashboardAccessTest` asserts the `viewPulse` gate
+  itself and `PulseConfigTest` the recorder config (thresholds, ignore list,
+  host-only URL grouping, seven-day retention, `procps` in the image). Nothing
+  proves the route is wired to that gate, that the Livewire cards load and
+  refresh, or that `pulse:check` records. Before relying on it: as a guest
+  `/pulse` is 403; as a platform admin it loads with all nine cards; the
+  Servers card shows `easypost` (or `PULSE_SERVER_NAME`) with non-zero memory
+  and disk, and exactly one server after `docker compose up -d --force-recreate
+  pulse`; `docker compose logs pulse` has no `top: not found`; and after a
+  deliberately slow request or job the Slow cards show it. Cards load through
+  Livewire POSTs, so this needs a real browser session.

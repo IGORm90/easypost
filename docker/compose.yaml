@@ -57,6 +57,25 @@ services:
         condition: service_completed_successfully
     env_file: ../.env
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+  # Samples this host's CPU, memory and disk for Pulse's Servers card. It is
+  # the only process that does: web requests, horizon and the scheduler never
+  # run the Servers recorder. It writes no application logs, so it does not
+  # mount the easypost-logs volume. PULSE_SERVER_NAME is pinned because the
+  # default is the container hostname, which changes on every recreate and
+  # would leave a stale server on the card each time.
+  pulse:
+    build: ./php
+    command: php artisan pulse:check
+    volumes: ["../:/var/www/html"]
+    environment:
+      PULSE_SERVER_NAME: ${PULSE_SERVER_NAME:-easypost}
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    env_file: ../.env
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   node:
     image: node:22-alpine
     working_dir: /var/www/html

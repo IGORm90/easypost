@@ -17,6 +17,7 @@ use Illuminate\Queue\Events\UniqueJobSkipped;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Pulse\Facades\Pulse;
 use Laravel\Socialite\Facades\Socialite;
 use Opcodes\LogViewer\Facades\LogViewer;
 
@@ -47,6 +48,15 @@ class AppServiceProvider extends ServiceProvider
         // flag, never a role inside one organization. `?User` lets a
         // guest reach the callback and be refused explicitly.
         Gate::define('viewMonitoring', fn (?User $user) => $user?->is_superadmin === true);
+
+        // Pulse defines `viewPulse` as "APP_ENV is local" unless the app
+        // defines it first, and this stack is always `local`: left alone,
+        // every guest could open /pulse.
+        Gate::define('viewPulse', fn (?User $user) => Gate::forUser($user)->allows('viewMonitoring'));
+
+        // Names on the active-users cards instead of bare ULIDs. Only a
+        // platform admin can see the dashboard, so the email is not exposed.
+        Pulse::user(fn (User $user) => ['name' => $user->name, 'extra' => $user->email]);
 
         // An auth callback, not a `viewLogViewer` gate: with neither, Log
         // Viewer lets everyone in outside production and 403s everyone in
