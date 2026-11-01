@@ -6,6 +6,7 @@ use App\Listeners\ClearOrganizationContext;
 use App\Listeners\LogJobLifecycle;
 use App\Listeners\LogUniqueJobSkipped;
 use App\Models\PostGroup;
+use App\Models\User;
 use App\Policies\PostPolicy;
 use App\Services\Auth\Socialite\OidcProvider;
 use Illuminate\Contracts\Foundation\Application;
@@ -38,6 +39,13 @@ class AppServiceProvider extends ServiceProvider
         // `PostGroupPolicy`, which is what Laravel's App\Models\X ->
         // App\Policies\XPolicy convention would look for on its own.
         Gate::policy(PostGroup::class, PostPolicy::class);
+
+        // The one gate behind every platform dashboard (Horizon, and Pulse
+        // and Log Viewer once installed). They show every organization's
+        // jobs and logs, so access is the platform-wide `is_superadmin`
+        // flag, never a role inside one organization. `?User` lets a
+        // guest reach the callback and be refused explicitly.
+        Gate::define('viewMonitoring', fn (?User $user) => $user?->is_superadmin === true);
 
         // LOG_PLAN.md Phase 1.4 — requirement 4 (job RPS/duration).
         // Registered before ClearOrganizationContext below so a future

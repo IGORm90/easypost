@@ -2,8 +2,8 @@
 
 namespace App\Providers;
 
-use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Laravel\Horizon\Horizon;
 use Laravel\Horizon\HorizonApplicationServiceProvider;
 
@@ -25,19 +25,18 @@ use Laravel\Horizon\HorizonApplicationServiceProvider;
  * route regardless of session state — see that class) calls
  * `Horizon::check($request)`, which calls this closure unconditionally;
  * `$request->user()` is null for a request with no authenticated
- * session, which the `instanceof User` check below turns into `false`
- * (403 via ForbiddenException), not an accidental `true` from a loose
- * comparison — verified by `tests/Feature/HorizonAccessTest.php`'s three
- * cases (ordinary user, superadmin, unauthenticated).
+ * session; the `viewMonitoring` gate (AppServiceProvider) turns that into
+ * `false` (403 via ForbiddenException), not an accidental `true` from a
+ * loose comparison — verified by
+ * `tests/Feature/Monitoring/DashboardAccessTest.php` (ordinary user,
+ * organization SUPERADMIN, platform admin, unauthenticated).
  */
 class HorizonServiceProvider extends HorizonApplicationServiceProvider
 {
     public function boot(): void
     {
         Horizon::auth(function (Request $request) {
-            $user = $request->user();
-
-            return $user instanceof User && $user->is_superadmin;
+            return Gate::forUser($request->user())->allows('viewMonitoring');
         });
     }
 }

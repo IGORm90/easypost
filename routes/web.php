@@ -39,6 +39,10 @@ Route::prefix('api/auth/oauth')->group(function () {
     Route::get('{driver}/callback', [SocialAuthController::class, 'callback']);
 });
 
-// Serves the Vue SPA shell for every route except the API, Sanctum and
-// Horizon prefixes, which are handled by their own route files/packages.
-Route::view('/{any?}', 'app')->where('any', '^(?!api|sanctum|horizon).*$');
+// Serves the Vue SPA shell for every route except the API, Sanctum and the
+// platform dashboards (Horizon, Pulse, Log Viewer), which are handled by
+// their own packages. pulse and log-viewer are reserved before those
+// packages exist so the shell never answers 200 on their paths. The
+// lookahead matches whole segments: a prefix match would also swallow SPA
+// routes such as /pulse-settings.
+Route::view('/{any?}', 'app')->where('any', '^(?!(?:api|sanctum|horizon|pulse|log-viewer)(?:/|$)).*$');
