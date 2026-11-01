@@ -6,6 +6,7 @@ import ThemeToggle from '../components/ui/ThemeToggle.vue';
 import OrganizationSwitcher from '../components/OrganizationSwitcher.vue';
 import LimitToast from '../components/ui/LimitToast.vue';
 import ImpersonationBanner from '../components/admin/ImpersonationBanner.vue';
+import MonitoringLinks from '../components/admin/MonitoringLinks.vue';
 import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
@@ -82,6 +83,7 @@ const mobileNavOpen = ref(false);
             >
                 {{ t(item.label) }}
             </router-link>
+            <MonitoringLinks v-if="auth.isSuperadmin" :link-class="NAV_LINK_CLASS" />
         </aside>
 
         <div class="flex min-w-0 flex-1 flex-col">
@@ -142,6 +144,7 @@ const mobileNavOpen = ref(false);
                 >
                     {{ t(item.label) }}
                 </router-link>
+                <MonitoringLinks v-if="auth.isSuperadmin" :link-class="NAV_LINK_CLASS" />
             </nav>
 
             <main class="flex-1 p-4">

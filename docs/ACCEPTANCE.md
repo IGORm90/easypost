@@ -351,6 +351,35 @@ covers the real controller's authorization, response shape, validation and
 membership assignment on the test database. Neither suite proves the live
 cookie/CSRF flow or responsive browser layout; steps 1–7 remain manual checks.
 
+### 12. A platform admin finds the monitoring dashboards and can answer the five questions
+
+Needs a platform admin (`users.is_superadmin`). **Nothing in the app creates
+one**: there is no command and no screen. Set the flag on an existing user in
+`php artisan tinker` (`User::where('email', ...)->update(['is_superadmin' => true])`),
+then sign in again.
+
+1. Signed in as that user, the sidebar ends with a **Monitoring** block of
+   three links: *Queues (Horizon)*, *Performance (Pulse)* and *Logs*. Open the
+   menu on a phone width: the same block is there.
+2. Each link opens its page **in a new tab** and the SPA keeps its place:
+   `/horizon`, `/pulse`, `/log-viewer`. None of them shows a blank page.
+3. Signed in as an ordinary user, or as an organization `SUPERADMIN` who is not
+   a platform admin, the block is absent, and typing any of the three URLs
+   gives 403. Signed out, the same.
+4. Answer each from the dashboards, with a post scheduled and published first:
+   are posts going out on time and how long does the `publish` queue wait
+   (Horizon dashboard); which publishes failed and for which provider (Horizon
+   Failed, search the `provider:` tag); which endpoints and queries are slow
+   (Pulse); what happened to one post (Log Viewer, search its `post_group_id`);
+   does the server have CPU, memory and disk (Pulse, Servers card).
+5. Check EN and RU, and both themes, for the new block.
+
+Vitest covers that the block renders for a platform admin in both menus with
+three plain anchors (never router links), `target="_blank"` and
+`rel="noopener"`, and is absent for everyone else. It does not render a real
+page or follow a link: steps 1–5 are manual. The server side (the gate, the
+403s) is Pest: `tests/Feature/Monitoring/DashboardAccessTest.php`.
+
 ## Backend built, no UI yet
 
 Recorded at MVP close-out (final review, batch 4) so the next reader does

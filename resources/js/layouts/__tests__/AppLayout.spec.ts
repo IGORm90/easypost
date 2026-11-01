@@ -44,7 +44,9 @@ function mountLayout({ superadmin = false } = {}) {
 const DESTINATIONS = ['home', 'channels', 'media', 'workspaces', 'settings-profile', 'settings-team', 'settings-sets', 'settings-signatures'];
 
 function routeNames(wrapper: ReturnType<typeof mountLayout>, selector: string): string[] {
-    return wrapper.findAll(`${selector} a`).map((link) => link.attributes('data-route') ?? '');
+    // `a[data-route]`: only the SPA's own destinations. The monitoring links
+    // are plain anchors to server-rendered pages and carry no data-route.
+    return wrapper.findAll(`${selector} a[data-route]`).map((link) => link.attributes('data-route') ?? '');
 }
 
 /**
@@ -162,4 +164,62 @@ it('offers it to a superadmin, in the sidebar and on a phone alike', async () =>
 
     expect(routeNames(w, 'aside')).toEqual([...DESTINATIONS, 'admin-users']);
     expect(routeNames(w, '[data-test="mobile-nav"]')).toEqual([...DESTINATIONS, 'admin-users']);
+});
+
+/*
+ * PR 7: /horizon, /pulse and /log-viewer are server-rendered pages outside
+ * the SPA. They are plain anchors, never <router-link>s: the client router
+ * has no such routes, and a router-link would resolve to the SPA catch-all
+ * and render nothing. Like the admin entry they are only offered to a
+ * platform admin — hiding is not the boundary, the `viewMonitoring` gate on
+ * each page is — and, like every other destination, in both renderings of
+ * the menu.
+ */
+const MONITORING_HREFS = ['/horizon', '/pulse', '/log-viewer'];
+
+function monitoringLinks(wrapper: ReturnType<typeof mountLayout>, selector: string) {
+    return wrapper.findAll(`${selector} [data-test="monitoring-link"]`);
+}
+
+it.each(['aside', '[data-test="mobile-nav"]'])('offers the three monitoring pages to a platform admin in %s', async (menu) => {
+    const w = mountLayout({ superadmin: true });
+
+    await w.get('[data-test="mobile-nav-toggle"]').trigger('click');
+
+    const links = monitoringLinks(w, menu);
+    expect(links.map((l) => l.attributes('href'))).toEqual(MONITORING_HREFS);
+
+    for (const link of links) {
+        expect(link.element.tagName).toBe('A');
+        expect(link.attributes('data-route')).toBeUndefined();
+        // A separate application in its own tab: the SPA keeps its place.
+        expect(link.attributes('target')).toBe('_blank');
+        expect(link.attributes('rel')).toContain('noopener');
+        // The new tab is announced, not only implied by the icon-less link.
+        expect(link.find('.sr-only').exists()).toBe(true);
+    }
+    expect(w.find(`${menu} [data-test="monitoring-heading"]`).exists()).toBe(true);
+});
+
+it('labels each monitoring page by the question it answers, not just the product name', () => {
+    const w = mountLayout({ superadmin: true });
+
+    expect(monitoringLinks(w, 'aside').map((l) => l.text())).toEqual([
+        expect.stringContaining('Queues'),
+        expect.stringContaining('Performance'),
+        expect.stringContaining('Logs'),
+    ]);
+});
+
+it('shows no monitoring entry, heading or link to anyone who is not a platform admin', async () => {
+    const w = mountLayout();
+
+    await w.get('[data-test="mobile-nav-toggle"]').trigger('click');
+
+    for (const menu of ['aside', '[data-test="mobile-nav"]']) {
+        expect(monitoringLinks(w, menu)).toHaveLength(0);
+        expect(w.find(`${menu} [data-test="monitoring-heading"]`).exists()).toBe(false);
+    }
+    expect(w.html()).not.toContain('/horizon');
+    expect(w.html()).not.toContain('/log-viewer');
 });

@@ -13,6 +13,11 @@
     "settingsSets": "Наборы",
     "settingsSignatures": "Подписи",
     "admin": "Админка",
+    "monitoring": "Мониторинг",
+    "monitoringQueues": "Очереди (Horizon)",
+    "monitoringPerformance": "Производительность (Pulse)",
+    "monitoringLogs": "Логи",
+    "opensInNewTab": "(откроется в новой вкладке)",
     "logout": "Выйти"
   },
   "ui": {

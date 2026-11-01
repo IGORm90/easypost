@@ -13,6 +13,11 @@
     "settingsSets": "Channel sets",
     "settingsSignatures": "Signatures",
     "admin": "Admin",
+    "monitoring": "Monitoring",
+    "monitoringQueues": "Queues (Horizon)",
+    "monitoringPerformance": "Performance (Pulse)",
+    "monitoringLogs": "Logs",
+    "opensInNewTab": "(opens in a new tab)",
     "logout": "Log out"
   },
   "ui": {
