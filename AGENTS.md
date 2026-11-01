@@ -251,7 +251,7 @@ Scopes in use: `tenancy, ui, a11y, i18n, api, auth, calendar, integrations, publ
 mastodon, ssrf, queue, seeder, review, e2e, posts, makefile, readme, gates, frontend`.
 
 Bodies are long and explanatory — root cause, why this fix, and a closing `Verified: …` line stating
-what actually ran. Feature branches are `feat/<slug>`.
+what actually ran. All work is done on `main` — no feature branches.
 
 **Always ask before committing, and before pushing.** Never auto-commit.
 

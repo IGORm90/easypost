@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Log;
 
 /*
  * LOG_PLAN.md Phase 1.1: the default text formatter is unusable
- * downstream — Loki (or any log shipper) needs one JSON object per line
+ * downstream — any log shipper needs one JSON object per line
  * with fields it can extract. Each production channel is asserted end to
  * end against a real stream (a temp file standing in for stdout/stderr),
  * not just against config shape, so a formatter/handler mismatch that

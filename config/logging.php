@@ -83,8 +83,8 @@ return [
             'replace_placeholders' => true,
         ],
 
-        // LOG_PLAN.md Phase 1.1. JSON to stdout/stderr — the shape Loki
-        // (or any log shipper reading the container's stdout) needs; the
+        // LOG_PLAN.md Phase 1.1. JSON to stdout/stderr — the shape any
+        // log shipper reading the container's stdout needs; the
         // default text formatter has nothing to extract fields from.
         // RedactSensitiveContext runs on every record as defence in
         // depth (see that class's docblock); it is not the primary

@@ -3,8 +3,7 @@
 ## Topology
 
 Nine default long-running services plus one one-shot init container
-(`docker/compose.yaml`), all sharing one Compose network. Three additional
-monitoring services are opt-in through the `monitoring` Compose profile:
+(`docker/compose.yaml`), all sharing one Compose network:
 
 - **nginx** — reverse proxy in front of PHP-FPM, serves `public/`, terminates
   HTTP. `client_max_body_size` is set to `108M` (matching `php.ini`'s
@@ -38,11 +37,6 @@ monitoring services are opt-in through the `monitoring` Compose profile:
 - **mailpit** — catches every outbound email in dev (verification, invites,
   reconnect notices) at `http://localhost:8025`; nothing is ever delivered
   to a real inbox locally.
-- **loki**, **alloy**, **grafana** — profile-gated structured-log storage,
-  Docker log shipper, and dashboard/alert UI. They deliberately run on the
-  application host: this is operationally simple, but an application-host
-  outage also takes monitoring down. Revisit this topology if independent
-  incident visibility becomes a requirement.
 
 `php`, `horizon`, and `scheduler` all build from the same image
 (`docker/php/Dockerfile`) and bind-mount the repository, so `vendor/` is
@@ -53,7 +47,7 @@ required after cloning, and after any dependency change.
 
 All application logs go to **stdout/stderr as JSON**, never to a file — the
 container runtime captures them, which is what any future log shipper
-(Loki/Alloy, CloudWatch, whatever) reads from. Three channels
+(CloudWatch, whatever) reads from. Three channels
 (`config/logging.php`):
 
 - **`app`** — general application events, level `LOG_LEVEL` (default `info`
@@ -93,64 +87,6 @@ Every service's container logging driver is capped
 in `docker/compose.yaml`) — once all application logs go to stdout, the
 Docker daemon's unbounded default is a disk-fill risk on the app host that
 didn't exist while logs went to a Laravel-rotated file.
-
-### Loki, Alloy, and Grafana
-
-The opt-in monitoring profile ships Docker JSON logs from `nginx`, `php`,
-`horizon`, and `scheduler` through Alloy into Loki and provisions Grafana's
-Loki datasource, service-health dashboard, and four alert rules from files.
-No external notification contact point is provisioned; alert states remain
-visible in Grafana. Start it only after setting the administrator password in
-the deployment environment:
-
-```bash
-GRAFANA_ADMIN_PASSWORD='use-a-unique-password'
-make monitoring-up
-```
-
-Grafana is then at `http://localhost:3000`; Loki has no published host port
-and is reachable only on the Compose network. **Do not expose port 3000 on a
-public host without a firewall, VPN, or reverse proxy with access control.**
-`auth_enabled: false` is safe only because Loki itself is not externally
-reachable.
-
-`GRAFANA_ADMIN_PASSWORD` initializes Grafana's admin account only when the
-`grafana-data` volume is new. `monitoring-down` intentionally preserves that
-volume, so changing the environment value and restarting the container does
-**not** rotate an existing password. Rotate it in Grafana with the admin
-user's profile-menu **Change Password** action, then update the deployment
-secret so a newly created volume uses the same value. If the password is
-lost, reset it against the existing volume with:
-
-```bash
-docker compose -f docker/compose.yaml --profile monitoring exec grafana \
-  grafana cli --homepath /usr/share/grafana admin reset-admin-password 'new-password'
-```
-
-MinIO, `minio-init`, and Loki share `MINIO_ROOT_USER` and
-`MINIO_ROOT_PASSWORD`. If you set them, make `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY` the same pair so the application still reaches
-MinIO. The defaults are for local development only; set the values before
-creating a fresh deployed MinIO volume and keep them stable for that volume's
-lifetime.
-
-The `easypost-logs` MinIO bucket has no anonymous policy. Loki's Compactor,
-not a bucket lifecycle policy, applies the 30-day retention period; it must
-remain enabled because `retention_period` alone does not delete chunks. Do not
-add a blanket object-expiry rule to this bucket: it can delete index state
-that Loki still needs.
-
-Alloy's only persistent state is its read position. Its indexed labels are
-bounded by design: application, service (plus Loki's derived service name),
-Monolog channel, and log level. Never promote `request_id`,
-organization/user IDs, post IDs, or integration IDs to labels; query-time JSON
-extraction provides those filters without creating an unbounded number of Loki
-streams. `monitoring-down` removes only the three monitoring containers and
-keeps their volumes; plain `make up` never starts them.
-
-The queue-stalled rule intentionally reports no completed `publish` job in
-15 minutes, even when the queue is simply idle. It cannot add Horizon's
-pending-work cross-check until a metrics backend exists.
 
 ## Deploying a change
 

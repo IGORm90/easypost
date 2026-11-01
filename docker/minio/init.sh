@@ -24,9 +24,3 @@ done
 
 mc mb --ignore-existing local/media
 mc anonymous set-json /minio-policy/media-policy.json local/media
-
-# Loki owns retention and index-aware deletion for this bucket. Unlike
-# `media`, its chunks and index records must never be anonymously readable:
-# an access log can contain request paths and client metadata even when the
-# application itself avoids logging customer content.
-mc mb --ignore-existing local/easypost-logs

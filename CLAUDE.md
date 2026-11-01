@@ -25,6 +25,9 @@ Deeper references, per area:
 
 ## Working agreements
 
+- **All work happens on `main`.** Do not create feature branches or worktrees; commit straight to
+  `main` (still only after the user says so). If you find yourself on another branch, say so and
+  ask before switching or merging.
 - **Always ask before committing, and before pushing.** Never auto-commit.
 - **After finishing a task, propose a commit message** — end the task with a ready-to-use
   Conventional Commits message (lowercase, scoped, no ticket key, per AGENTS.md § Git, with the
