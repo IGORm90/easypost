@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\ScanMissedPostsJob;
 use Illuminate\Support\Str;
 
 /*
@@ -120,16 +121,23 @@ return [
     ],
 
     'trim' => [
-        'recent' => 60,
+        // 24h of success history: with no log aggregator deployed, these
+        // lists are the only record of what ran, and the 60-minute vendor
+        // default cannot answer "did yesterday's 09:00 posts go out".
+        'recent' => 1440,
         'pending' => 60,
-        'completed' => 60,
+        'completed' => 1440,
         'recent_failed' => 10080,
         'failed' => 10080,
         'monitored' => 10080,
     ],
 
     'silenced' => [
-        // App\Jobs\ExampleJob::class,
+        // Runs every five minutes and carries no tags: 288 identical
+        // rows a day would bury the publish jobs in the Completed list.
+        // A failure is still listed under Failed — silencing hides only
+        // successful runs.
+        ScanMissedPostsJob::class,
     ],
 
     'silenced_tags' => [

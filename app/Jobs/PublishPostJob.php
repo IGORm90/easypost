@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
 use App\Services\Posts\PublishService;
@@ -211,9 +212,24 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
             ->whereKey($this->postGroupId)
             ->value('organization_id');
 
+        // One tag per distinct channel type in the group, so Horizon's tag
+        // search answers "did anything fail on this provider". The id is
+        // a provider identifier, not a channel name or credential. Posts
+        // are read by group id with the tenant scope removed by name for
+        // the same reason as the organization lookup above.
+        /** @var list<string> $providers */
+        $providers = Post::withoutGlobalScope('organization')
+            ->where('post_group_id', $this->postGroupId)
+            ->join('integrations', 'integrations.id', '=', 'posts.integration_id')
+            ->distinct()
+            ->orderBy('integrations.provider_identifier')
+            ->pluck('integrations.provider_identifier')
+            ->all();
+
         return array_values(array_filter([
             $organizationId !== null ? "organization:{$organizationId}" : null,
             "group:{$this->postGroupId}",
+            ...array_map(fn (string $provider) => "provider:{$provider}", $providers),
         ]));
     }
 

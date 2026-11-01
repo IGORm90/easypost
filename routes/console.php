@@ -150,3 +150,12 @@ Schedule::command('horizon:snapshot')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->onOneServer();
+
+/*
+ * failed_jobs is a Postgres table nothing else trims; Horizon's own Redis
+ * trim (config/horizon.php, 10080 minutes) does not touch it. Seven days
+ * matches that trim, so both views of a failure expire together.
+ */
+Schedule::command('queue:prune-failed --hours=168')
+    ->dailyAt('03:00')
+    ->onOneServer();

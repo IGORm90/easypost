@@ -194,6 +194,10 @@ class RefreshIntegrationTokenJob implements ShouldBeUnique, ShouldQueue
         public readonly Integration $integration,
     ) {
         $this->tries = count(self::RETRY_BACKOFF_SECONDS) + 1;
+
+        // Explicit rather than the implicit fallback; JobQueuesTest fails
+        // for any queued class that leaves the queue unset.
+        $this->queue = 'default';
     }
 
     public function uniqueId(): string

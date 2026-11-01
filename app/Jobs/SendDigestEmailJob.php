@@ -37,6 +37,15 @@ final class SendDigestEmailJob implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 3300;
 
+    public function __construct()
+    {
+        // Named explicitly although `default` is also the fallback: a job
+        // that merely falls through is indistinguishable from one whose
+        // author forgot to choose, and a rename of the fallback queue would otherwise silently strand it.
+        // JobQueuesTest fails for any queued class that leaves this unset.
+        $this->queue = 'default';
+    }
+
     public function uniqueId(): string
     {
         return 'send-digest-emails';
