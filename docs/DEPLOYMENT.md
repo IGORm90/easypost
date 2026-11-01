@@ -51,6 +51,65 @@ Ten default long-running services plus one one-shot init container
 never baked into the image — a fresh `composer install` (`make setup`) is
 required after cloning, and after any dependency change.
 
+## Health, limits and restarts
+
+Every long-running service has a healthcheck, a `mem_limit` and
+`restart: unless-stopped`, and every service uses the shared `x-logging`
+rotation (`10m` x 3). `ComposeServicesTest` asserts all of it from
+`docker/compose.yaml`, because nothing runs the file in CI.
+
+| Service | Healthy means | `mem_limit` |
+| --- | --- | --- |
+| nginx | `GET /up` through nginx, FastCGI and a booted Laravel | 64m |
+| php | the `php-fpm` master process exists | 512m |
+| horizon | `horizon:status` exits 0 (1 = paused, 2 = no master) | 1280m |
+| scheduler | `/tmp/scheduler-heartbeat` touched in the last 3 min | 128m |
+| pulse | a `pulse:check` process exists | 128m |
+| postgres | `pg_isready` | 512m |
+| redis | `PING` answers `PONG` | 256m |
+| minio | `/minio/health/live` | 384m |
+| mailpit | `/mailpit readyz` | 64m |
+
+The limits add up to about **3.3 GB**, not the ~2.7 GB an earlier plan
+assumed, because that plan sized Horizon for 6-7 workers and this stack runs 15
+(10 publish, 3 default, 2 mail; ~730 MiB idle). On a 4 GB host that leaves
+little for the OS. The lever is `config/horizon.php`'s process counts; when you
+change them, change `horizon`'s `mem_limit` too (workers x
+`horizon.memory_limit`, and `ComposeServicesTest` fails if you forget).
+`php` at 512m is enough for web workers, but two simultaneous large media
+uploads can reach it, and then Docker kills the whole container, not one
+request.
+
+An unhealthy container is only **reported**: Docker does not restart on a
+failed healthcheck. `restart: unless-stopped` restarts a container whose
+process exited, and it does not act on `docker kill` or `docker stop`, which
+Docker treats as a deliberate stop. `php`, `horizon`, `scheduler` and `pulse`
+start only once Postgres and Redis report healthy.
+
+Two details that are easy to undo by accident:
+
+- **Scheduler.** The loop runs `schedule:run && touch /tmp/scheduler-heartbeat`,
+  so the heartbeat goes stale when the loop dies *and* when `schedule:run`
+  keeps failing or hangs. A repeatedly failing scheduled task therefore shows
+  as unhealthy; that is intended.
+- **Pulse.** The check is `pgrep -f 'pulse[:]check'`. A Docker healthcheck runs
+  as `sh -c "<test>"`, whose own command line contains the pattern, so an
+  unescaped `pgrep -f pulse:check` matches itself and is healthy forever.
+
+**Redis** runs `--maxmemory 200mb --maxmemory-policy noeviction --appendonly
+yes` on the `redisdata` volume. Under memory pressure it refuses writes
+(loudly) instead of evicting queued jobs, and the append-only file lets the
+queue survive `docker compose up --force-recreate`. Without the volume the
+file would be discarded with the container. If Redis ever hits 200mb, enqueues
+start failing: check Horizon's completed-job retention
+(`config/horizon.php`, 24 h) first.
+
+**Horizon** has `stop_grace_period: 180s`, longer than the slowest supervisor
+timeout (90 s), so a deploy lets a running publish finish. Docker's 10 s
+default would cut it mid-flight, and an interrupted publish is how a post gets
+published twice. The `low`-priority jobs that can still be cut must be
+idempotent.
+
 ## Logging
 
 Application logs go to **stdout/stderr as JSON** — the container runtime

@@ -514,3 +514,18 @@ pass should exercise them by hand.
   pulse`; `docker compose logs pulse` has no `top: not found`; and after a
   deliberately slow request or job the Slow cards show it. Cards load through
   Livewire POSTs, so this needs a real browser session.
+- **Healthchecks, limits and restarts are asserted from the file, not from
+  Docker.** `ComposeServicesTest` proves `docker/compose.yaml` declares them;
+  it cannot prove Docker applies them or that a check turns red when it should.
+  Verified by hand while building this, and worth repeating after any change to
+  a check: `docker compose ps` shows every service `(healthy)` (the scheduler
+  after its first minute); `horizon:pause` run *inside the horizon container*
+  (it signals by PID, so from `php` it reports "No processes to pause") flips
+  `horizon:status` to exit 1 and `horizon:continue` back to 0; backdating
+  `/tmp/scheduler-heartbeat` ten minutes makes the scheduler check fail; and a
+  service whose process exits on its own (`redis-cli shutdown nosave`) comes
+  back with `RestartCount` 1. `docker kill` is **not** a valid crash test: it
+  counts as a manual stop and is never restarted. Not exercised: the nginx and
+  php checks failing (stopping `php` is the trap in DEPLOYMENT.md
+  Troubleshooting 1), the `mem_limit` OOM-kill itself, and the Redis 200mb
+  refusal path.
