@@ -85,13 +85,20 @@ services:
     image: redis:7-alpine
     ports: ["6379:6379"]
   minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
+    # minio/minio and minio/mc are gone from Docker Hub (pull access denied)
+    # and quay.io/minio/* is unauthorized, so this uses the frozen Bitnami
+    # legacy build. Its entrypoint already runs `minio server` on 9000/9001,
+    # reads MINIO_ROOT_USER/PASSWORD, and keeps data in /bitnami/minio/data.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r3
+    # Fresh named volumes are root-owned but the image runs as uid 1001, which
+    # fails with "Permission denied" on /bitnami/minio/data/.root_user. Root
+    # lets the Bitnami scripts chown the data dir themselves.
+    user: "0"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
     ports: ["9000:9000", "9001:9001"]
-    volumes: ["minio:/data"]
+    volumes: ["minio:/bitnami/minio/data"]
   # Review finding 2 (CRITICAL): nothing previously created the `media`
   # bucket -- MinIO starting with an empty volume (any fresh environment)
   # meant the feature was 100% broken from the first request, and
@@ -122,7 +129,9 @@ services:
   # included, under that shortcut). See media-policy.json's own comment
   # for the full reasoning.
   minio-init:
-    image: minio/mc
+    # Same image as the server: it ships `mc` on PATH, and one pinned image
+    # avoids a second legacy repo.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r3
     depends_on: [minio]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
