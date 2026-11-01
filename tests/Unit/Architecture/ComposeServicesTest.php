@@ -134,3 +134,14 @@ it('does not let the pulse healthcheck match its own command line', function () 
     $pattern = trim($m[1], "'\"");
     expect(preg_match('/'.$pattern.'/', $shell))->toBe(0);
 });
+
+/*
+ * php-fpm serves web requests as www-data. If horizon, the scheduler or pulse
+ * run as root they can be the first to write the day's laravel.log, which is
+ * then created root:root 0644 and every web request (including /pulse) dies
+ * with "Permission denied" the moment it tries to log. Running every process
+ * that shares the log volume as www-data keeps one owner for the file.
+ */
+it('runs every php worker as the php-fpm user so they share ownership of the logs', function (string $name) {
+    expect(composeServices()[$name]['user'] ?? null)->toBe('www-data');
+})->with(['horizon', 'scheduler', 'pulse']);

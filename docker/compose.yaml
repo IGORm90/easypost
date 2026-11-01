@@ -64,6 +64,7 @@ services:
   horizon:
     build: ./php
     command: php artisan horizon
+    user: www-data
     volumes: ["../:/var/www/html", "easypost-logs:/var/www/html/storage/logs"]
     depends_on:
       redis:
@@ -100,6 +101,7 @@ services:
     # stale both when the loop dies and when schedule:run keeps failing or
     # hangs (which a plain "is the process alive" check would call healthy).
     command: sh -c "while true; do php artisan schedule:run && touch /tmp/scheduler-heartbeat; sleep 60; done"
+    user: www-data
     volumes: ["../:/var/www/html", "easypost-logs:/var/www/html/storage/logs"]
     depends_on:
       redis:
@@ -128,6 +130,7 @@ services:
   pulse:
     build: ./php
     command: php artisan pulse:check
+    user: www-data
     volumes: ["../:/var/www/html"]
     environment:
       PULSE_SERVER_NAME: ${PULSE_SERVER_NAME:-easypost}
