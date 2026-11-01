@@ -13,6 +13,7 @@
         "laravel/socialite": "^5.29",
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
+        "opcodesio/log-viewer": "^3.24",
         "predis/predis": "^3.5"
     },
     "require-dev": {

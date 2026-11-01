@@ -15,7 +15,7 @@ services:
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
   php:
     build: ./php
-    volumes: ["../:/var/www/html"]
+    volumes: ["../:/var/www/html", "easypost-logs:/var/www/html/storage/logs"]
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
     # `minio-init` (below) is a "condition: service_completed_successfully"
     # dependency, not merely a start-order one -- review finding 2
@@ -34,7 +34,7 @@ services:
   horizon:
     build: ./php
     command: php artisan horizon
-    volumes: ["../:/var/www/html"]
+    volumes: ["../:/var/www/html", "easypost-logs:/var/www/html/storage/logs"]
     depends_on:
       redis:
         condition: service_started
@@ -47,7 +47,7 @@ services:
   scheduler:
     build: ./php
     command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
-    volumes: ["../:/var/www/html"]
+    volumes: ["../:/var/www/html", "easypost-logs:/var/www/html/storage/logs"]
     depends_on:
       redis:
         condition: service_started
@@ -143,4 +143,4 @@ services:
   mailpit:
     image: axllent/mailpit
     ports: ["8025:8025", "1025:1025"]
-volumes: { pgdata: {}, minio: {} }
+volumes: { pgdata: {}, minio: {}, easypost-logs: {} }

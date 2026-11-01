@@ -485,3 +485,19 @@ pass should exercise them by hand.
   after any nginx or Docker logging-driver change: hit a real endpoint and
   confirm the same request id appears in both the nginx access line and
   the application log line.
+- **Log Viewer is checked at the HTTP layer, never in a browser.**
+  `DashboardAccessTest` proves the gate (guest, ordinary user and
+  organization SUPERADMIN get 403; a platform admin gets the page and the
+  JSON API) and that deletion is off, and `ViewerLogChannelTest` /
+  `LogSecretsTest` prove the `viewer` file is redacted, parseable and
+  world-appendable. Nothing renders the Vue page. Before relying on it, sign
+  in as a platform admin, open `/log-viewer`, and confirm: the page loads
+  with styles (assets are inlined, so a blank page means the script was
+  blocked), `viewer-YYYY-MM-DD.log` is listed, a `publish.attempt` line from
+  a **job** (written by the `horizon` container, not the web container) is
+  visible and searchable by `post_group_id`, no delete button is shown, and
+  its API calls succeed (the JSON API only treats a request as signed in when
+  the browser sends `Referer`/`Origin`; `curl` without them gets 403).
+  The shared `easypost-logs` volume is not exercised by the suite either:
+  `docker compose exec horizon ls storage/logs` and `exec php ls
+  storage/logs` must list the same files.

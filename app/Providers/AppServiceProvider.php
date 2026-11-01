@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Socialite\Facades\Socialite;
+use Opcodes\LogViewer\Facades\LogViewer;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -46,6 +47,18 @@ class AppServiceProvider extends ServiceProvider
         // flag, never a role inside one organization. `?User` lets a
         // guest reach the callback and be refused explicitly.
         Gate::define('viewMonitoring', fn (?User $user) => $user?->is_superadmin === true);
+
+        // An auth callback, not a `viewLogViewer` gate: with neither, Log
+        // Viewer lets everyone in outside production and 403s everyone in
+        // it. The callback also satisfies its production guard.
+        LogViewer::auth(fn ($request) => Gate::forUser($request->user())->allows('viewMonitoring'));
+
+        // Read-only: logs are the only record of an incident, and Log
+        // Viewer defines both delete abilities as `true` unless they exist
+        // already. Rotation (LOG_DAILY_DAYS) is the only thing that removes
+        // a file.
+        Gate::define('deleteLogFile', fn (mixed $user) => false);
+        Gate::define('deleteLogFolder', fn (mixed $user) => false);
 
         // LOG_PLAN.md Phase 1.4 — requirement 4 (job RPS/duration).
         // Registered before ClearOrganizationContext below so a future

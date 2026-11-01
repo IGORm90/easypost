@@ -3,6 +3,8 @@
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Gate;
+use Opcodes\LogViewer\LogFile;
+use Opcodes\LogViewer\LogFolder;
 
 /*
  * One gate, `viewMonitoring`, decides who may open the platform
@@ -71,8 +73,59 @@ it('does not serve the SPA shell on the monitoring dashboard paths', function (s
     $this->actingAs($platformAdmin)
         ->get($path)
         ->assertDontSee('<div id="app">', false);
-})->with(['/pulse', '/log-viewer', '/horizon']);
+})->with(['/pulse', '/horizon']);
 
 it('still serves the SPA shell on paths that merely start with a reserved word', function (string $path) {
     $this->get($path)->assertOk()->assertSee('<div id="app">', false);
 })->with(['/pulse-settings', '/log-viewers', '/horizons']);
+
+/*
+ * Log Viewer ships its own rule: with no `viewLogViewer` gate and no auth
+ * callback it lets EVERYONE in outside production, and 403s everyone in
+ * production. Neither is acceptable, so it is wired to `viewMonitoring`
+ * through LogViewer::auth(). The page and its JSON API are separate route
+ * groups with separate middleware, so both are covered.
+ */
+it('forbids everyone but a platform admin from the log viewer page and api', function (string $path) {
+    $this->get($path)->assertForbidden();
+
+    $this->actingAs(User::factory()->create(['is_superadmin' => false]))
+        ->get($path)->assertForbidden();
+
+    $org = Organization::factory()->create();
+    actingAsMember($org, 'SUPERADMIN');
+    $this->get($path)->assertForbidden();
+})->with(['/log-viewer', '/log-viewer/api/files']);
+
+it('lets a platform admin open the log viewer page and api', function (string $path) {
+    $this->actingAs(User::factory()->create(['is_superadmin' => true]))
+        ->get($path)
+        ->assertOk();
+})->with(['/log-viewer', '/log-viewer/api/files']);
+
+it('serves the real Log Viewer page, not the SPA shell, to a platform admin', function () {
+    $this->actingAs(User::factory()->create(['is_superadmin' => true]))
+        ->get('/log-viewer')
+        ->assertOk()
+        ->assertSee('id="log-viewer"', false)
+        ->assertDontSee('<div id="app">', false);
+});
+
+/*
+ * Logs are the only record of an incident now that nothing ships them
+ * elsewhere, and Log Viewer ships with one-click file and folder deletion
+ * enabled for anyone who may view it. Viewing is for the platform admin;
+ * deleting is for nobody — rotation (LOG_DAILY_DAYS) is the only thing that
+ * removes a file.
+ */
+it('lets nobody delete log files through the log viewer', function (string $ability) {
+    $platformAdmin = User::factory()->create(['is_superadmin' => true]);
+
+    // The package's own default gates type-hint their subject, so a real
+    // LogFile / LogFolder is passed; the path is never read from disk.
+    $subject = $ability === 'deleteLogFile'
+        ? new LogFile('/nonexistent/viewer-2000-01-01.log')
+        : new LogFolder('/nonexistent', []);
+
+    expect(Gate::forUser($platformAdmin)->allows($ability, [$subject]))->toBeFalse();
+})->with(['deleteLogFile', 'deleteLogFolder']);

@@ -3,6 +3,7 @@
 use App\Logging\RedactSensitiveContext;
 use Monolog\Formatter\JsonFormatter;
 use Monolog\Handler\NullHandler;
+use Monolog\Handler\RotatingFileHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
 use Monolog\Processor\PsrLogMessageProcessor;
@@ -118,6 +119,36 @@ return [
             'with' => ['stream' => 'php://stdout'],
             'formatter' => JsonFormatter::class,
             'level' => 'info',
+            'processors' => [PsrLogMessageProcessor::class, RedactSensitiveContext::class],
+        ],
+
+        // Feeds Log Viewer (/log-viewer), which reads dated plain-text files
+        // in Laravel's line format and cannot parse the JSON the other
+        // channels write to stdout. Add it to LOG_STACK in production
+        // alongside `app,errors`; stdout stays the source for `docker logs`.
+        //
+        // `monolog` + RotatingFileHandler, not the `daily` driver: `daily`
+        // silently ignores `processors`, so a daily channel carrying
+        // RedactSensitiveContext would write channel tokens to disk in
+        // clear with no error anywhere. Only the `monolog` driver applies
+        // them. `formatter` is left unset on purpose so Laravel's default
+        // LineFormatter (`[Y-m-d H:i:s] env.LEVEL: message {context}`) is
+        // used — the format Log Viewer parses. The handler appends the date
+        // itself, giving viewer-YYYY-MM-DD.log.
+        // ViewerLogChannelTest and LogSecretsTest pin both properties.
+        'viewer' => [
+            'driver' => 'monolog',
+            'handler' => RotatingFileHandler::class,
+            'with' => [
+                'filename' => storage_path('logs/viewer.log'),
+                'maxFiles' => (int) env('LOG_DAILY_DAYS', 14),
+                // php-fpm (www-data) and horizon/scheduler (root) all append
+                // to the same dated file, and the first writer creates it.
+                // Without this a root-created 0644 file is unwritable for
+                // www-data and every web-request log call throws.
+                'filePermission' => 0666,
+            ],
+            'level' => env('LOG_LEVEL', 'info'),
             'processors' => [PsrLogMessageProcessor::class, RedactSensitiveContext::class],
         ],
 

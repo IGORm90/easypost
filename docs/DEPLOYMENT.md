@@ -45,10 +45,11 @@ required after cloning, and after any dependency change.
 
 ## Logging
 
-All application logs go to **stdout/stderr as JSON**, never to a file — the
-container runtime captures them, which is what any future log shipper
-(CloudWatch, whatever) reads from. Three channels
-(`config/logging.php`):
+Application logs go to **stdout/stderr as JSON** — the container runtime
+captures them (`docker logs`), which is also what any future log shipper
+(CloudWatch, whatever) reads from. A fourth channel, `viewer`, writes the
+same events as plain-text files for Log Viewer (see "Log Viewer" below).
+Four channels (`config/logging.php`):
 
 - **`app`** — general application events, level `LOG_LEVEL` (default `info`
   in production). To stdout.
@@ -59,8 +60,11 @@ container runtime captures them, which is what any future log shipper
   `App\Listeners\LogJobLifecycle`) and publish outcomes
   (`publish.attempt`, from `PublishService::publishLockedChannel()`). To
   stdout.
+- **`viewer`** — dated plain-text files `storage/logs/viewer-YYYY-MM-DD.log`
+  in Laravel's line format, level `LOG_LEVEL`, `LOG_DAILY_DAYS` (default 14)
+  files kept. The only channel that writes a file.
 
-Production `.env` sets `LOG_STACK=app,errors`. Local dev stays
+Production `.env` sets `LOG_STACK=app,errors,viewer`. Local dev stays
 `LOG_STACK=single` (a text file under `storage/logs/`) — nobody wants JSON
 in a terminal.
 
@@ -81,6 +85,48 @@ context/extra value whose key matches
 depth, as defence in depth. It is not the primary control: never log post
 content, media URLs, signature text, tokens, request/response bodies, or
 email addresses (log `user_id`) in the first place.
+
+### Finding everything about one post
+
+stdout is JSON, so filter it with `jq`:
+
+```bash
+docker compose -f docker/compose.yaml logs --no-log-prefix php horizon \
+  | jq -c 'select(.context.post_group_id == "<ULID>")'
+```
+
+`post_group_id` is on every `publish.attempt` line; `request_id` joins a web
+request to the jobs it dispatched. The same search works in Log Viewer's text
+box (below), which is the easier route for anyone without shell access.
+
+### Log Viewer
+
+`/log-viewer` (`opcodesio/log-viewer`) browses the `viewer` files: file list,
+level filter, text search, jump by date. Access is the platform-wide
+`viewMonitoring` gate (`users.is_superadmin`), wired in `AppServiceProvider`
+through `LogViewer::auth()`. Two things in that wiring are deliberate:
+
+- Without an auth callback or a `viewLogViewer` gate the package lets
+  **everyone** in outside production and refuses everyone in production.
+  Never remove the callback.
+- File and folder deletion is switched off (`deleteLogFile` /
+  `deleteLogFolder` are `false`). Rotation is the only thing that removes a
+  file.
+
+The `viewer` channel is a `monolog` channel on purpose. Laravel's `daily`
+driver silently ignores a `processors` key, so a `daily` channel carrying
+`RedactSensitiveContext` writes tokens to disk in clear with no error
+(`ViewerLogChannelTest` pins this). The file is created `0666` because
+php-fpm (`www-data`) and `horizon`/`scheduler` (`root`) all append to it and
+the first writer creates it.
+
+`php`, `horizon` and `scheduler` share one named volume,
+`easypost-logs`, at `storage/logs`. Without it the jobs' lines stay inside
+the `horizon` container and Log Viewer never sees them. On first use the
+volume copies the owner and mode of `/var/www/html/storage/logs` from the
+image (`docker/php/Dockerfile` creates it for `www-data`). **On a host that
+already ran the stack, `make up` after pulling is enough; the volume starts
+empty, so earlier `storage/logs/*.log` files are not carried into it.**
 
 Every service's container logging driver is capped
 (`logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}`
