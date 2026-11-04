@@ -20,13 +20,10 @@ use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
 use App\Social\Exceptions\ProviderRateLimitException;
-use App\Social\Exceptions\ProviderTransientException;
 use App\Social\Exceptions\UnknownProviderOptionException;
 use App\Support\Exceptions\UnsafeRemoteHostException;
 use App\Support\SafeRemoteHost;
 use Carbon\CarbonImmutable;
-use Closure;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -150,14 +147,14 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             throw new ProviderAuthException('Reddit did not return an authorization code.');
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->tokenRequest()->asForm()->post(self::TOKEN_URL, [
                 'grant_type' => 'authorization_code',
                 'code' => $code,
                 'redirect_uri' => $redirectUri,
             ]),
             'exchanging the authorization code',
-            authContext: true,
+            auth: true,
         );
 
         return $this->authResultFromToken($body);
@@ -171,13 +168,13 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             throw new ProviderAuthException('This Reddit channel has no refresh token; it must be reconnected.');
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->tokenRequest()->asForm()->post(self::TOKEN_URL, [
                 'grant_type' => 'refresh_token',
                 'refresh_token' => $refreshToken,
             ]),
             'refreshing the token',
-            authContext: true,
+            auth: true,
         );
 
         // Reddit does not always re-issue a refresh token on refresh;
@@ -231,7 +228,7 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
     {
         $token = (string) $integration->token;
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->authed($token)->asForm()->post(self::API_BASE.'/api/media/asset.json', [
                 'filepath' => $media->filename(),
                 'mimetype' => $media->mimeType,
@@ -276,14 +273,12 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             'headers' => $this->fileHeaders($media),
         ];
 
-        $uploadResponse = $this->send(fn (): Response => $this->uploadHttp()
+        // The S3 target answers an empty 201, so the decoded body is ignored;
+        // raw() is used for its transport, redirect and status handling.
+        $this->api()->raw(fn (): Response => $this->uploadHttp()
             ->withOptions($pin)
             ->asMultipart()
-            ->post($action, $fields));
-
-        if (! $uploadResponse->successful()) {
-            throw $this->errorFor($uploadResponse, 'uploading media');
-        }
+            ->post($action, $fields), 'uploading media');
 
         $assetId = (string) $asset['asset_id'];
         $publicUrl = 'https://reddit.com/media?url='.urlencode($this->websocketUrlFallback($body, $assetId));
@@ -358,7 +353,7 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             $form['text'] = $payload->content;
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->authed($token)->asForm()->post(self::API_BASE.'/api/submit', $form),
             'submitting a post',
         );
@@ -368,7 +363,7 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
 
     private function comment(string $token, string $thingId, string $text): PostResultDto
     {
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->authed($token)->asForm()->post(self::API_BASE.'/api/comment', [
                 'api_type' => 'json',
                 'thing_id' => $thingId,
@@ -426,7 +421,7 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
      */
     private function subredditOptions(Integration $integration): array
     {
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->authed((string) $integration->token)->get(self::API_BASE.'/subreddits/mine/subscriber', ['limit' => 100]),
             'listing subreddits',
         );
@@ -477,7 +472,7 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             return [];
         }
 
-        $body = $this->rawCall(
+        $body = $this->api()->raw(
             fn (): Response => $this->authed((string) $integration->token)->get(self::API_BASE."/r/{$subreddit}/api/link_flair_v2"),
             'listing flairs',
         );
@@ -580,10 +575,10 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
             throw new ProviderAuthException('Reddit did not return an access token.');
         }
 
-        $me = $this->call(
+        $me = $this->api()->json(
             fn (): Response => $this->authed($accessToken)->get(self::API_BASE.'/api/v1/me'),
             'fetching the account profile',
-            authContext: true,
+            auth: true,
         );
 
         $id = $me['id'] ?? null;
@@ -606,82 +601,9 @@ class RedditProvider implements DeclaresPostSettings, SocialProviderInterface, S
         );
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function call(Closure $call, string $context, bool $authContext = false): array
+    private function api(): ProviderCall
     {
-        $response = $this->send($call);
-
-        if (! $response->successful()) {
-            throw $authContext ? $this->authErrorFor($response, $context) : $this->errorFor($response, $context);
-        }
-
-        $body = $response->json();
-
-        /** @var array<string, mixed> */
-        return is_array($body) ? $body : [];
-    }
-
-    /**
-     * Like call(), but returns whatever JSON shape Reddit sent
-     * (link_flair_v2 answers with a bare array, not an object) rather
-     * than forcing it into a string-keyed map.
-     */
-    private function rawCall(Closure $call, string $context): mixed
-    {
-        $response = $this->send($call);
-
-        if (! $response->successful()) {
-            throw $this->errorFor($response, $context);
-        }
-
-        return $response->json();
-    }
-
-    /**
-     * Deliberately does NOT attach the caught ConnectionException as
-     * $previous, mirroring every other provider in this directory: its
-     * message can echo request details (here, the bearer token or the
-     * client secret via HTTP Basic) depending on the underlying HTTP
-     * client's error formatting.
-     */
-    private function send(Closure $call): Response
-    {
-        try {
-            /** @var Response $response */
-            $response = $call();
-        } catch (ConnectionException) {
-            throw new ProviderTransientException('Network error while calling the Reddit API.');
-        }
-
-        return $this->refuseRedirect($response, $this->name());
-    }
-
-    private function errorFor(Response $response, string $context): ProviderException
-    {
-        $retryAfter = (int) $response->header('Retry-After');
-
-        return $this->exceptionForStatus(
-            $response->status(),
-            "Reddit API error while {$context} ({$response->status()}).",
-            $retryAfter,
-        );
-    }
-
-    private function authErrorFor(Response $response, string $context): ProviderException
-    {
-        $status = $response->status();
-
-        if ($status === 429) {
-            return new ProviderRateLimitException("Reddit rate-limited {$context}.", (int) $response->header('Retry-After'));
-        }
-
-        if ($status >= 500) {
-            return new ProviderTransientException("Reddit API error while {$context}.");
-        }
-
-        return new ProviderAuthException("Reddit rejected the request while {$context}.");
+        return new ProviderCall($this->name(), new RedditErrors);
     }
 
     /**
