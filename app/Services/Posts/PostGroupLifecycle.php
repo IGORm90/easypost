@@ -415,17 +415,23 @@ class PostGroupLifecycle
      *
      * Not `forced`: nothing older can hold this group's uniqueness lock.
      *
+     * `$attributes` are extra columns for a caller that has no tenant context
+     * (a queue worker spawning a recurrence): everything the `creating` hook
+     * would fill from `OrganizationContext` has to be passed in explicitly.
+     *
      * @param  Closure(PostGroup, PostState): void  $body
+     * @param  array<string, mixed>  $attributes
      */
-    public function create(string $id, Intent $intent, Closure $body): Receipt
+    public function create(string $id, Intent $intent, Closure $body, array $attributes = []): Receipt
     {
-        $group = DB::transaction(function () use ($id, $intent, $body) {
+        $group = DB::transaction(function () use ($id, $intent, $body, $attributes) {
             $target = $this->targetStateFor($intent->kind, PostState::DRAFT);
 
             $group = new PostGroup([
                 'state' => PostState::DRAFT,
                 'publish_date' => $intent->date,
                 ...$intent->recurrence,
+                ...$attributes,
             ]);
             $group->id = $id;
             $group->save();
@@ -443,6 +449,26 @@ class PostGroupLifecycle
         });
 
         return new Receipt($group, $group->queue_version);
+    }
+
+    /**
+     * Deletes a group, and its posts with it (`posts` and `post_group_tag`
+     * cascade at the database level). The edit rule applies: only while
+     * nothing in it has actually reached a network. A group that already holds
+     * a released segment is left completely untouched — the network already
+     * has that post, and deleting the local row would both permanently lose the
+     * anti-duplication `release_id` marker and desync the local record from
+     * what was actually sent, for no benefit (it does not un-publish anything
+     * remotely).
+     */
+    public function remove(PostGroup $group): void
+    {
+        DB::transaction(function () use ($group): void {
+            $group = $this->lockGroup($group);
+            $this->guardEditable($group);
+
+            $group->delete();
+        });
     }
 
     /**
@@ -669,7 +695,7 @@ class PostGroupLifecycle
      *    aborts one side, a retryable job on one hand, a 500 on a
      *    calendar drag on the other.
      */
-    public function lockGroup(PostGroup $group): PostGroup
+    private function lockGroup(PostGroup $group): PostGroup
     {
         /** @var PostGroup $locked */
         $locked = PostGroup::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
@@ -821,7 +847,7 @@ class PostGroupLifecycle
      * which no run can be in flight by construction — and
      * `MissedPostsService` never bumps at all.
      */
-    public function guardEditable(PostGroup $group): void
+    private function guardEditable(PostGroup $group): void
     {
         Post::query()
             ->where('post_group_id', $group->id)

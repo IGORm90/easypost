@@ -3,7 +3,9 @@
 use App\Enums\PostState;
 use App\Enums\RepeatUnit;
 use App\Models\Organization;
+use App\Models\Post;
 use App\Models\PostGroup;
+use App\Models\User;
 use App\Services\Posts\Intent;
 use App\Services\Posts\PostGroupLifecycle;
 use App\Support\OrganizationContext;
@@ -422,4 +424,84 @@ it('leaves no group behind when the body throws', function () {
     ))->toThrow(RuntimeException::class);
 
     expect(PostGroup::query()->whereKey($id)->exists())->toBeFalse();
+});
+
+it('creates a group for a given organization, author and series parent when there is no tenant context', function () {
+    $org = currentOrg();
+    $author = User::factory()->create();
+    $parent = groupIn(PostState::PUBLISHED);
+    $id = (string) Str::ulid();
+    // A queue worker has no OrganizationContext: everything the creating hook
+    // would normally fill from it has to be passed in.
+    OrganizationContext::clear();
+
+    $receipt = app(PostGroupLifecycle::class)->create(
+        $id,
+        Intent::forType('schedule', now()->addWeek(), [
+            'repeat_unit' => RepeatUnit::WEEK,
+            'repeat_interval' => 1,
+            'repeat_until' => now()->addMonths(2),
+        ]),
+        fn () => null,
+        [
+            'organization_id' => $org->id,
+            'created_by' => $author->id,
+            'repeat_parent_id' => $parent->id,
+        ],
+    );
+
+    $fresh = PostGroup::withoutGlobalScope('organization')->findOrFail($id);
+    expect($fresh->state)->toBe(PostState::SCHEDULED)
+        ->and($fresh->organization_id)->toBe($org->id)
+        ->and($fresh->created_by)->toBe($author->id)
+        ->and($fresh->repeat_parent_id)->toBe($parent->id)
+        ->and($fresh->repeat_unit)->toBe(RepeatUnit::WEEK)
+        ->and($receipt->queueVersion)->toBe(0);
+});
+
+// --- remove() -------------------------------------------------------------------
+
+it('removes a group that has nothing on the network, taking its posts with it', function (PostState $state) {
+    $group = groupIn($state);
+    publishableChannel(currentOrg(), $group, ['a', 'b']);
+
+    app(PostGroupLifecycle::class)->remove($group);
+
+    expect(PostGroup::query()->whereKey($group->id)->exists())->toBeFalse()
+        ->and(Post::withoutGlobalScope('organization')->where('post_group_id', $group->id)->count())->toBe(0);
+})->with([
+    'draft' => PostState::DRAFT,
+    'scheduled' => PostState::SCHEDULED,
+    'queue' => PostState::QUEUE,
+    'error' => PostState::ERROR,
+]);
+
+it('refuses to remove a group that has a segment on the network, leaving it whole', function () {
+    $group = groupIn(PostState::ERROR);
+    [, $posts] = publishableChannel(currentOrg(), $group, ['out', 'failed']);
+    $posts[0]->update(['state' => PostState::PUBLISHED, 'release_id' => 'remote-1']);
+
+    expect(fn () => app(PostGroupLifecycle::class)->remove($group))->toThrow(ConflictHttpException::class);
+
+    expect(PostGroup::query()->whereKey($group->id)->exists())->toBeTrue()
+        ->and(Post::withoutGlobalScope('organization')->where('post_group_id', $group->id)->count())->toBe(2);
+});
+
+it('refuses to remove a PUBLISHED group', function () {
+    $group = groupIn(PostState::PUBLISHED);
+
+    expect(fn () => app(PostGroupLifecycle::class)->remove($group))->toThrow(ConflictHttpException::class);
+
+    expect(PostGroup::query()->whereKey($group->id)->exists())->toBeTrue();
+});
+
+it('does not see another organization\'s group when removing', function () {
+    $other = PostGroup::factory()->create([
+        'organization_id' => Organization::factory()->create()->id,
+        'state' => PostState::DRAFT,
+    ]);
+
+    expect(fn () => app(PostGroupLifecycle::class)->remove($other))->toThrow(ModelNotFoundException::class);
+
+    expect(PostGroup::withoutGlobalScope('organization')->whereKey($other->id)->exists())->toBeTrue();
 });

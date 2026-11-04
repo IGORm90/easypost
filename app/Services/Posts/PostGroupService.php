@@ -82,7 +82,6 @@ use RuntimeException;
 class PostGroupService
 {
     public function __construct(
-        private readonly PostStateMachine $stateMachine,
         private readonly PostGroupLifecycle $lifecycle,
         private readonly PlanLimitService $planLimits,
     ) {}
@@ -293,40 +292,31 @@ class PostGroupService
 
         /** @var PostGroup $group */
         $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($source, $publishDate, $organization) {
-            // Minted and assigned directly, exactly like create() — see
-            // that method's comment (`id` is deliberately absent from
-            // `$fillable`, so this must NOT go through mass assignment)
-            // and applyJitter()'s docblock for why a fixed seed is safe
-            // here specifically (spawnRecurrence() only ever runs once
-            // per predecessor, behind RecurrenceService's own claim()).
             $id = (string) Str::ulid();
-            $group = new PostGroup([
-                'organization_id' => $organization->id,
-                'state' => PostState::DRAFT,
-                'publish_date' => $this->applyJitter($publishDate, $id),
-                'created_by' => $source->created_by,
-                // The rule travels with the occurrence — without this the
-                // series would stop after exactly one hop.
+
+            $intent = Intent::forType('schedule', $this->applyJitter($publishDate, $id), [
                 'repeat_unit' => $source->repeat_unit,
                 'repeat_interval' => $source->repeat_interval,
                 'repeat_until' => $source->repeat_until,
-                // Every occurrence points at the FIRST post of the
-                // series, never at its immediate predecessor.
-                'repeat_parent_id' => $source->repeat_parent_id ?? $source->id,
             ]);
-            $group->id = $id;
-            $group->save();
 
-            $this->stateMachine->transition($group, PostState::SCHEDULED);
+            return $this->lifecycle->create(
+                $id,
+                $intent,
+                function (PostGroup $group) use ($source): void {
+                    $this->copyChainsWithoutScope($source, $group);
 
-            $this->copyChainsWithoutScope($source, $group);
-
-            $tagIds = $source->tags()->withoutGlobalScope('organization')->pluck('tags.id')->all();
-            if ($tagIds !== []) {
-                $this->syncTags($group, $tagIds);
-            }
-
-            return $group->fresh(['posts.media', 'tags']);
+                    $tagIds = $source->tags()->withoutGlobalScope('organization')->pluck('tags.id')->all();
+                    if ($tagIds !== []) {
+                        $this->syncTags($group, $tagIds);
+                    }
+                },
+                [
+                    'organization_id' => $organization->id,
+                    'created_by' => $source->created_by,
+                    'repeat_parent_id' => $source->repeat_parent_id ?? $source->id,
+                ],
+            )->group;
         });
 
         return $group;
@@ -478,20 +468,7 @@ class PostGroupService
      */
     public function delete(PostGroup $group): void
     {
-        DB::transaction(function () use ($group): void {
-            $group = $this->lifecycle->lockGroup($group);
-            $this->lifecycle->guardEditable($group);
-
-            $group->delete();
-        });
-
-        // Task 31: nothing further to do to "cancel" whatever
-        // PublishPostJob is already sitting delayed in the queue for
-        // this group — see guardEditable()'s docblock for why a job that
-        // fires after this point is already harmless by construction,
-        // and this class's docblock ("Deletion mirrors the edit rule")
-        // for why a group with any released segment could never reach
-        // this line in the first place.
+        $this->lifecycle->remove($group);
     }
 
     /**
