@@ -76,7 +76,7 @@ class DueDispatchService
 
         // Dispatched only after every claiming transaction below has
         // already committed — see this class's docblock and
-        // PostGroupService::claimAndDispatchNow()'s docblock for why a
+        // PostGroupLifecycle::dispatch()'s docblock for why a
         // dispatch from inside a still-open transaction risks a worker
         // querying for a row the transaction has not made visible yet.
         foreach ($claimed as $row) {

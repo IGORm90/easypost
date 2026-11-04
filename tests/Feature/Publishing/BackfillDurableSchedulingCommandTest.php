@@ -98,7 +98,7 @@ it('converts a genuine legacy QUEUE row but leaves a concurrently-claimed live Q
     // The safety property this proves: dispatch_attempts=0 is a marker
     // ONLY a pre-migration row can carry, because every new-code claim
     // path (DueDispatchService::claimBatch(), PostGroupService::
-    // claimAndDispatch(), MissedPostsService::dispatchRedispatch())
+    // dispatch(), MissedPostsService::dispatchRedispatch())
     // increments dispatch_attempts in the SAME statement that sets
     // state='QUEUE'. A row genuinely claimed moments before this command
     // runs — dispatch_attempts=1 — must never be touched, however soon

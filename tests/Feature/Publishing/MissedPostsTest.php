@@ -297,7 +297,7 @@ it('does not redispatch again on the second tick, immediately after a real first
 
 it('does not redispatch again on the second tick after PostGroupService dispatches for real, with last_dispatched_at written by that production code path too', function () {
     // Companion to the test above, covering the OTHER production write
-    // site: PostGroupService::claimAndDispatch() (create()/update()'s
+    // site: PostGroupLifecycle::dispatch() (create()/update()'s
     // type=now, and retry()) is the ONLY other place
     // PublishPostJob::dispatch() is ever called in this codebase. The
     // test above only exercises MissedPostsService::dispatchRedispatch()'s

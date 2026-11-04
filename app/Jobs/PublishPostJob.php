@@ -18,7 +18,7 @@ use Throwable;
  * Publishes one `PostGroup` to every channel it was scheduled to.
  * Dispatched, ID-only, by three call sites: `DueDispatchService`'s
  * per-minute claim (delayed to the row's own `publish_date`, bounded by
- * `dispatch_lookahead_seconds`), `PostGroupService::claimAndDispatch()`
+ * `dispatch_lookahead_seconds`), `PostGroupLifecycle::dispatch()`
  * (immediate — `type=now`/retry), and `MissedPostsService`'s recovery
  * redispatch (immediate, with a freshly-bumped `queue_version` — see
  * `uniqueId()` below).

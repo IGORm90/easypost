@@ -136,7 +136,7 @@ class MissedPostsService
      * Durable-scheduling rewrite: the candidate predicate is now
      * `last_dispatched_at` — stamped, atomically, at the exact moment
      * ANY of this codebase's dispatch sites (`DueDispatchService`,
-     * `PostGroupService::claimAndDispatch()`, this class's own
+     * `PostGroupLifecycle::dispatch()`, this class's own
      * `dispatchRedispatch()`) actually claims a row into `QUEUE` — not
      * `publish_date`, which no longer bears any fixed relationship to
      * when a group was claimed (a group can sit `SCHEDULED` for weeks
@@ -150,7 +150,7 @@ class MissedPostsService
      *
      * `whereNull('last_dispatched_at')` alongside the staleness check:
      * a row can reach `QUEUE` with `last_dispatched_at` still null if
-     * the process crashes between `PostGroupService::claimAndDispatch()`'s
+     * the process crashes between `PostGroupLifecycle::dispatch()`'s
      * caller committing the state transition and that method's own
      * (separate, post-commit) `last_dispatched_at` write — exactly Task
      * 32's original "hole 1" (a crash between commit and dispatch),
@@ -227,7 +227,7 @@ class MissedPostsService
      * even looks stuck (see that method's docblock); `dispatch_attempts`
      * is what lets `redispatchIfOrphaned()`'s attempt cap actually bound
      * this class's own redispatch loop, alongside `DueDispatchService`'s
-     * and `PostGroupService::claimAndDispatch()`'s writes to the same
+     * and `PostGroupLifecycle::dispatch()`'s writes to the same
      * column.
      *
      * `queue_version` is bumped here too — an earlier revision

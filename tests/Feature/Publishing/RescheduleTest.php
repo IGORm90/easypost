@@ -310,7 +310,7 @@ it('two genuinely concurrent update() type=now calls (a double-click "publish no
     // publish_date with no race to speak of. `update()`'s `type=now`
     // path is what still both re-locks the row (`lockGroup()`), bumps
     // `queue_version` under that lock (`bumpQueueVersionIfNotDraft()`),
-    // and claims + dispatches immediately (`claimAndDispatch()`) — the
+    // and claims + dispatches immediately (`dispatch()`) — the
     // exact shape this regression needs a double-click on "publish now"
     // to reproduce.
     //

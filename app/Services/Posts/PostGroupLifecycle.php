@@ -3,12 +3,14 @@
 namespace App\Services\Posts;
 
 use App\Enums\PostState;
+use App\Jobs\PublishPostJob;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Social\Dto\PostResultDto;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Closure;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -474,7 +476,7 @@ class PostGroupLifecycle
     /**
      * The write side for the HTTP-facing paths: one Intent at a time. Returns a
      * Receipt; the caller dispatches AFTER its own transaction has committed
-     * (see PostGroupService::claimAndDispatch(), until that moves here too).
+     * (see PostGroupLifecycle::dispatch(), until that moves here too).
      */
     public function edit(PostGroup $group, Intent $intent, ?Closure $body = null): Receipt
     {
@@ -864,5 +866,121 @@ class PostGroupLifecycle
         if ($group->state === PostState::PUBLISHED || $hasPublishedSegment) {
             throw new ConflictHttpException('This post has already been published and can no longer be edited or deleted.');
         }
+    }
+
+    /**
+     * Dispatches `PublishPostJob` for `$group` iff it just entered
+     * `QUEUE` — a no-op for `DRAFT` and, since the durable-scheduling
+     * rewrite, for `SCHEDULED` too: a `type=schedule` save never reaches
+     * `QUEUE` at all any more, and is durable the instant this method's
+     * caller commits, with no dispatch of any kind — `DueDispatchService`
+     * claims it later. This method exists only for the two cases that
+     * genuinely need a job to exist RIGHT NOW: `type=now`
+     * (create()/update()) and a manual retry — both transition the group
+     * straight into `QUEUE` and expect it to actually start publishing
+     * immediately, not wait for the next per-minute tick.
+     *
+     * No `->delay()`: unlike the pre-rewrite version of this method,
+     * every call site here already means "this is due right now" — a
+     * scheduled post for a future date never reaches this method as
+     * `QUEUE` in the first place (see `resolveTargetState()`).
+     *
+     * Deliberately called AFTER the caller's own `DB::transaction()` has
+     * fully committed, never from inside it. Two independent reasons,
+     * both hard requirements:
+     *
+     *  - Durability: dispatching before commit risks a worker picking
+     *    the job up and querying for a group the transaction hasn't
+     *    made visible yet (real risk on the redis queue used in
+     *    production, where a worker is a separate process/connection
+     *    that only ever sees committed data).
+     *  - The sync-queue test footgun: this project's test suite runs
+     *    with `QUEUE_CONNECTION=sync`, under which `dispatch()` runs the
+     *    job SYNCHRONOUSLY, in this same call stack — and
+     *    `App\Listeners\ClearOrganizationContext` clears
+     *    `OrganizationContext` around every job boundary (Task 4). A
+     *    dispatch from inside this method's own transaction closure
+     *    would clear the tenant context out from under whatever
+     *    BelongsToOrganization-scoped work the closure still had left to
+     *    do (its own `$group->fresh(['posts.media', 'tags'])` call, for
+     *    one). Dispatching only after the closure has returned avoids
+     *    this entirely — this method has no further scoped work to do
+     *    afterwards. Every existing Post CRUD test that publishes-now
+     *    (CreatePostTest, UpdatePostTest, PostMediaTest) calls
+     *    `Queue::fake()` for exactly this reason — a real dispatch() on
+     *    the sync driver would otherwise run `PublishPostJob` for real,
+     *    inline, in the middle of tests that have nothing to do with
+     *    publishing. `tests/Feature/Publishing/PublishPostJobTest.php`
+     *    is what exercises the job for real, by constructing and calling
+     *    it directly rather than through dispatch().
+     *
+     * $forceRedispatch (post-review addition, finding 1 round 2, kept
+     * through the durable-scheduling rewrite): force-releases
+     * `PublishPostJob`'s `ShouldBeUnique` lock for `$group` immediately
+     * before dispatching. `false` for `create()`: a brand-new group
+     * cannot already hold a lock from an earlier dispatch for the SAME
+     * group id (`uniqueId()` is the group's own freshly-minted ulid), so
+     * there is nothing to release there and no reason to pay the extra
+     * cache round-trip on the common path. `true` everywhere else this
+     * is called (an existing group re-entering QUEUE): re-editing to
+     * "publish now" a group that was already claimed once (or retrying
+     * one whose previous attempt's lock has not yet expired) must not
+     * silently drop, and releasing a lock that isn't held is a harmless
+     * no-op either way (`Illuminate\Bus\UniqueLock::release()` ->
+     * `Cache::lock(...)->forceRelease()`, which simply deletes a cache
+     * key that may not exist).
+     *
+     * Safety: force-releasing this lock reopens exactly the race
+     * `ShouldBeUnique` exists to prevent — a second dispatch for the
+     * SAME group now can reach the queue while an earlier one is still
+     * pending/executing. Two guards, both already in place, are what
+     * keep that race from ever producing a duplicate publish: the due-
+     * date/state check in `PostGroupLifecycle::claim()` (a stale
+     * job — the one whose lock was just force-released — that pops LATE
+     * simply no-ops instead of publishing early) and `publishChannel()`'s
+     * own per-row `lockForUpdate()` + `release_id IS NULL` filter (even
+     * two genuinely-concurrent runs of the SAME group can only ever
+     * publish a given segment once — see `PublishService`'s class
+     * docblock, idempotency point 4). Force-releasing without either of
+     * those would have been unsafe; with both, the worst case is a stale
+     * job that does nothing.
+     *
+     * `last_dispatched_at`/`dispatch_attempts`: stamped here, alongside
+     * every other place a `PublishPostJob` is actually dispatched
+     * (`DueDispatchService::claimBatch()`, `MissedPostsService::dispatchRedispatch()`)
+     * — `MissedPostsService`'s stuck-row scan needs both to be accurate
+     * for ANY dispatch, not only ones that went through the durable
+     * per-minute claim. A plain column write, not folded into the
+     * caller's own transaction: this method already runs deliberately
+     * AFTER that transaction commits (see above), and the dispatch call
+     * immediately below is about to succeed or no-op for reasons
+     * entirely independent of this column, so there is nothing here
+     * worth an extra `lockForUpdate()` round-trip over.
+     */
+    public function dispatch(Receipt $receipt): void
+    {
+        $group = $receipt->group;
+
+        if ($group->state !== PostState::QUEUE) {
+            return;
+        }
+
+        // Stamped BEFORE the force-release below (post-review: an
+        // earlier revision placed this between release() and
+        // dispatch(), widening the release->dispatch window — during
+        // which a concurrent dispatch elsewhere could slip in — by one
+        // extra database round trip, for no benefit. Ordering this
+        // first removes that widening entirely; it has no dependency on
+        // the force-release having happened first.
+        PostGroup::query()->whereKey($group->id)->update([
+            'last_dispatched_at' => now(),
+            'dispatch_attempts' => DB::raw('dispatch_attempts + 1'),
+        ]);
+
+        if ($receipt->forced) {
+            app(UniqueLock::class)->release(new PublishPostJob($group->id, $receipt->queueVersion));
+        }
+
+        PublishPostJob::dispatch($group->id, $receipt->queueVersion);
     }
 }

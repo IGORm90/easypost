@@ -28,7 +28,7 @@ use Illuminate\Support\Facades\Log;
  * because it "runs AFTER the new dispatcher is already live" — but that
  * is a TIMING argument, and timing is not a safety property: the moment
  * the new code is live, it can ALSO be legitimately claiming rows into
- * `QUEUE` (`DueDispatchService`, `PostGroupService::claimAndDispatch()`,
+ * `QUEUE` (`DueDispatchService`, `PostGroupLifecycle::dispatch()`,
  * `MissedPostsService::dispatchRedispatch()`), and a blind
  * `state = 'QUEUE'` filter cannot tell those apart from a genuine
  * pre-migration leftover, however long after restart this command
