@@ -21,7 +21,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * (Task 19), the CRUD API (Task 20), the calendar (Task 21), and
  * comments/sharing (Task 22) are later tasks.
  *
- * `state` shares `PostState`/`PostStateMachine` with `Post` — see that
+ * `state` shares `PostState`/`PostGroupLifecycle` with `Post` — see that
  * class's docblock for the transition table and why `PUBLISHED` is
  * terminal.
  *

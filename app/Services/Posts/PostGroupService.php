@@ -404,7 +404,7 @@ class PostGroupService
      *
      * Segment-level, this is deliberately narrow: only `Post` rows still
      * `ERROR` (which — under this codebase's invariants, see
-     * `Post`/`PostStateMachine`'s docblocks — always carry a null
+     * `Post`/`PostGroupLifecycle`'s docblocks — always carry a null
      * `release_id`; nothing ever sets `ERROR` on a row that already went
      * out) move back to `QUEUE`. A sibling segment or channel that
      * already succeeded stays exactly `PUBLISHED`, completely untouched
@@ -424,7 +424,7 @@ class PostGroupService
      * not a display nuance.
      *
      * `transitionToward()`, not a direct `ERROR -> QUEUE` transition:
-     * `PostStateMachine::TRANSITIONS` has no such entry any more (see
+     * `PostGroupLifecycle::TRANSITIONS` has no such entry any more (see
      * that class's docblock) — retrying now passes through `SCHEDULED`
      * first, immediately followed by the claim into `QUEUE`, both inside
      * this same transaction. Segment-level transitions below go through

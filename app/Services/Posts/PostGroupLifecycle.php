@@ -6,6 +6,7 @@ use App\Enums\PostState;
 use App\Jobs\PublishPostJob;
 use App\Models\Post;
 use App\Models\PostGroup;
+use App\Services\Posts\Exceptions\InvalidStateTransition;
 use App\Social\Dto\PostResultDto;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -35,8 +36,6 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
  */
 class PostGroupLifecycle
 {
-    public function __construct(private readonly PostStateMachine $stateMachine) {}
-
     /**
      * How far into the future a group's `publish_date` may be and still count
      * as due. `DueDispatchService` claims groups slightly ahead of time (its
@@ -301,7 +300,7 @@ class PostGroupLifecycle
         $post->release_id = $result->releaseId;
         $post->release_url = $result->releaseUrl;
         $post->published_at = now();
-        $this->stateMachine->transition($post, PostState::PUBLISHED);
+        $this->transition($post, PostState::PUBLISHED);
     }
 
     /**
@@ -311,7 +310,7 @@ class PostGroupLifecycle
     {
         foreach ($posts as $post) {
             $post->error = $message;
-            $this->stateMachine->transition($post, PostState::ERROR);
+            $this->transition($post, PostState::ERROR);
         }
     }
 
@@ -329,7 +328,7 @@ class PostGroupLifecycle
      * per-channel commit boundary — see the class docblock), so by the
      * time this runs, at the very end of a run that spans several
      * provider calls, the caller's instance can be arbitrarily stale.
-     * `PostStateMachine::transition()` validates only the IN-MEMORY
+     * `PostGroupLifecycle::transition()` validates only the IN-MEMORY
      * `$from` and then issues a blind `save()` (UPDATE by primary key),
      * so this method used to overwrite whatever a concurrent writer had
      * committed in between. The observed outcome: an edit landing
@@ -347,7 +346,7 @@ class PostGroupLifecycle
      *
      *  - `state === QUEUE`: another run (or `abandon()`) may already
      *    have settled this group. Nothing may transition it out of a
-     *    terminal state, and `PostStateMachine` would throw on
+     *    terminal state, and `PostGroupLifecycle` would throw on
      *    `PUBLISHED -> *` anyway — after this run's own writes, from
      *    inside the caller's transaction in `abandon()`'s case.
      *  - `queue_version === $queueVersion`: the group has since been
@@ -389,7 +388,7 @@ class PostGroupLifecycle
 
             $outcome = $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED;
 
-            $this->stateMachine->transition($group, $outcome);
+            $this->transition($group, $outcome);
 
             return $outcome;
         });
@@ -583,7 +582,7 @@ class PostGroupLifecycle
             if ($group->state === PostState::QUEUE) {
                 $this->bumpQueueVersionIfNotDraft($group, PostState::SCHEDULED);
                 $group->save();
-                $this->stateMachine->transition($group, PostState::SCHEDULED);
+                $this->transition($group, PostState::SCHEDULED);
 
                 // Posts move with the group — same reasoning as claim()'s
                 // un-claim branch: guardEditable()'s pending-post lock only
@@ -760,7 +759,7 @@ class PostGroupLifecycle
     /**
      * Transitions `$model` toward `$target`, inserting the mandatory
      * `SCHEDULED` hop first when jumping straight from `DRAFT`/`ERROR`
-     * to `QUEUE` — `PostStateMachine::TRANSITIONS` has no direct
+     * to `QUEUE` — `PostGroupLifecycle::TRANSITIONS` has no direct
      * `DRAFT->QUEUE` or `ERROR->QUEUE` entry (every claim durably passes
      * through `SCHEDULED`, even one this class immediately claims itself
      * for `type=now`/retry). A no-op when `$model` is already at
@@ -774,10 +773,10 @@ class PostGroupLifecycle
         }
 
         if ($target === PostState::QUEUE && $model->state !== PostState::SCHEDULED) {
-            $this->stateMachine->transition($model, PostState::SCHEDULED);
+            $this->transition($model, PostState::SCHEDULED);
         }
 
-        $this->stateMachine->transition($model, $target);
+        $this->transition($model, $target);
     }
 
     /**
@@ -1086,5 +1085,57 @@ class PostGroupLifecycle
         )->queue_version;
 
         return $newQueueVersion;
+    }
+
+    /**
+     * @var array<string, list<string>>
+     */
+    private const array TRANSITIONS = [
+        PostState::DRAFT->value => [PostState::DRAFT->value, PostState::SCHEDULED->value],
+        PostState::SCHEDULED->value => [PostState::SCHEDULED->value, PostState::QUEUE->value],
+        PostState::QUEUE->value => [PostState::PUBLISHED->value, PostState::ERROR->value, PostState::SCHEDULED->value],
+        PostState::ERROR->value => [PostState::SCHEDULED->value],
+        // PostState::PUBLISHED has no entry: no key means no allowed
+        // targets, checked via ?? [] below. This is what makes PUBLISHED
+        // terminal.
+    ];
+
+    /**
+     * Pure predicate, no side effects — used by callers that need to
+     * decide whether to even attempt a transition (e.g. to grey out a
+     * UI action) without risking `transition()`'s exception.
+     */
+
+    /**
+     * Pure predicate, no side effects — used by callers that need to
+     * decide whether to even attempt a transition (e.g. to grey out a
+     * UI action) without risking `transition()`'s exception.
+     */
+    public static function allows(PostState $from, PostState $to): bool
+    {
+        return in_array($to->value, self::TRANSITIONS[$from->value] ?? [], true);
+    }
+
+    /**
+     * Moves `$model` to `$to` and persists it, or throws
+     * `InvalidStateTransition` and leaves `$model` completely untouched
+     * (the check happens before any mutation).
+     */
+
+    /**
+     * Moves `$model` to `$to` and persists it, or throws
+     * `InvalidStateTransition` and leaves `$model` completely untouched
+     * (the check happens before any mutation).
+     */
+    private function transition(Post|PostGroup $model, PostState $to): void
+    {
+        $from = $model->state;
+
+        if (! self::allows($from, $to)) {
+            throw InvalidStateTransition::from($from, $to);
+        }
+
+        $model->state = $to;
+        $model->save();
     }
 }

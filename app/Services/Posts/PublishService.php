@@ -113,7 +113,7 @@ use Illuminate\Support\Facades\RateLimiter;
  *    lock. Without the `state` predicate, this method would still pick
  *    those `ERROR` rows up, call the provider, and `markPostPublished()`
  *    would then attempt `ERROR -> PUBLISHED`, a transition
- *    `PostStateMachine` rejects — throwing INSIDE this transaction AFTER
+ *    `PostGroupLifecycle` rejects — throwing INSIDE this transaction AFTER
  *    the network call already went out, rolling `release_id` back to
  *    null while the message is live. Not an immediate duplicate today,
  *    because the pending filter this re-lock feeds already requires

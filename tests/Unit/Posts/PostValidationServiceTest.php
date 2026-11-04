@@ -27,7 +27,7 @@ use Illuminate\Support\Str;
  * Integration([...])`, never persisted, and ProviderRegistry resolves
  * real provider classes (Telegram/Bluesky) through the
  * container without touching the database — see
- * tests/Unit/Posts/PostStateMachineTest.php's docblock for why an ad hoc
+ * tests/Unit/Posts/PostGroupLifecycleTest.php's docblock for why an ad hoc
  * uses(RefreshDatabase::class) in tests/Unit is off the table.
  *
  * Real providers (not FakeProvider) are used wherever the point is to

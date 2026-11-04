@@ -184,7 +184,7 @@ it('allows re-scheduling an ERROR group by moving it back to SCHEDULED on PUT', 
     $group = createDraftGroup($org, $integration, 'failed attempt');
     // No release_id anywhere: the group genuinely never published, it
     // just failed before reaching the network — the exact case
-    // ERROR->SCHEDULED (PostStateMachine's declared retry transition)
+    // ERROR->SCHEDULED (PostGroupLifecycle's declared retry transition)
     // exists for. This is the generic PUT edit path, not
     // POST .../retry (PostGroupService::retry()), which claims straight
     // into QUEUE and dispatches immediately — see

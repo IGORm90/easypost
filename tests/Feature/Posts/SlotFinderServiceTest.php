@@ -20,7 +20,7 @@ use Illuminate\Support\Carbon;
  *
  * Deliberately placed under tests/Feature (not tests/Unit, despite the
  * task-21 brief's suggested path): it needs real Integration/PostGroup/
- * Post rows and RefreshDatabase, and tests/Unit/Posts/PostStateMachineTest.php's
+ * Post rows and RefreshDatabase, and tests/Unit/Posts/PostGroupLifecycleTest.php's
  * docblock documents that adding RefreshDatabase ad hoc to a tests/Unit
  * file previously corrupted rollback for every test after it in the same
  * process — Feature is where every other DB-touching Posts test already

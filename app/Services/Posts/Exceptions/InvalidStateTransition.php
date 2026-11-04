@@ -6,7 +6,7 @@ use App\Enums\PostState;
 use RuntimeException;
 
 /**
- * Thrown by `PostStateMachine::transition()` for any `(from, to)` pair
+ * Thrown by `PostGroupLifecycle::transition()` for any `(from, to)` pair
  * not present in its transition table — most importantly, ANY attempt to
  * move a `PUBLISHED` post or post group somewhere else. Never caught and
  * silently swallowed anywhere in this codebase: a caller hitting this is

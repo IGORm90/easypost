@@ -4,7 +4,7 @@ namespace App\Enums;
 
 /**
  * Lifecycle of a single `Post` segment or `PostGroup`
- * (`PostStateMachine` operates on either — see its docblock).
+ * (`PostGroupLifecycle` operates on either — see its docblock).
  *
  * `SCHEDULED` vs `QUEUE` (durable-scheduling rewrite): `SCHEDULED` means
  * "persisted with a `publish_date`, nothing on the queue yet" — the
@@ -16,7 +16,7 @@ namespace App\Enums;
  * record of it in Postgres. See `app/Console/Commands/DispatchDuePostsCommand.php`.
  *
  * `PUBLISHED` is terminal by design: no transition in
- * `PostStateMachine::TRANSITIONS` ever leaves it. The publishing
+ * `PostGroupLifecycle::TRANSITIONS` ever leaves it. The publishing
  * pipeline (Task 30) relies on that — once a segment carries a
  * `release_id` and sits in `PUBLISHED`, nothing in this codebase is
  * allowed to move it anywhere else, because the single worst failure
@@ -31,7 +31,7 @@ enum PostState: string
     case ERROR = 'ERROR';
 
     /**
-     * True for exactly the states `PostStateMachine::can()` allows no
+     * True for exactly the states `PostGroupLifecycle::allows()` allows no
      * outgoing transition from. Currently only `PUBLISHED` — expressed
      * here as its own explicit fact (not merely inferred from an empty
      * row in the transition table) so the "publishing is a one-way door"

@@ -14,7 +14,7 @@ use Illuminate\Validation\Validator;
  * edited at all (a PUBLISHED group, or one with any already-released
  * segment, is immutable — see PostGroupService::guardEditable()) and
  * whether the requested `type` implies a state transition
- * PostStateMachine actually allows (e.g. QUEUE -> DRAFT is not a real
+ * PostGroupLifecycle actually allows (e.g. QUEUE -> DRAFT is not a real
  * transition). Both require the *current* PostGroup, which this class
  * never loads — PostController resolves and authorizes it first; the
  * transition-sanity check lives in PostGroupService::resolveTargetState()
