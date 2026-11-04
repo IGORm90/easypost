@@ -18,11 +18,7 @@ use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
-use App\Social\Exceptions\ProviderRateLimitException;
-use App\Social\Exceptions\ProviderTransientException;
-use Closure;
 use GuzzleHttp\Psr7\Utils;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use InvalidArgumentException;
 
@@ -165,13 +161,13 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
             throw new InvalidArgumentException('Bluesky requires a non-empty app_password.');
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->http()->post(self::API_BASE.'/com.atproto.server.createSession', [
                 'identifier' => $handle,
                 'password' => $appPassword,
             ]),
             'creating a session',
-            authContext: true,
+            auth: true,
         );
 
         return new AuthResultDto(
@@ -192,11 +188,11 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
     {
         $refreshToken = (string) $integration->refresh_token;
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->http()->withToken($refreshToken)
                 ->post(self::API_BASE.'/com.atproto.server.refreshSession'),
             'refreshing the session',
-            authContext: true,
+            auth: true,
         );
 
         return new AuthResultDto(
@@ -212,7 +208,7 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
     {
         $token = (string) $integration->token;
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->uploadHttp()->withToken($token)
                 ->withBody(Utils::streamFor($this->fileStream($media)), $media->mimeType)
                 ->post(self::API_BASE.'/com.atproto.repo.uploadBlob'),
@@ -307,7 +303,7 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
             $record['embed'] = ['$type' => 'app.bsky.embed.images', 'images' => $images];
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->http()->withToken($token)->post(self::API_BASE.'/com.atproto.repo.createRecord', [
                 'repo' => $did,
                 'collection' => self::COLLECTION,
@@ -345,7 +341,7 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
             throw new ProviderPermanentException("Bluesky reply-to anchor [{$anchorUri}] is not a valid record uri.");
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->http()->withToken($token)->get(self::API_BASE.'/com.atproto.repo.getRecord', [
                 'repo' => $did,
                 'collection' => self::COLLECTION,
@@ -388,88 +384,8 @@ class BlueskyProvider implements DeclaresAuthFields, ManualTokenAuth, SocialProv
         return "https://bsky.app/profile/{$did}/post/{$rkey}";
     }
 
-    /**
-     * Runs one Bluesky API call, translating both an unsuccessful HTTP
-     * response and a network-level failure into the App\Social\Exceptions
-     * taxonomy, and returns the decoded JSON body.
-     *
-     * $authContext collapses every non-transient rejection into
-     * ProviderAuthException (mirrors TelegramProvider::authErrorFor()):
-     * used for createSession/refreshSession, where any rejection means
-     * the credential itself is no good, not that "content" was invalid.
-     *
-     * @return array<string, mixed>
-     */
-    private function call(Closure $call, string $context, bool $authContext = false): array
+    private function api(): ProviderCall
     {
-        $response = $this->send($call);
-        $body = $response->json();
-
-        if (! $response->successful()) {
-            throw $authContext
-                ? $this->authErrorFor($response, $context)
-                : $this->errorFor($response, $context);
-        }
-
-        /** @var array<string, mixed> */
-        return is_array($body) ? $body : [];
-    }
-
-    /**
-     * Deliberately does NOT attach the caught ConnectionException as
-     * $previous (Task 14 review, Finding 2, applied identically here):
-     * a raw transport exception's message can echo back request details
-     * a caller supplied (here, potentially the app password in a
-     * createSession request body, or the access/refresh JWT via an
-     * Authorization header) depending on the underlying HTTP client's
-     * error-formatting behaviour. See TelegramProvider::send() for the
-     * fuller rationale; the policy is blanket, not judged per provider.
-     */
-    private function send(Closure $call): Response
-    {
-        try {
-            /** @var Response $response */
-            $response = $call();
-        } catch (ConnectionException) {
-            throw new ProviderTransientException('Network error while calling the Bluesky API.');
-        }
-
-        return $this->refuseRedirect($response, $this->name());
-    }
-
-    private function errorFor(Response $response, string $context): ProviderException
-    {
-        $body = $response->json();
-        $message = is_array($body)
-            ? (string) ($body['message'] ?? $body['error'] ?? 'unknown error')
-            : 'unknown error';
-
-        $retryAfter = (int) $response->header('Retry-After');
-
-        return $this->exceptionForStatus(
-            $response->status(),
-            "Bluesky API error while {$context} ({$response->status()}): {$message}",
-            $retryAfter,
-        );
-    }
-
-    private function authErrorFor(Response $response, string $context): ProviderException
-    {
-        $body = $response->json();
-        $message = is_array($body)
-            ? (string) ($body['message'] ?? $body['error'] ?? 'unknown error')
-            : 'unknown error';
-
-        $status = $response->status();
-
-        if ($status === 429) {
-            return new ProviderRateLimitException("Bluesky rate-limited {$context}: {$message}", (int) $response->header('Retry-After'));
-        }
-
-        if ($status >= 500) {
-            return new ProviderTransientException("Bluesky API error while {$context}: {$message}");
-        }
-
-        return new ProviderAuthException("Bluesky rejected the request while {$context}: {$message}");
+        return new ProviderCall($this->name(), new BlueskyErrors);
     }
 }
