@@ -12,4 +12,7 @@ enum IntentKind
 {
     case Retry;
     case Reschedule;
+    case Draft;
+    case Schedule;
+    case Now;
 }

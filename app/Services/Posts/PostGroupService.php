@@ -20,7 +20,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 /**
@@ -175,54 +174,34 @@ class PostGroupService
      */
     public function update(PostGroup $group, array $data): PostGroup
     {
-        $group = DB::transaction(function () use ($group, $data) {
-            // lockGroup() FIRST — before guardEditable()'s post-row lock,
-            // and before anything reads $group->state/queue_version for a
-            // decision this method is about to persist. See lockGroup()'s
-            // docblock (Task 31 review findings 1 and 4).
-            $group = $this->lifecycle->lockGroup($group);
-            $this->lifecycle->guardEditable($group);
-            $this->resolveIntegrations($data['posts']);
+        $intent = Intent::forType(
+            $data['type'],
+            $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $group->id),
+            $this->recurrenceAttributes($data),
+            check: fn () => $this->resolveIntegrations($data['posts']),
+        );
 
-            $targetState = $this->resolveTargetState($group->state, $data['type']);
+        $receipt = $this->lifecycle->edit($group, $intent, function (PostGroup $locked, PostState $target) use ($data): void {
+            // Full replace: every existing row is dropped first. Safe only
+            // because guardEditable() already proved none of them carries a
+            // release_id — see this class's docblock.
+            $locked->posts()->delete();
 
-            // Full replace: every existing row is dropped first. Safe
-            // only because guardEditable() above already proved none of
-            // them carries a release_id — see this class's docblock.
-            $group->posts()->delete();
-
-            $group->publish_date = $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $group->id);
-            // Block 4: a PUT is a full replace, recurrence included —
-            // omitting the fields clears the rule, which is exactly how
-            // the editor stops a series. Reaching this line at all means
-            // the group is still editable (guardEditable() above), so
-            // this can only ever rewrite the rule of an occurrence that
-            // has not published yet.
-            $group->fill($this->recurrenceAttributes($data));
-            $this->lifecycle->bumpQueueVersionIfNotDraft($group, $targetState);
-            $group->save();
-
-            $this->lifecycle->transitionToward($group, $targetState);
-
-            $this->replaceChains($group, $data['posts'], $targetState);
+            $this->replaceChains($locked, $data['posts'], $target);
 
             if (array_key_exists('tags', $data)) {
-                $this->syncTags($group, $data['tags'] ?? []);
+                $this->syncTags($locked, $data['tags'] ?? []);
             }
-
-            return $group->fresh(['posts.media', 'tags']);
         });
 
-        // Only ever dispatches anything when $targetState resolved to
-        // QUEUE (type=now) — see claimAndDispatch()'s docblock. A
-        // schedule edit lands the group on SCHEDULED and dispatches
-        // nothing at all: DueDispatchService's next per-minute pass
-        // claims it, reading queue_version fresh at that moment, so
-        // there is no stale job left to fight the way the old
-        // ->delay()-based dispatch required forceRedispatch to handle.
-        $this->claimAndDispatch($group, forceRedispatch: true);
+        // Only ever dispatches anything when the target resolved to QUEUE
+        // (type=now) — see claimAndDispatch()'s docblock. A schedule edit lands
+        // the group on SCHEDULED and dispatches nothing at all:
+        // DueDispatchService's next per-minute pass claims it, reading
+        // queue_version fresh at that moment.
+        $this->claimAndDispatch($receipt->group, forceRedispatch: $receipt->forced);
 
-        return $group;
+        return $receipt->group;
     }
 
     /**
@@ -680,35 +659,6 @@ class PostGroupService
         $offsetSeconds = (crc32($seed) % (2 * $window + 1)) - $window;
 
         return $date->copy()->addSeconds($offsetSeconds);
-    }
-
-    /**
-     * Three transitions are ever requested here: DRAFT (stay/enter
-     * draft), SCHEDULED (`type=schedule` — durable, waiting; nothing is
-     * dispatched), and QUEUE (`type=now` — claimed and dispatched
-     * immediately, see `claimAndDispatch()`). Moving OUT of DRAFT is
-     * always allowed; moving INTO DRAFT is only a no-op (already DRAFT)
-     * — `PostStateMachine` has no `*->DRAFT` entry other than
-     * `DRAFT->DRAFT` (see its docblock: those simply aren't transitions
-     * this product supports), so a request that would require one is
-     * rejected here as a normal validation failure (422) rather than
-     * reaching `PostStateMachine::transition()` and throwing
-     * `InvalidStateTransition`, which is reserved for programming
-     * errors, not user input.
-     */
-    private function resolveTargetState(PostState $current, string $type): PostState
-    {
-        if ($type === 'draft') {
-            if ($current !== PostState::DRAFT) {
-                throw ValidationException::withMessages([
-                    'type' => ["Cannot move a post from {$current->value} back to draft."],
-                ]);
-            }
-
-            return PostState::DRAFT;
-        }
-
-        return $this->targetStateForType($type);
     }
 
     /**

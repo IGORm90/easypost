@@ -8,6 +8,7 @@ use App\Models\PostGroup;
 use App\Social\Dto\PostResultDto;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
+use Closure;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -397,11 +398,86 @@ class PostGroupLifecycle
      * Receipt; the caller dispatches AFTER its own transaction has committed
      * (see PostGroupService::claimAndDispatch(), until that moves here too).
      */
-    public function edit(PostGroup $group, Intent $intent): Receipt
+    public function edit(PostGroup $group, Intent $intent, ?Closure $body = null): Receipt
     {
         return match ($intent->kind) {
             IntentKind::Retry => $this->retry($group),
+            IntentKind::Draft, IntentKind::Schedule, IntentKind::Now => $this->write($group, $intent, $body),
             IntentKind::Reschedule => $this->reschedule($group, $intent->date ?? throw new LogicException('Intent::reschedule() always carries a date.')),
+        };
+    }
+
+    /**
+     * A full-replace save (`PUT /api/posts/{group}`): lock, editability guard,
+     * the caller's check, then the target state, the new date and recurrence
+     * rule, the version bump, the transition, and finally `$body` — where the
+     * caller drops and rebuilds the chains and tags, with the group already in
+     * its new state so the new rows can be created in it. All in one
+     * transaction: if `$body` throws, nothing above it persists.
+     *
+     * The returned Receipt is `forced` because an edit must always get a fresh
+     * job when it lands on QUEUE, even if an older generation's uniqueness lock
+     * is still held; for any other target nothing is dispatched at all.
+     *
+     * @param  Closure(PostGroup, PostState): void|null  $body
+     */
+    private function write(PostGroup $group, Intent $intent, ?Closure $body): Receipt
+    {
+        $group = DB::transaction(function () use ($group, $intent, $body) {
+            // lockGroup() FIRST — before guardEditable()'s post-row lock, and
+            // before anything reads state/queue_version for a decision this
+            // method is about to persist. See lockGroup()'s docblock.
+            $group = $this->lockGroup($group);
+            $this->guardEditable($group);
+
+            if ($intent->check !== null) {
+                ($intent->check)();
+            }
+
+            $target = $this->targetStateFor($intent->kind, $group->state);
+
+            $group->publish_date = $intent->date;
+            // A PUT is a full replace, recurrence included — an intent with no
+            // rule clears it, which is exactly how the editor stops a series.
+            // Reaching this line means the group is still editable, so this
+            // can only rewrite the rule of an occurrence that has not published.
+            $group->fill($intent->recurrence);
+            $this->bumpQueueVersionIfNotDraft($group, $target);
+            $group->save();
+
+            $this->transitionToward($group, $target);
+
+            if ($body !== null) {
+                $body($group, $target);
+            }
+
+            return $group->fresh(['posts.media', 'tags']);
+        });
+
+        return new Receipt($group, $group->queue_version, forced: true);
+    }
+
+    /**
+     * What a save means for the group's state. A draft stays a draft and can
+     * only be saved as one while it still is one: there is no way back to draft
+     * once a group has been scheduled, queued, or has failed.
+     */
+    private function targetStateFor(IntentKind $kind, PostState $current): PostState
+    {
+        if ($kind === IntentKind::Draft) {
+            if ($current !== PostState::DRAFT) {
+                throw ValidationException::withMessages([
+                    'type' => ["Cannot move a post from {$current->value} back to draft."],
+                ]);
+            }
+
+            return PostState::DRAFT;
+        }
+
+        return match ($kind) {
+            IntentKind::Now => PostState::QUEUE,
+            IntentKind::Schedule => PostState::SCHEDULED,
+            default => throw new LogicException("{$kind->name} is not a save."),
         };
     }
 

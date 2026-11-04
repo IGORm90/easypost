@@ -1,11 +1,13 @@
 <?php
 
 use App\Enums\PostState;
+use App\Enums\RepeatUnit;
 use App\Models\Organization;
 use App\Models\PostGroup;
 use App\Services\Posts\Intent;
 use App\Services\Posts\PostGroupLifecycle;
 use App\Support\OrganizationContext;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
@@ -204,5 +206,141 @@ it('does not see another organization\'s group when rescheduling', function () {
     ]);
 
     expect(fn () => app(PostGroupLifecycle::class)->edit($other, Intent::reschedule(now()->addDay())))
+        ->toThrow(ModelNotFoundException::class);
+});
+
+// --- Intent::forType(): the PUT paths (draft / schedule / now) -----------------
+
+/** @return array{repeat_unit: null, repeat_interval: null, repeat_until: null} */
+function noRepeat(): array
+{
+    return ['repeat_unit' => null, 'repeat_interval' => null, 'repeat_until' => null];
+}
+
+it('publishes a draft now: QUEUE one generation later, a forced receipt, and the body runs after the transition', function () {
+    $this->freezeTime();
+    $group = groupIn(PostState::DRAFT, 0);
+    $seen = [];
+
+    $receipt = app(PostGroupLifecycle::class)->edit(
+        $group,
+        Intent::forType('now', now(), noRepeat()),
+        function (PostGroup $locked, PostState $target) use (&$seen): void {
+            $seen = [$locked->id, $locked->state, $target];
+        },
+    );
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::QUEUE)
+        ->and($fresh->queue_version)->toBe(1)
+        ->and($fresh->notified_at)->toBeNull()
+        ->and($fresh->publish_date?->timestamp)->toBe(now()->timestamp)
+        ->and($seen)->toBe([$group->id, PostState::QUEUE, PostState::QUEUE])
+        ->and($receipt->queueVersion)->toBe(1)
+        ->and($receipt->forced)->toBeTrue();
+});
+
+it('re-schedules a SCHEDULED group: stays SCHEDULED, one generation later, notification cleared, rule applied', function () {
+    $this->freezeTime();
+    $group = groupIn(PostState::SCHEDULED, 3);
+    $date = now()->addDays(2);
+    $until = now()->addMonths(2);
+
+    app(PostGroupLifecycle::class)->edit($group, Intent::forType('schedule', $date, [
+        'repeat_unit' => RepeatUnit::WEEK,
+        'repeat_interval' => 2,
+        'repeat_until' => $until,
+    ]));
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::SCHEDULED)
+        ->and($fresh->queue_version)->toBe(4)
+        ->and($fresh->notified_at)->toBeNull()
+        ->and($fresh->publish_date?->timestamp)->toBe($date->timestamp)
+        ->and($fresh->repeat_unit)->toBe(RepeatUnit::WEEK)
+        ->and($fresh->repeat_interval)->toBe(2)
+        ->and($fresh->repeat_until?->timestamp)->toBe($until->timestamp);
+});
+
+it('clears the recurrence rule when the intent carries none', function () {
+    $group = groupIn(PostState::SCHEDULED, 3);
+    $group->update(['repeat_unit' => RepeatUnit::DAY, 'repeat_interval' => 1, 'repeat_until' => now()->addMonth()]);
+
+    app(PostGroupLifecycle::class)->edit($group, Intent::forType('schedule', now()->addDay(), noRepeat()));
+
+    $fresh = $group->fresh();
+    expect($fresh->repeat_unit)->toBeNull()
+        ->and($fresh->repeat_interval)->toBeNull()
+        ->and($fresh->repeat_until)->toBeNull();
+});
+
+it('keeps a draft a draft without touching the version or the notification flag', function () {
+    $group = groupIn(PostState::DRAFT, 3);
+
+    $receipt = app(PostGroupLifecycle::class)->edit($group, Intent::forType('draft', now()->addDays(5), noRepeat()));
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::DRAFT)
+        ->and($fresh->queue_version)->toBe(3)
+        ->and($fresh->notified_at)->not->toBeNull()
+        ->and($receipt->queueVersion)->toBe(3);
+});
+
+it('refuses to send a non-draft group back to draft, running no body and changing nothing', function () {
+    $group = groupIn(PostState::SCHEDULED, 3);
+    $ran = false;
+
+    try {
+        app(PostGroupLifecycle::class)->edit($group, Intent::forType('draft', null, noRepeat()), function () use (&$ran): void {
+            $ran = true;
+        });
+        test()->fail('Expected a ValidationException.');
+    } catch (ValidationException $e) {
+        expect($e->errors()['type'][0])->toBe('Cannot move a post from SCHEDULED back to draft.');
+    }
+
+    expect($ran)->toBeFalse()
+        ->and($group->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($group->fresh()->queue_version)->toBe(3);
+});
+
+it('rolls everything back when the body throws', function () {
+    $group = groupIn(PostState::DRAFT, 0);
+
+    expect(fn () => app(PostGroupLifecycle::class)->edit(
+        $group,
+        Intent::forType('now', now(), noRepeat()),
+        fn () => throw new RuntimeException('chains failed'),
+    ))->toThrow(RuntimeException::class);
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::DRAFT)
+        ->and($fresh->queue_version)->toBe(0);
+});
+
+it('runs the caller\'s check after the editability guard and before the state decision', function () {
+    $check = fn () => throw new AuthorizationException;
+
+    // Check before the "cannot go back to draft" rule: the caller gets the check's error.
+    $scheduled = groupIn(PostState::SCHEDULED);
+    expect(fn () => app(PostGroupLifecycle::class)->edit($scheduled, Intent::forType('draft', null, noRepeat(), $check)))
+        ->toThrow(AuthorizationException::class);
+
+    // Guard before the check: a published group answers 409 and the check never runs.
+    $ran = false;
+    $published = groupIn(PostState::PUBLISHED);
+    expect(fn () => app(PostGroupLifecycle::class)->edit($published, Intent::forType('draft', null, noRepeat(), function () use (&$ran): void {
+        $ran = true;
+    })))->toThrow(ConflictHttpException::class);
+    expect($ran)->toBeFalse();
+});
+
+it('does not see another organization\'s group when writing', function () {
+    $other = PostGroup::factory()->create([
+        'organization_id' => Organization::factory()->create()->id,
+        'state' => PostState::DRAFT,
+    ]);
+
+    expect(fn () => app(PostGroupLifecycle::class)->edit($other, Intent::forType('draft', null, noRepeat())))
         ->toThrow(ModelNotFoundException::class);
 });
