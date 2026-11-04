@@ -97,7 +97,7 @@ it('logs the number of rows converted', function () {
 it('converts a genuine legacy QUEUE row but leaves a concurrently-claimed live QUEUE row completely untouched', function () {
     // The safety property this proves: dispatch_attempts=0 is a marker
     // ONLY a pre-migration row can carry, because every new-code claim
-    // path (DueDispatchService::claimBatch(), PostGroupService::
+    // path (PostGroupLifecycle::claimDue(), PostGroupService::
     // dispatch(), MissedPostsService::dispatchRedispatch())
     // increments dispatch_attempts in the SAME statement that sets
     // state='QUEUE'. A row genuinely claimed moments before this command

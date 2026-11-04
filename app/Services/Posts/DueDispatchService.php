@@ -30,6 +30,8 @@ use Illuminate\Support\Facades\Log;
  */
 class DueDispatchService
 {
+    public function __construct(private readonly PostGroupLifecycle $lifecycle) {}
+
     /**
      * Claims every `SCHEDULED` group due within the lookahead window, in
      * bounded batches, and dispatches a `PublishPostJob` for each —
@@ -61,7 +63,7 @@ class DueDispatchService
         $claimed = [];
 
         for ($batch = 0; $batch < $maxBatches; $batch++) {
-            $rows = $this->claimBatch($batchSize, $lookahead);
+            $rows = $this->lifecycle->claimDue($batchSize, $lookahead);
 
             if ($rows === []) {
                 break;
@@ -87,63 +89,5 @@ class DueDispatchService
         Log::info('publish.dispatch_due', ['claimed' => count($claimed)]);
 
         return count($claimed);
-    }
-
-    /**
-     * One atomic claim: `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE
-     * SKIP LOCKED) RETURNING id, queue_version, publish_date`, never a
-     * separate select-then-update — the `FOR UPDATE SKIP LOCKED`
-     * subquery is what makes two overlapping calls (two scheduler ticks,
-     * or the concurrency test) claim disjoint sets instead of racing
-     * each other onto the same row.
-     *
-     * `DB::select()`, not `DB::update()`: Postgres' `RETURNING` clause
-     * makes an UPDATE behave like a query that returns rows, and
-     * `DB::select()` is the driver method that fetches them — `DB::update()`
-     * only returns an affected-row COUNT, discarding exactly the ids,
-     * queue_versions and publish_dates this method needs to hand to
-     * `PublishPostJob::dispatch()->delay()`.
-     *
-     * @return list<object{id: string, queue_version: int, publish_date: string}>
-     */
-    private function claimBatch(int $batchSize, int $lookahead): array
-    {
-        return DB::transaction(function () use ($batchSize, $lookahead) {
-            $rows = DB::select(
-                <<<'SQL'
-                    UPDATE post_groups
-                    SET state = 'QUEUE',
-                        last_dispatched_at = now(),
-                        dispatch_attempts = dispatch_attempts + 1
-                    WHERE id IN (
-                        SELECT id FROM post_groups
-                        WHERE state = 'SCHEDULED'
-                          AND publish_date <= now() + (? || ' seconds')::interval
-                        ORDER BY publish_date
-                        LIMIT ?
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    RETURNING id, queue_version, publish_date
-                SQL,
-                [$lookahead, $batchSize]
-            );
-
-            if ($rows !== []) {
-                $ids = array_map(static fn (object $row): string => $row->id, $rows);
-
-                // The group's pending posts move with it — PublishService
-                // re-reads posts by post_group_id, not by their own
-                // state, but keeping both in sync is what lets
-                // guardEditable()'s pending-post lock
-                // (state=QUEUE AND release_id IS NULL) correctly protect
-                // only genuinely in-flight segments, and nothing else.
-                DB::table('posts')
-                    ->whereIn('post_group_id', $ids)
-                    ->where('state', 'SCHEDULED')
-                    ->update(['state' => 'QUEUE']);
-            }
-
-            return $rows;
-        });
     }
 }

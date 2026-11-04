@@ -103,7 +103,7 @@ it('points every later occurrence at the first post of the series', function () 
     // docblock) — nothing is dispatched until DueDispatchService claims
     // it. Force it straight into QUEUE here, simulating that claim
     // directly (group AND its posts — the dispatcher always flips both
-    // atomically, see DueDispatchService::claimBatch()): this test's
+    // atomically, see PostGroupLifecycle::claimDue()): this test's
     // focus is the repeat_parent_id chain across hops, not the claim
     // mechanics DispatchDuePostsTest already covers.
     $second->forceFill(['publish_date' => now()])->save();

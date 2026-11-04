@@ -244,7 +244,7 @@ class MissedPostsService
      * `PostGroupService::bumpQueueVersionIfNotDraft()`'s docblock gives
      * for why a locked, freshly-re-read value is the only safe source
      * for a `+ 1`; here the `RETURNING` clause plays the same role
-     * `DueDispatchService::claimBatch()`'s does, handing back the
+     * `PostGroupLifecycle::claimDue()`'s does, handing back the
      * value that was ACTUALLY committed rather than one computed from a
      * possibly-stale in-memory `$group`.
      */
