@@ -9,7 +9,6 @@ use App\Models\PostGroup;
 use App\Notifications\PostFailedNotification;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -221,47 +220,14 @@ class MissedPostsService
     }
 
     /**
-     * `last_dispatched_at`/`dispatch_attempts` are stamped here BEFORE
-     * the dispatch call — `last_dispatched_at` is what
-     * `redispatchOrphaned()`'s own query uses to decide whether a row
-     * even looks stuck (see that method's docblock); `dispatch_attempts`
-     * is what lets `redispatchIfOrphaned()`'s attempt cap actually bound
-     * this class's own redispatch loop, alongside `DueDispatchService`'s
-     * and `PostGroupLifecycle::dispatch()`'s writes to the same
-     * column.
-     *
-     * `queue_version` is bumped here too — an earlier revision
-     * deliberately did NOT do this, reasoning "this is not a reschedule,
-     * the group's schedule generation has not changed". That reasoning
-     * predates `PublishPostJob::uniqueId()` becoming version-aware and
-     * no longer holds: a recovery redispatch IS a new generation now, by
-     * construction, and needs its own distinct lock key so it can never
-     * be blocked by whatever is left of the OLD generation's lock — see
-     * `PublishPostJob`'s class docblock and this class's own docblock
-     * for the full reasoning this fixes (and why the probe/legitimacy
-     * check this used to gate on is gone entirely). An atomic `UPDATE ...
-     * RETURNING`, not a read-then-`increment()` — same reasoning
-     * `PostGroupService::bumpQueueVersionIfNotDraft()`'s docblock gives
-     * for why a locked, freshly-re-read value is the only safe source
-     * for a `+ 1`; here the `RETURNING` clause plays the same role
-     * `PostGroupLifecycle::claimDue()`'s does, handing back the
-     * value that was ACTUALLY committed rather than one computed from a
-     * possibly-stale in-memory `$group`.
+     * Redispatches an orphaned group under a NEW queue_version (the bump and the
+     * dispatch bookkeeping are `PostGroupLifecycle::redispatchOrphan()`'s atomic
+     * write), then dispatches the job for the version that was actually
+     * committed and logs it.
      */
     private function dispatchRedispatch(PostGroup $group, string $logMessage): void
     {
-        /** @var int $newQueueVersion */
-        $newQueueVersion = DB::selectOne(
-            <<<'SQL'
-                UPDATE post_groups
-                SET last_dispatched_at = now(),
-                    dispatch_attempts = dispatch_attempts + 1,
-                    queue_version = queue_version + 1
-                WHERE id = ?
-                RETURNING queue_version
-            SQL,
-            [$group->id]
-        )->queue_version;
+        $newQueueVersion = app(PostGroupLifecycle::class)->redispatchOrphan($group);
 
         PublishPostJob::dispatch($group->id, $newQueueVersion);
 
