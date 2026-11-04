@@ -315,7 +315,7 @@ it('a calendar drag landing mid-run never publishes the dragged channel at the o
     //     reschedule, which touches post_groups only — calls the provider
     //     and commits release_id. The post is irrevocably live an hour
     //     early; queue_version and publish_date were re-read exactly once,
-    //     in lockGroupIfQueued(), before any of this happened.
+    //     in PostGroupLifecycle::claim(), before any of this happened.
     //
     // The assertion that fails without the fix: channel B's release_id.
     $fx = publishRaceFixture('c2-drag-midrun');

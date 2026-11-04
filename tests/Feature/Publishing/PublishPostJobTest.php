@@ -422,7 +422,7 @@ it('does nothing when the group is not in the QUEUE state', function () {
 // --- Guard-reason logging (post-review fix) --------------------------------
 //
 // QUEUE.md's guard sequence calls for a log line at every clean exit —
-// each of lockGroupIfQueued()'s no-op branches used to return silently,
+// each of PostGroupLifecycle::claim()'s no-op branches used to return silently,
 // leaving an operator with nothing to grep for when a post simply never
 // published.
 
@@ -525,7 +525,7 @@ it('does not publish a group whose publish_date is still materially in the futur
     // since been moved further out (PostGroupService::updateDate()), but
     // this particular job instance still reflects the OLD schedule.
     //
-    // Durable-scheduling rewrite: PublishService::lockGroupIfQueued()'s
+    // Durable-scheduling rewrite: PostGroupLifecycle::claim()'s
     // guard 3 now un-claims a group it finds materially not-yet-due back
     // to SCHEDULED (and its pending posts alongside it), rather than
     // leaving it stranded at QUEUE — see that method's docblock.

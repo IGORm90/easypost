@@ -81,12 +81,12 @@ it('a stale job cannot publish after a reschedule even when its own due-date che
     // The realistic case: a job dispatched for an OLDER schedule
     // generation fires (a redelivery, or simply because ShouldBeUnique's
     // lock briefly allowed a duplicate dispatch to slip through). Its
-    // OWN publish_date/due-date check (PublishService::isDueNow()) only
+    // OWN publish_date/due-date check (PostGroupLifecycle::isDueNow()) only
     // rejects a date materially in the FUTURE, so once the group's new
     // date has also arrived, that check alone would happily let a stale
     // job through. queue_version is what still stops it, compared
     // atomically inside the very same lockForUpdate() transaction that
-    // decides whether to act — see PublishService::lockGroupIfQueued().
+    // decides whether to act — see PostGroupLifecycle::claim().
     //
     // Durable-scheduling rewrite: this used to drive the reschedule
     // through PostGroupService::updateDate(), which USED to redispatch a
@@ -165,7 +165,7 @@ it('a job for a group deleted before it fires finds nothing and does nothing', f
     app(PostGroupService::class)->delete($group);
 
     // The job that was queued for this group before the delete lands —
-    // PublishService::lockGroupIfQueued() re-reads the group by id inside
+    // PostGroupLifecycle::claim() re-reads the group by id inside
     // its own lockForUpdate() transaction and finds nothing, so this is a
     // safe no-op regardless of whether the underlying queue driver ever
     // offers a way to truly cancel an already-pushed delayed job.

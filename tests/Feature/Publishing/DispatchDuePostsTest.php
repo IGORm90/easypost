@@ -60,7 +60,7 @@ it('claims a group due within the lookahead window and dispatches PublishPostJob
 
 it('dispatches with a delay matching the claimed row\'s publish_date, so an early claim does not run before it is due', function () {
     // P0 fix: a row claimed up to `dispatch_lookahead_seconds` before its
-    // publish_date must not run immediately — PublishService::isDueNow()
+    // publish_date must not run immediately — PostGroupLifecycle::isDueNow()
     // only tolerates 5s of future slack, so an undelayed dispatch would
     // un-claim itself back to SCHEDULED the instant it ran, bouncing
     // until a later tick happened to land within the grace window. The

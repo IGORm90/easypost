@@ -40,10 +40,10 @@ class DueDispatchService
      * is actually due, so a per-minute tick never leaves a post waiting
      * for the NEXT tick just because it landed a few seconds past this
      * one. Dispatching that claim immediately, with no delay, ran
-     * straight into `PublishService::isDueNow()`'s 5-second future
+     * straight into `PostGroupLifecycle::isDueNow()`'s 5-second future
      * grace: a row claimed 30-90s early would run right away, find
      * itself not yet due, and un-claim itself straight back to
-     * `SCHEDULED` (`lockGroupIfQueued()`'s guard 3) — bouncing
+     * `SCHEDULED` (`PostGroupLifecycle::claim()`'s guard 3) — bouncing
      * claim/un-claim across ticks, burning `dispatch_attempts` for a
      * completely ordinary, on-time post, and publishing up to a full
      * tick late. `->delay($row->publish_date)` fixes this directly:

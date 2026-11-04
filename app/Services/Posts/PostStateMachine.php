@@ -16,7 +16,7 @@ use App\Services\Posts\Exceptions\InvalidStateTransition;
  *
  * Allowed transitions: `DRAFT->SCHEDULED`, `SCHEDULED->QUEUE` (claimed
  * by `DispatchDuePostsCommand`), `QUEUE->PUBLISHED`, `QUEUE->ERROR`,
- * `QUEUE->SCHEDULED` (un-claim: `PublishService::lockGroupIfQueued()`
+ * `QUEUE->SCHEDULED` (un-claim: `PostGroupLifecycle::claim()`
  * finds the row rescheduled forward out from under a stale claim),
  * `ERROR->SCHEDULED` (retry), `DRAFT->DRAFT` and `SCHEDULED->SCHEDULED`
  * (re-saving a draft / a reschedule). Everything else — including every

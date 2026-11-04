@@ -70,7 +70,7 @@ use Throwable;
  * gets its OWN lock key, independent of whatever an old generation's key
  * is doing — safe to dispatch immediately, regardless of that old lock's
  * fate, because a stale-version job that DOES still fire simply no-ops
- * on `PublishService::lockGroupIfQueued()`'s version check, and
+ * on `PostGroupLifecycle::claim()`'s version check, and
  * `publishChannel()`'s own per-row `release_id` check is what actually
  * prevents a duplicate publish either way (see that class's docblock,
  * idempotency accounting) — `ShouldBeUnique` here is a quality-of-life
@@ -140,7 +140,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
      * @param  int  $queueVersion  Task 31: the `post_groups.queue_version`
      *                             this job was dispatched for — see
      *                             `PostGroupService::dispatchPublishIfQueued()`
-     *                             and `PublishService::lockGroupIfQueued()`'s
+     *                             and `PostGroupLifecycle::claim()`'s
      *                             docblocks. Always a real value from
      *                             production dispatch; every caller must
      *                             supply the group's value AT DISPATCH TIME,

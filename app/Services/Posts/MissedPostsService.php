@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\Log;
  *
  * ============================================================
  * Why this class exists — the two holes `PublishService::
- * lockGroupIfQueued()`'s docblock documents
+ * PostGroupLifecycle::claim()`'s docblock documents
  * ============================================================
  *
  * (1) A crash or Redis outage between `PostGroupService`'s transaction
@@ -93,7 +93,7 @@ use Illuminate\Support\Facades\Log;
  * is the layer that actually prevents a duplicate provider call, not
  * `ShouldBeUnique` — see `PublishService`'s own idempotency-accounting
  * docblock), and the OLD job's own next `queue_version` re-check
- * (`lockGroupIfQueued()`/`finalizeGroupState()`) finds itself stale and
+ * (`PostGroupLifecycle::claim()`/`finalizeGroupState()`) finds itself stale and
  * cleanly no-ops, now with a log line. The cost this accepts: a post
  * legitimately deep in its own backoff (attempt 3-4, 6-21 minutes in)
  * may occasionally get one redundant parallel generation — never a

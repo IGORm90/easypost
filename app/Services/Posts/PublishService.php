@@ -96,7 +96,7 @@ use Illuminate\Support\Facades\RateLimiter;
  *    scoped to one channel's pending rows, not the whole group and not
  *    the whole run — see the next section for why holding one lock
  *    across the ENTIRE run (all channels, one HTTP call each) was
- *    rejected. `queue_version` (Task 31, compared in `lockGroupIfQueued()`)
+ *    rejected. `queue_version` (Task 31, compared in `PostGroupLifecycle::claim()`)
  *    is a THIRD, independent layer, not a substitute for either of the
  *    two above: it stops a job from a SUPERSEDED schedule generation from
  *    ever reaching `publishChannel()` at all (a reschedule case), whereas
@@ -211,20 +211,10 @@ use Illuminate\Support\Facades\RateLimiter;
  */
 class PublishService
 {
-    /**
-     * How far `publish_date` may sit in the future before
-     * `lockGroupIfQueued()` treats a job as "not due yet" and exits
-     * without acting, rather than "close enough, publish now". See that
-     * method's docblock — this is the fix for a rescheduled post
-     * publishing at its OLD time (review finding 1): a small allowance
-     * for normal queue/dispatch latency around the exact instant, not a
-     * window a caller could exploit to jump the queue.
-     */
-    private const int PUBLISH_DATE_GRACE_SECONDS = 5;
-
     public function __construct(
         private readonly ProviderRegistry $registry,
         private readonly PostStateMachine $stateMachine,
+        private readonly PostGroupLifecycle $lifecycle,
         private readonly MediaTempFiles $mediaFiles,
         private readonly RecurrenceService $recurrence,
     ) {}
@@ -232,7 +222,7 @@ class PublishService
     /**
      * @param  int|null  $queueVersion  Task 31: the `post_groups.queue_version`
      *                                  this call was dispatched for — see
-     *                                  `lockGroupIfQueued()`'s docblock. Null
+     *                                  `PostGroupLifecycle::claim()`'s docblock. Null
      *                                  means "no opinion, act regardless of
      *                                  the group's current version" — used
      *                                  by every caller other than
@@ -245,7 +235,7 @@ class PublishService
      */
     public function publishGroup(string $postGroupId, ?int $queueVersion = null): void
     {
-        $group = $this->lockGroupIfQueued($postGroupId, $queueVersion);
+        $group = $this->lifecycle->claim($postGroupId, $queueVersion);
 
         if ($group === null) {
             return;
@@ -356,7 +346,7 @@ class PublishService
                 return;
             }
 
-            // Task 31: same reasoning as lockGroupIfQueued()'s queue_version
+            // Task 31: same reasoning as PostGroupLifecycle::claim()'s queue_version
             // check below — a stale job's OWN retries running out must not
             // be allowed to error a group that has since been superseded by
             // a new schedule generation, even in the residual case where
@@ -373,7 +363,7 @@ class PublishService
                 return;
             }
 
-            // Same due-date grace as lockGroupIfQueued() — post-review
+            // Same due-date grace as PostGroupLifecycle::claim() — post-review
             // fix (finding 2, second defect). Without this, a group
             // dragged further into the future while a now-dead job for
             // its OLD schedule is still mid-retry gets marked ERROR the
@@ -385,7 +375,7 @@ class PublishService
             // that should still publish, silently doesn't. See
             // isDueNow()'s docblock for why this predicate must stay a
             // single shared source of truth between the two callers.
-            if (! $this->isDueNow($group)) {
+            if (! $this->lifecycle->isDueNow($group)) {
                 Log::info('publish.abandon_guard_skipped', [
                     'post_group_id' => $group->id,
                     'reason' => 'not_due_yet',
@@ -422,162 +412,6 @@ class PublishService
             // and re-checks the same two predicates this method just checked.
             $this->finalizeGroupState($group->id, $queueVersion);
         });
-    }
-
-    /**
-     * Locks and returns the group iff it is currently `QUEUE` AND due —
-     * `publish_date` is not materially in the future (see
-     * `PUBLISH_DATE_GRACE_SECONDS`); returns null (and does nothing else)
-     * for anything else. `withoutGlobalScope('organization')` because
-     * this runs with no `OrganizationContext` — see class docblock.
-     * Deliberately its own short transaction, not the one wrapping the
-     * whole run — see the class docblock's "why the group-level lock is
-     * short" section.
-     *
-     * `$queueVersion` (Task 31) is compared to `$group->queue_version`
-     * INSIDE this same `lockForUpdate()` transaction, not before it and
-     * not by the caller beforehand — that placement is the entire point.
-     * `PostGroupService::dispatchPublishIfQueued()` bumps this column
-     * every single time it (re)dispatches `PublishPostJob` for a group,
-     * and hands the freshly-bumped value to that specific job instance. A
-     * job holding an OLDER value is, by construction, one whose schedule
-     * generation has since been superseded — most commonly by a
-     * reschedule, but the identical mechanism also covers "two instances
-     * of this job somehow both reach the queue for the same group" (the
-     * `ShouldBeUnique` lock's fixed 3600s TTL is independent of
-     * `->delay()`, see `dispatchPublishIfQueued()`'s docblock — a real
-     * race, not merely a hypothetical). Because the comparison happens
-     * under the SAME row lock as the state check, and against the value
-     * physically stored on the row at that exact instant, a stale job
-     * cannot slip past it even if it wins the race to acquire the lock
-     * first: whichever job runs first simply sees whatever `queue_version`
-     * happens to be committed at that moment, and only a job whose own
-     * version matches it exactly is allowed through. This closes a gap
-     * the due-date check below does not: a group can be rescheduled to a
-     * new date that has ALSO already passed by the time the stale job
-     * fires (`isDueNow()` only rejects a date materially in the FUTURE),
-     * in which case the due-date check alone would let it through.
-     *
-     * The due-date check is what makes a STALE job — one dispatched for
-     * an old `publish_date` that `PostGroupService::updateDate()`/
-     * `update()` has since moved into the future — harmless regardless
-     * of whether a fresh job was ever successfully dispatched for the
-     * new date (review finding 1: `ShouldBeUnique`'s lock can very
-     * plausibly have already expired between the original dispatch and
-     * the reschedule, so a redispatch is not guaranteed to happen, but a
-     * stale job picking the group up early must never be able to publish
-     * it regardless). A job that returns here because its group isn't
-     * due yet does nothing further — no retry, no error — since either a
-     * fresh job is on the way for the correct time, or (the one residual
-     * gap this does not close) none was dispatched at all and nothing
-     * will publish this group until something else touches it. That gap
-     * is a missed-publish failure mode, not a duplicate-publish one, and
-     * is called out in this task's report.
-     */
-    private function lockGroupIfQueued(string $postGroupId, ?int $queueVersion): ?PostGroup
-    {
-        return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostGroup {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($group === null) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $postGroupId,
-                    'reason' => 'group_not_found',
-                ]);
-
-                return null;
-            }
-
-            if ($group->state !== PostState::QUEUE) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_queued',
-                    'state' => $group->state->value,
-                ]);
-
-                return null;
-            }
-
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'stale_queue_version',
-                    'job_queue_version' => $queueVersion,
-                    'current_queue_version' => $group->queue_version,
-                ]);
-
-                return null;
-            }
-
-            if (! $this->isDueNow($group)) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_due_yet',
-                    'publish_date' => $group->publish_date?->toIso8601String(),
-                ]);
-
-                // Durable-scheduling rewrite, guard 3: this claim's
-                // group has since been rescheduled materially forward —
-                // normally impossible to observe here at all, because
-                // every PostGroupService reschedule path (update(),
-                // updateDate()) already un-claims a QUEUE group back to
-                // SCHEDULED the instant it moves publish_date, well
-                // before this job ever gets this far (see those methods'
-                // docblocks). Kept as a defensive backstop for whatever
-                // this invariant doesn't cover — a direct DB write, a
-                // future bug — rather than leaving the row stranded at
-                // QUEUE with no live job until MissedPostsService's
-                // stuck-row scan eventually notices it.
-                PostGroup::withoutGlobalScope('organization')
-                    ->whereKey($group->id)
-                    ->update(['state' => PostState::SCHEDULED->value, 'last_dispatched_at' => null]);
-
-                // Posts move with the group — guardEditable()'s pending-post
-                // lock (state=QUEUE AND release_id IS NULL) exists to
-                // protect a genuinely in-flight segment; leaving these at
-                // QUEUE after the group itself has un-claimed would make
-                // every future edit lock rows that are not actually being
-                // worked on by anything.
-                Post::withoutGlobalScope('organization')
-                    ->where('post_group_id', $group->id)
-                    ->whereNull('release_id')
-                    ->where('state', PostState::QUEUE->value)
-                    ->update(['state' => PostState::SCHEDULED->value]);
-
-                return null;
-            }
-
-            return $group;
-        });
-    }
-
-    /**
-     * True iff `$group->publish_date` is not materially in the future —
-     * see `PUBLISH_DATE_GRACE_SECONDS`. A single shared predicate
-     * between `lockGroupIfQueued()` (should this run publish anything at
-     * all right now?) and `abandonGroup()` (should retries-exhausted be
-     * allowed to settle this group to ERROR right now?) — post-review
-     * fix, finding 2's second defect: an earlier revision only applied
-     * this check in `lockGroupIfQueued()`, so `abandonGroup()` could mark
-     * a group `ERROR` purely because a stale, already-superseded job's
-     * retries ran out, even though the group had since been rescheduled
-     * further into the future and was never actually due yet. Keeping
-     * this as one method both callers share is deliberate: the two
-     * checks answering a subtly different question ("act now?" vs.
-     * "settle now?") from independently-maintained copies of the same
-     * arithmetic is exactly how they would eventually drift apart.
-     */
-    private function isDueNow(PostGroup $group): bool
-    {
-        if ($group->publish_date === null) {
-            return true;
-        }
-
-        return ! $group->publish_date->isAfter(now()->addSeconds(self::PUBLISH_DATE_GRACE_SECONDS));
     }
 
     /**
@@ -766,7 +600,7 @@ class PublishService
             // reproduced with two forked processes against real Postgres
             // (`PublishRaceTest`). Before this, `queue_version` and
             // `publish_date` were read exactly ONCE per run, in
-            // `lockGroupIfQueued()`, whose lock is committed immediately;
+            // `PostGroupLifecycle::claim()`, whose lock is committed immediately;
             // nothing between that transaction and each channel's
             // provider call looked at them again. A calendar drag
             // (`PostGroupService::updateDate()`) landing while an earlier
@@ -852,7 +686,7 @@ class PublishService
                 return [false, null];
             }
 
-            if (! $this->isDueNow($group)) {
+            if (! $this->lifecycle->isDueNow($group)) {
                 return [false, null];
             }
 
@@ -1068,7 +902,7 @@ class PublishService
             return false;
         }
 
-        return $this->isDueNow($group);
+        return $this->lifecycle->isDueNow($group);
     }
 
     /**
@@ -1312,7 +1146,7 @@ class PublishService
      * than accepting the caller's in-memory `PostGroup` — final-review
      * fix, Critical 1, reproduced with two forked processes against real
      * Postgres (`PublishRaceTest`). `publishGroup()` locks the group in
-     * `lockGroupIfQueued()` and COMMITS that lock immediately (the
+     * `PostGroupLifecycle::claim()` and COMMITS that lock immediately (the
      * per-channel commit boundary — see the class docblock), so by the
      * time this runs, at the very end of a run that spans several
      * provider calls, the caller's instance can be arbitrarily stale.

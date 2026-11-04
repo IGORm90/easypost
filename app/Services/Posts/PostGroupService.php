@@ -445,7 +445,7 @@ class PostGroupService
      * finds the row `SCHEDULED` with the new date and claims it exactly
      * once, whenever it is actually due. The stale job from the OLD
      * claim (if any) finds `state !== QUEUE` on
-     * `PublishService::lockGroupIfQueued()` and exits as a harmless no-op
+     * `PostGroupLifecycle::claim()` and exits as a harmless no-op
      * — releasing its `ShouldBeUnique` lock the instant it does, so
      * nothing is left to race the next legitimate claim either.
      */
@@ -463,7 +463,7 @@ class PostGroupService
                 $this->stateMachine->transition($group, PostState::SCHEDULED);
 
                 // Posts move with the group — same reasoning as
-                // PublishService::lockGroupIfQueued()'s un-claim branch:
+                // PostGroupLifecycle::claim()'s un-claim branch:
                 // guardEditable()'s pending-post lock only means anything
                 // while these rows are genuinely QUEUE.
                 Post::query()
@@ -521,7 +521,7 @@ class PostGroupService
      * The `state === ERROR` check below runs against `$group` AFTER
      * `lockGroup()` has re-read and locked its row (Task 31 review
      * finding 2) — every other guard in this pipeline
-     * (`PublishService::lockGroupIfQueued()`, `abandonGroup()`,
+     * (`PostGroupLifecycle::claim()`, `abandonGroup()`,
      * `guardEditable()` above) re-checks state under `lockForUpdate()`
      * rather than trusting whatever `$group` instance the caller
      * happened to pass in; this method matches that pattern rather than
@@ -867,7 +867,7 @@ class PostGroupService
      * SAME group now can reach the queue while an earlier one is still
      * pending/executing. Two guards, both already in place, are what
      * keep that race from ever producing a duplicate publish: the due-
-     * date/state check in `PublishService::lockGroupIfQueued()` (a stale
+     * date/state check in `PostGroupLifecycle::claim()` (a stale
      * job — the one whose lock was just force-released — that pops LATE
      * simply no-ops instead of publishing early) and `publishChannel()`'s
      * own per-row `lockForUpdate()` + `release_id IS NULL` filter (even
@@ -951,7 +951,7 @@ class PostGroupService
      *    transaction commits, then re-read the row fresh, so the
      *    LAST committer's write — date and version together — is always
      *    what every subsequent reader (including the next reschedule,
-     *    and `PublishService::lockGroupIfQueued()`) sees, and no
+     *    and `PostGroupLifecycle::claim()`) sees, and no
      *    dispatched version is ever computed from a value another
      *    transaction has since moved past. Covered by
      *    `RescheduleTest`'s two-concurrent-`updateDate()` fork test.

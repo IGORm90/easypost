@@ -118,7 +118,7 @@ it('covers the full mvp flow end to end', function () {
 
     // 7. Publish it for real (Queue::fake() above means PublishPostJob
     // was never actually run, so nothing has published yet). Travel past
-    // the scheduled time first: PublishService::lockGroupIfQueued()
+    // the scheduled time first: PostGroupLifecycle::claim()
     // refuses to publish a group whose publish_date is still materially
     // in the future (see that method's docblock) — a real worker would
     // only ever pick this job up once its delay has elapsed.
@@ -127,7 +127,7 @@ it('covers the full mvp flow end to end', function () {
     // `now()`, which `$this->travelTo()` below (a PHP/Carbon-only
     // freeze) does not move — widening the lookahead window here is
     // this test's stand-in for "wait a full hour", not a change to the
-    // dispatcher itself. `PublishService::lockGroupIfQueued()`'s own
+    // dispatcher itself. `PostGroupLifecycle::claim()`'s own
     // due-date check DOES use PHP's `now()`, which travelTo() does
     // move, so it needs the travel exactly as before.
     config(['publishing.dispatch_lookahead_seconds' => 7200]);

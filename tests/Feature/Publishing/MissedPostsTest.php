@@ -25,7 +25,7 @@ use Illuminate\Support\Str;
 
 /*
  * Task 32: MissedPostsService / ScanMissedPostsJob — the safety net for
- * the two holes PublishService::lockGroupIfQueued()'s docblock
+ * the two holes PostGroupLifecycle::claim()'s docblock
  * documents: a crash/outage between commit and dispatch, and a
  * ShouldBeUnique swallow outside the already-hardened reschedule paths.
  * Both leave a group at QUEUE, publish_date in the past, no live job.
