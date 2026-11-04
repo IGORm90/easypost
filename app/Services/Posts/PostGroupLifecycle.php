@@ -87,39 +87,9 @@ class PostGroupLifecycle
     public function claim(string $postGroupId, ?int $queueVersion): ?PostGroup
     {
         return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostGroup {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
+            $group = $this->lockQueued($postGroupId, $queueVersion, 'publish.guard_skipped');
 
             if ($group === null) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $postGroupId,
-                    'reason' => 'group_not_found',
-                ]);
-
-                return null;
-            }
-
-            if ($group->state !== PostState::QUEUE) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_queued',
-                    'state' => $group->state->value,
-                ]);
-
-                return null;
-            }
-
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                Log::info('publish.guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'stale_queue_version',
-                    'job_queue_version' => $queueVersion,
-                    'current_queue_version' => $group->queue_version,
-                ]);
-
                 return null;
             }
 
@@ -163,6 +133,64 @@ class PostGroupLifecycle
     }
 
     /**
+     * The three checks every pipeline path makes under the group's row lock,
+     * in this order: the group exists, it is still QUEUE, and it is still the
+     * schedule generation the caller was dispatched for. Returns the locked
+     * group, or null (after logging under `$logEvent` with the reason, when one
+     * is given) if any check fails. `settle()` passes no event: it returns null
+     * quietly, because its caller reads that as "not mine to settle".
+     *
+     * A null `$queueVersion` means "no opinion": only the state check applies.
+     * Must run inside the caller's transaction, since the lock is the point.
+     */
+    private function lockQueued(string $postGroupId, ?int $queueVersion, ?string $logEvent): ?PostGroup
+    {
+        /** @var PostGroup|null $group */
+        $group = PostGroup::withoutGlobalScope('organization')
+            ->whereKey($postGroupId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($group === null) {
+            if ($logEvent !== null) {
+                Log::info($logEvent, [
+                    'post_group_id' => $postGroupId,
+                    'reason' => 'group_not_found',
+                ]);
+            }
+
+            return null;
+        }
+
+        if ($group->state !== PostState::QUEUE) {
+            if ($logEvent !== null) {
+                Log::info($logEvent, [
+                    'post_group_id' => $group->id,
+                    'reason' => 'not_queued',
+                    'state' => $group->state->value,
+                ]);
+            }
+
+            return null;
+        }
+
+        if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+            if ($logEvent !== null) {
+                Log::info($logEvent, [
+                    'post_group_id' => $group->id,
+                    'reason' => 'stale_queue_version',
+                    'job_queue_version' => $queueVersion,
+                    'current_queue_version' => $group->queue_version,
+                ]);
+            }
+
+            return null;
+        }
+
+        return $group;
+    }
+
+    /**
      * True iff `$group->publish_date` is not materially in the future — see
      * `PUBLISH_DATE_GRACE_SECONDS`. A single shared predicate between `claim()`
      * (should this run publish anything at all right now?) and the
@@ -202,45 +230,9 @@ class PostGroupLifecycle
     public function abandon(string $postGroupId, string $reason, ?int $queueVersion = null): void
     {
         DB::transaction(function () use ($postGroupId, $reason, $queueVersion): void {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
+            $group = $this->lockQueued($postGroupId, $queueVersion, 'publish.abandon_guard_skipped');
 
             if ($group === null) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $postGroupId,
-                    'reason' => 'group_not_found',
-                ]);
-
-                return;
-            }
-
-            if ($group->state !== PostState::QUEUE) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_queued',
-                    'state' => $group->state->value,
-                ]);
-
-                return;
-            }
-
-            // Task 31: same reasoning as PostGroupLifecycle::claim()'s queue_version
-            // check below — a stale job's OWN retries running out must not
-            // be allowed to error a group that has since been superseded by
-            // a new schedule generation, even in the residual case where
-            // isDueNow()'s due-date grace (checked next) would not by
-            // itself have caught it.
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'stale_queue_version',
-                    'job_queue_version' => $queueVersion,
-                    'current_queue_version' => $group->queue_version,
-                ]);
-
                 return;
             }
 
@@ -367,17 +359,9 @@ class PostGroupLifecycle
     public function settle(string $postGroupId, ?int $queueVersion): ?PostState
     {
         return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostState {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
+            $group = $this->lockQueued($postGroupId, $queueVersion, null);
 
-            if ($group === null || $group->state !== PostState::QUEUE) {
-                return null;
-            }
-
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+            if ($group === null) {
                 return null;
             }
 
