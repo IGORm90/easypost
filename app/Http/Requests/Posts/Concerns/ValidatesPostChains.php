@@ -3,15 +3,10 @@
 namespace App\Http\Requests\Posts\Concerns;
 
 use App\Enums\RepeatUnit;
-use App\Models\Integration;
 use App\Models\Media;
-use App\Services\Posts\PostValidationService;
-use App\Social\Dto\MediaDto;
-use App\Social\Dto\PostPayloadDto;
+use App\Services\Posts\PostChainValidator;
 use App\Support\OrganizationContext;
 use Closure;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -150,228 +145,21 @@ trait ValidatesPostChains
         ];
     }
 
+    /**
+     * Registers the checks Laravel's structural rules cannot express (the
+     * publish date, the recurrence rule, each channel's limits). They run only
+     * once every structural rule has passed, since they trust its shape.
+     */
     protected function applyChainValidation(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            // Semantic checks assume a structurally valid payload — see
-            // this trait's docblock for why they're skipped otherwise.
             if ($validator->errors()->isNotEmpty()) {
                 return;
             }
 
-            $this->validatePublishDate($validator);
-            $this->validateRecurrence($validator);
-            $this->validateChannelLimits($validator);
+            foreach (app(PostChainValidator::class)->validate($this->all()) as $error) {
+                $validator->errors()->add($error['field'], $error['message']);
+            }
         });
-    }
-
-    /**
-     * `type=schedule` needs a future `publish_date` — a scheduled post
-     * in the past can never be published. `type=now` ignores whatever
-     * `publish_date` was sent (PostGroupService always stamps `now()`
-     * itself — see its docblock); `type=draft` has no date requirement
-     * at all — a caller may give it an arbitrary placeholder date, or
-     * none. When none is given, `PostGroupService::resolvePublishDate()`
-     * fills in `now()` itself (not this class's job — validation only
-     * decides whether a value is *required*, never what a missing one
-     * defaults to), so the draft still lands on today's `GET
-     * /api/calendar` instead of being unfindable.
-     */
-    private function validatePublishDate(Validator $validator): void
-    {
-        if ($this->input('type') !== 'schedule') {
-            return;
-        }
-
-        if (! $this->filled('publish_date')) {
-            $validator->errors()->add('publish_date', 'The publish date is required when scheduling a post.');
-
-            return;
-        }
-
-        $date = Carbon::parse($this->input('publish_date'));
-
-        if ($date->isPast()) {
-            $validator->errors()->add('publish_date', 'The publish date must be in the future.');
-        }
-    }
-
-    /**
-     * The three recurrence rules that need the parsed payload rather
-     * than a single field.
-     *
-     * `repeat_interval`'s ceiling is a property of the unit
-     * (`RepeatUnit::maxInterval()`) — 365 days, 52 weeks or 12 months —
-     * so it cannot be a static `max:` rule without hard-coding the same
-     * table in a third place.
-     *
-     * `repeat_until` is bounded on BOTH sides. In the past, a series
-     * would end before it began. Further out than a year, it is a
-     * commitment nobody is watching — every occurrence is a real post
-     * against the monthly quota, and the block's whole "no endless
-     * series" rule would be defeated by simply typing a distant year.
-     * And it must be strictly after `publish_date`, or the very first
-     * successor is already past the end.
-     */
-    private function validateRecurrence(Validator $validator): void
-    {
-        $unit = $this->input('repeat_unit');
-
-        if (! is_string($unit) || RepeatUnit::tryFrom($unit) === null) {
-            return;
-        }
-
-        $interval = (int) $this->input('repeat_interval');
-        $max = RepeatUnit::from($unit)->maxInterval();
-
-        if ($interval > $max) {
-            $validator->errors()->add('repeat_interval', "The repeat interval may not be greater than {$max} for this unit.");
-        }
-
-        if (! $this->filled('repeat_until')) {
-            return;
-        }
-
-        $until = Carbon::parse($this->input('repeat_until'));
-
-        if ($until->isPast()) {
-            $validator->errors()->add('repeat_until', 'The repeat end date must be in the future.');
-        }
-
-        if ($until->greaterThan(Carbon::now()->addYear())) {
-            $validator->errors()->add('repeat_until', 'The repeat end date may not be more than a year away.');
-        }
-
-        if ($this->filled('publish_date') && $until->lessThanOrEqualTo(Carbon::parse($this->input('publish_date')))) {
-            $validator->errors()->add('repeat_until', 'The repeat end date must be after the publish date.');
-        }
-    }
-
-    /**
-     * Runs every resolvable chain through PostValidationService and
-     * maps each returned error onto the field path of the segment it
-     * came from, so the frontend can highlight the exact offending
-     * input. `post_index` (the segment's position within one
-     * integration's `value` array) becomes `posts.{i}.value.{post_index}`;
-     * content-shaped codes (`content_too_long`, `empty_content`) get a
-     * `.content` suffix, media-shaped codes get a `.media_ids` suffix,
-     * and chain-shape codes (`threads_not_supported`,
-     * `too_many_segments`) are attached to the segment itself with no
-     * suffix, since they describe the segment's mere presence in the
-     * chain rather than one of its fields.
-     */
-    private function validateChannelLimits(Validator $validator): void
-    {
-        /** @var PostValidationService $service */
-        $service = app(PostValidationService::class);
-        $mediaById = $this->resolveReferencedMedia();
-
-        foreach ((array) $this->input('posts', []) as $i => $item) {
-            $integrationId = $item['integration_id'] ?? null;
-
-            if (! is_string($integrationId)) {
-                continue;
-            }
-
-            // Org-scoped on purpose — see this trait's docblock. A
-            // cross-tenant id resolves to null here and is left for
-            // PostGroupService to reject with 403.
-            $integration = Integration::query()->find($integrationId);
-
-            if ($integration === null) {
-                continue;
-            }
-
-            $chain = array_map(
-                fn (array $segment): PostPayloadDto => new PostPayloadDto(
-                    content: (string) ($segment['content'] ?? ''),
-                    media: $this->resolveSegmentMedia($segment, $mediaById),
-                ),
-                (array) ($item['value'] ?? []),
-            );
-
-            foreach ($service->validate($integration, $chain) as $error) {
-                $validator->errors()->add($this->fieldFor((int) $i, $error), $error['message']);
-            }
-        }
-    }
-
-    /**
-     * Every `media_ids` value referenced anywhere in the payload,
-     * resolved to its `Media` row in one query — scoped to the current
-     * organization by `Media`'s own `BelongsToOrganization` global
-     * scope, same as every other org-scoped lookup in this codebase. By
-     * the time this runs, the `exists`-with-organization-scope rule in
-     * `chainRules()` has already proven every id here both exists and
-     * belongs to this organization (see `applyChainValidation()`'s
-     * early return on structural errors), so this is a plain lookup,
-     * not a second ownership check.
-     *
-     * @return Collection<string, Media>
-     */
-    private function resolveReferencedMedia(): Collection
-    {
-        $ids = [];
-
-        foreach ((array) $this->input('posts', []) as $item) {
-            foreach ((array) ($item['value'] ?? []) as $segment) {
-                foreach ((array) ($segment['media_ids'] ?? []) as $id) {
-                    if (is_string($id)) {
-                        $ids[] = $id;
-                    }
-                }
-            }
-        }
-
-        if ($ids === []) {
-            return collect();
-        }
-
-        return Media::query()->whereIn('id', array_unique($ids))->get()->keyBy('id');
-    }
-
-    /**
-     * @param  array{media_ids?: list<string>}  $segment
-     * @param  Collection<string, Media>  $mediaById
-     * @return list<MediaDto>
-     */
-    private function resolveSegmentMedia(array $segment, Collection $mediaById): array
-    {
-        $media = [];
-
-        foreach ((array) ($segment['media_ids'] ?? []) as $id) {
-            $row = $mediaById->get($id);
-
-            if ($row instanceof Media) {
-                // Media::toDto() is the only place that constructs a
-                // MediaDto from a stored row — $sizeBytes/$mimeType/$path
-                // come straight off the persisted, upload-time-captured
-                // columns, never re-derived from disk. See that method's
-                // docblock.
-                $media[] = $row->toDto();
-            }
-        }
-
-        return $media;
-    }
-
-    /**
-     * @param  array{post_index: int, code: string, message: string, limit: int|string|null, actual: int|string|null}  $error
-     */
-    private function fieldFor(int $postsIndex, array $error): string
-    {
-        $base = "posts.{$postsIndex}.value.{$error['post_index']}";
-
-        $contentCodes = ['content_too_long', 'empty_content'];
-        $mediaCodes = [
-            'too_many_images', 'too_many_videos', 'mixed_media_not_supported',
-            'unsupported_mime', 'file_too_large', 'file_size_unknown', 'missing_alt_text',
-        ];
-
-        return match (true) {
-            in_array($error['code'], $contentCodes, true) => "{$base}.content",
-            in_array($error['code'], $mediaCodes, true) => "{$base}.media_ids",
-            default => $base,
-        };
     }
 }
