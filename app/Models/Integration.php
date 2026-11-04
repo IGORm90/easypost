@@ -112,4 +112,16 @@ class Integration extends Model
     {
         return $this->hasMany(IntegrationTimeSlot::class);
     }
+
+    /**
+     * Marks the channel as needing its credentials re-connected: a publish found
+     * them rejected. The single call a publish makes about a channel's health, so
+     * whatever later owns the rest of that (clearing it, the token refresher)
+     * replaces one line there, not a field write scattered through the publisher.
+     */
+    public function flagRefreshNeeded(): void
+    {
+        $this->refresh_needed = true;
+        $this->save();
+    }
 }

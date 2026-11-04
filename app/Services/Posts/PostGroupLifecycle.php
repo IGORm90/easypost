@@ -1185,8 +1185,7 @@ class PostGroupLifecycle
             }
 
             if ($outcome->flagsRefresh && $outcome->integration !== null) {
-                $outcome->integration->refresh_needed = true;
-                $outcome->integration->save();
+                $outcome->integration->flagRefreshNeeded();
             }
 
             if ($outcome->integration !== null) {

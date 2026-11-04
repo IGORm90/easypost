@@ -243,7 +243,8 @@ class PostGroupService
 
     /**
      * Block 4: the next occurrence of `$source`'s recurring series,
-     * created straight into `QUEUE` and dispatched. Called only by
+     * created as `SCHEDULED`, so `DueDispatchService` claims it when it is due
+     * (nothing is dispatched here). Called only by
      * `RecurrenceService::spawnNext()`, only after `$source` itself has
      * published.
      *

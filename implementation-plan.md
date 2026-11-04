@@ -17,7 +17,7 @@
 | Правило | Что это значит для новых задач |
 |---|---|
 | **Изоляция провайдеров** | Ни одной строки `x`, `linkedin`, `reddit` и т.д. в кавычках вне `app/Social/Providers`. Гуард — `tests/Unit/Architecture/ProviderIsolationTest.php`, его список провайдеров придётся расширять. Во фронтенде маппинг id → поведение разрешён **только** в `resources/js/components/previews/registry.ts` |
-| **Таймауты HTTP** | Внутри `app/Social` фасад `Http` вызывается только через трейт `BoundsHttpTimeouts`, каждый провайдер обязан звать `refuseRedirect(` |
+| **Таймауты HTTP** | Внутри `app/Social` фасад `Http` вызывается только через трейт `BoundsHttpTimeouts`, каждый провайдер обязан слать вызовы через `ProviderCall` (напрямую или через трейт, как `UsesMetaGraph`), который единственный отказывает редиректам |
 | **Цвет** | Никаких хексов, `rgb()`, именованных цветов и дефолтных Tailwind-классов в `.vue`/`.ts`/`.css`. Только токены из `resources/css/app.css`. Гуард — `palette.spec.ts` |
 | **Паритет локалей** | Ключ добавлен в `lang/en` — добавь в `lang/ru`. То же для `i18n/en.json` ↔ `ru.json`. Гуард — `LocaleParityTest.php` |
 | **Доступность** | Каждый `<Input>` получает `label`, `aria-label` или `aria-labelledby`. Плейсхолдер лейблом не считается |
@@ -1442,8 +1442,9 @@ post(Integration $integration, array $chain): array   // → array<int, PostResu
 Обязательное для всех восьми, каждое подкреплено тестом:
 
 - **HTTP только через `BoundsHttpTimeouts`** (`http()` / `uploadHttp()`), и каждый
-  провайдер зовёт `refuseRedirect($response, $this->name())` в своём приватном `send()`.
-  `ProviderHttpTimeoutTest` подхватит новый класс автоматически
+  провайдер шлёт вызовы через `ProviderCall` (прямо или через трейт, как `UsesMetaGraph`);
+  редирект он отклоняет сам, а свой разбор ошибок провайдер задаёт адаптером
+  (`ProviderErrorAdapter`). `ProviderHttpTimeoutTest` подхватит новый класс автоматически
 - **Ошибки — через `MapsHttpErrors::exceptionForStatus()`**, и **никогда** с телом ответа
   в сообщении: текст исключения уезжает в `posts.error`, оттуда в `PostResource`, то есть
   на экран пользователю. `Retry-After` читать и передавать в
