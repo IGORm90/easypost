@@ -79,10 +79,27 @@ it('routes every provider response through the redirect refusal', function () {
     foreach ($files as $file) {
         $source = (string) file_get_contents($file);
 
-        if (! str_contains($source, 'refuseRedirect(')) {
+        // A provider either refuses redirects itself or sends its calls
+        // through `ProviderCall`, which does. The first form goes away as
+        // each provider migrates; the last migration tightens this to
+        // `new ProviderCall(` only.
+        if (! str_contains($source, 'refuseRedirect(') && ! str_contains($source, 'new ProviderCall(')) {
             $missing[] = basename($file);
         }
     }
 
     expect($missing)->toBe([], "these providers never refuse a redirect:\n".implode("\n", $missing));
+});
+
+/**
+ * The other half of the check above: a provider that delegates to
+ * `ProviderCall` is only safe while `ProviderCall` itself refuses the
+ * redirect. Without this, deleting the refusal there would leave every
+ * migrated provider green and unguarded. The behaviour is proven in
+ * tests/Unit/Social/ProviderCallTest.php; this makes its removal visible.
+ */
+it('keeps the redirect refusal inside ProviderCall itself', function () {
+    $source = (string) file_get_contents(base_path('app/Social/Providers/ProviderCall.php'));
+
+    expect($source)->toContain('refuseRedirect(');
 });
