@@ -4,6 +4,7 @@ namespace App\Services\Posts;
 
 use App\Enums\PostState;
 use App\Jobs\PublishPostJob;
+use App\Models\Integration;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\InvalidStateTransition;
@@ -1121,5 +1122,141 @@ class PostGroupLifecycle
 
         $model->state = $to;
         $model->save();
+    }
+
+    /**
+     * The database half of one channel's publish. In ONE transaction: lock the
+     * segments of this channel that are still pending (`state = QUEUE AND
+     * release_id IS NULL`), re-check that the group is still QUEUE, still the
+     * dispatched generation and still due, hand the segments it holds to
+     * `$attempt`, and record the ChannelOutcome that comes back — segments that
+     * went out are marked PUBLISHED with their release, failures get their
+     * message, a channel that needs re-connecting is flagged. The attempt runs
+     * inside the lock on purpose: that is what makes it impossible for two
+     * workers to send the same segment, or for an edit to discard a segment
+     * whose release has not been committed yet.
+     *
+     * Returns `[needsRetry, retryAfterSeconds]`. The attempt is never called if
+     * there is nothing left to publish or the group has moved on; if it throws,
+     * nothing is written.
+     *
+     * @param  Collection<int, Post>  $pending
+     * @param  Closure(Collection<int, Post>): ChannelOutcome  $attempt
+     * @return array{0: bool, 1: int|null}
+     */
+    public function recordChannel(string $postGroupId, ?int $queueVersion, Collection $pending, Closure $attempt): array
+    {
+        $logged = null;
+
+        $result = DB::transaction(function () use ($postGroupId, $queueVersion, $pending, $attempt, &$logged): array {
+            $lockedIds = Post::withoutGlobalScope('organization')
+                ->whereIn('id', $pending->pluck('id'))
+                ->whereNull('release_id')
+                ->where('state', PostState::QUEUE->value)
+                ->lockForUpdate()
+                ->pluck('id');
+
+            if ($lockedIds->isEmpty()) {
+                return [false, null];
+            }
+
+            $pending = $pending->filter(fn (Post $post): bool => $lockedIds->contains($post->id))->values();
+
+            $group = PostGroup::withoutGlobalScope('organization')
+                ->whereKey($postGroupId)
+                ->first();
+
+            if ($group === null || $group->state !== PostState::QUEUE) {
+                return [false, null];
+            }
+
+            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+                return [false, null];
+            }
+
+            if (! $this->isDueNow($group)) {
+                return [false, null];
+            }
+
+            $outcome = $attempt($pending);
+
+            foreach ($outcome->published as $index => $published) {
+                $this->markPostPublished($pending[$index], $published);
+            }
+
+            if ($outcome->kind === ChannelOutcomeKind::Failed) {
+                $this->markPostsError($pending, (string) $outcome->errorMessage);
+            }
+
+            if ($outcome->flagsRefresh && $outcome->integration !== null) {
+                $outcome->integration->refresh_needed = true;
+                $outcome->integration->save();
+            }
+
+            if ($outcome->integration !== null) {
+                $logged = $this->attemptLogContext(
+                    $outcome->integration,
+                    $postGroupId,
+                    $group,
+                    $outcome->kind->value,
+                    $outcome->failureKind,
+                );
+            }
+
+            return [$outcome->kind === ChannelOutcomeKind::Retry, $outcome->retryAfterSeconds];
+        });
+
+        if ($logged !== null) {
+            Log::channel('jobs')->info('publish.attempt', $logged);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Cheap, unlocked "is this run still entitled to publish at all?" —
+     * the same three predicates `publishLockedChannel()` re-checks under
+     * the lock (QUEUE, matching generation, actually due). Answering
+     * `false` here only skips media preparation; answering `true` grants
+     * nothing, because nothing publishes outside that transaction.
+     */
+    public function isPublishable(string $postGroupId, ?int $queueVersion): bool
+    {
+        /** @var PostGroup|null $group */
+        $group = PostGroup::withoutGlobalScope('organization')
+            ->whereKey($postGroupId)
+            ->first();
+
+        if ($group === null || $group->state !== PostState::QUEUE) {
+            return false;
+        }
+
+        if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
+            return false;
+        }
+
+        return $this->isDueNow($group);
+    }
+
+    /**
+     * @return array{provider: string, integration_id: string, post_group_id: string, result: string, failure_kind: ?string, lateness_ms: int}
+     */
+    private function attemptLogContext(
+        Integration $integration,
+        string $postGroupId,
+        PostGroup $group,
+        string $result,
+        ?string $failureKind,
+    ): array {
+        return [
+            'provider' => $integration->provider_identifier,
+            'integration_id' => $integration->id,
+            'post_group_id' => $postGroupId,
+            'result' => $result,
+            'failure_kind' => $failureKind,
+            // absolute: true — Carbon 3 defaults diffIn*() to a SIGNED
+            // result, and this is always reported as a magnitude.
+            'lateness_ms' => (int) now()->diffInMilliseconds($group->publish_date, true),
+        ];
     }
 }

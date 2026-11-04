@@ -16,8 +16,6 @@ use App\Social\Exceptions\ProviderTransientException;
 use App\Social\ProviderRegistry;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Owns the actual act of publishing a `PostGroup` to every channel it was
@@ -349,155 +347,21 @@ class PublishService
             return [false, null];
         }
 
-        if (! $this->stillPublishable($postGroupId, $queueVersion)) {
+        if (! $this->lifecycle->isPublishable($postGroupId, $queueVersion)) {
             return [false, null];
         }
 
         $prepared = $this->attempt->prepare($integrationId, $pending);
 
         try {
-            return $this->publishLockedChannel($postGroupId, $integrationId, $pending, $queueVersion, $prepared);
+            return $this->lifecycle->recordChannel(
+                $postGroupId,
+                $queueVersion,
+                $pending,
+                fn (Collection $locked) => $this->attempt->send($integrationId, $postGroupId, $locked, $prepared),
+            );
         } finally {
             $this->attempt->discard($prepared);
         }
-    }
-
-    /**
-     * The transactional half of publishChannel() — everything that
-     * decides whether this channel publishes, and records what happened.
-     * Split out only so the media preparation above can sit outside the
-     * transaction while every lock, re-check and outcome mapping below
-     * stays exactly where (and in the order) it was.
-     *
-     * @param  Collection<int, Post>  $pending
-     * @return array{0: bool, 1: ?int}
-     */
-    private function publishLockedChannel(
-        string $postGroupId,
-        string $integrationId,
-        Collection $pending,
-        ?int $queueVersion,
-        PreparedChannel $prepared,
-    ): array {
-        // LOG_PLAN.md Phase 1.5: captured by reference and logged AFTER
-        // the transaction commits, never inside it — a Log call that
-        // can throw has no business inside a transaction that decides
-        // PUBLISHED, which is terminal. Left null for every early abort
-        // above (lockedIds empty, group gone/not QUEUE, version
-        // mismatch, not due yet): nothing about THIS channel was
-        // decided in those cases, so there is nothing to report as an
-        // attempt.
-        $logged = null;
-
-        $result = DB::transaction(function () use ($postGroupId, $integrationId, $pending, $queueVersion, $prepared, &$logged): array {
-            $lockedIds = Post::withoutGlobalScope('organization')
-                ->whereIn('id', $pending->pluck('id'))
-                ->whereNull('release_id')
-                ->where('state', PostState::QUEUE->value)
-                ->lockForUpdate()
-                ->pluck('id');
-
-            if ($lockedIds->isEmpty()) {
-                return [false, null];
-            }
-
-            $pending = $pending->filter(fn (Post $post): bool => $lockedIds->contains($post->id))->values();
-
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->first();
-
-            if ($group === null || $group->state !== PostState::QUEUE) {
-                return [false, null];
-            }
-
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                return [false, null];
-            }
-
-            if (! $this->lifecycle->isDueNow($group)) {
-                return [false, null];
-            }
-
-            $outcome = $this->attempt->send($integrationId, $postGroupId, $pending, $prepared);
-
-            foreach ($outcome->published as $index => $published) {
-                $this->lifecycle->markPostPublished($pending[$index], $published);
-            }
-
-            if ($outcome->kind === ChannelOutcomeKind::Failed) {
-                $this->lifecycle->markPostsError($pending, (string) $outcome->errorMessage);
-            }
-
-            if ($outcome->flagsRefresh && $outcome->integration !== null) {
-                $outcome->integration->refresh_needed = true;
-                $outcome->integration->save();
-            }
-
-            if ($outcome->integration !== null) {
-                $logged = $this->publishAttemptOutcome(
-                    $outcome->integration,
-                    $postGroupId,
-                    $group,
-                    $outcome->kind->value,
-                    $outcome->failureKind,
-                );
-            }
-
-            return [$outcome->kind === ChannelOutcomeKind::Retry, $outcome->retryAfterSeconds];
-        });
-
-        if ($logged !== null) {
-            Log::channel('jobs')->info('publish.attempt', $logged);
-        }
-
-        return $result;
-    }
-
-    /**
-     * @return array{provider: string, integration_id: string, post_group_id: string, result: string, failure_kind: ?string, lateness_ms: int}
-     */
-    private function publishAttemptOutcome(
-        Integration $integration,
-        string $postGroupId,
-        PostGroup $group,
-        string $result,
-        ?string $failureKind,
-    ): array {
-        return [
-            'provider' => $integration->provider_identifier,
-            'integration_id' => $integration->id,
-            'post_group_id' => $postGroupId,
-            'result' => $result,
-            'failure_kind' => $failureKind,
-            // absolute: true — Carbon 3 defaults diffIn*() to a SIGNED
-            // result, and this is always reported as a magnitude.
-            'lateness_ms' => (int) now()->diffInMilliseconds($group->publish_date, true),
-        ];
-    }
-
-    /**
-     * Cheap, unlocked "is this run still entitled to publish at all?" —
-     * the same three predicates `publishLockedChannel()` re-checks under
-     * the lock (QUEUE, matching generation, actually due). Answering
-     * `false` here only skips media preparation; answering `true` grants
-     * nothing, because nothing publishes outside that transaction.
-     */
-    private function stillPublishable(string $postGroupId, ?int $queueVersion): bool
-    {
-        /** @var PostGroup|null $group */
-        $group = PostGroup::withoutGlobalScope('organization')
-            ->whereKey($postGroupId)
-            ->first();
-
-        if ($group === null || $group->state !== PostState::QUEUE) {
-            return false;
-        }
-
-        if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-            return false;
-        }
-
-        return $this->lifecycle->isDueNow($group);
     }
 }
