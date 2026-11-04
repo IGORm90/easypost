@@ -9,6 +9,7 @@ use App\Services\Posts\PostGroupLifecycle;
 use App\Support\OrganizationContext;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -343,4 +344,82 @@ it('does not see another organization\'s group when writing', function () {
 
     expect(fn () => app(PostGroupLifecycle::class)->edit($other, Intent::forType('draft', null, noRepeat())))
         ->toThrow(ModelNotFoundException::class);
+});
+
+// --- create(): a brand-new group -----------------------------------------------
+
+it('creates a publish-now group straight in QUEUE at version 1, unforced, with the body run in its new state', function () {
+    $this->freezeTime();
+    $id = (string) Str::ulid();
+    $seen = [];
+
+    $receipt = app(PostGroupLifecycle::class)->create(
+        $id,
+        Intent::forType('now', now(), noRepeat()),
+        function (PostGroup $group, PostState $target) use (&$seen): void {
+            $seen = [$group->id, $group->state, $target];
+        },
+    );
+
+    $fresh = PostGroup::findOrFail($id);
+    expect($fresh->state)->toBe(PostState::QUEUE)
+        ->and($fresh->queue_version)->toBe(1)
+        ->and($fresh->organization_id)->toBe(currentOrg()->id)
+        ->and($fresh->publish_date?->timestamp)->toBe(now()->timestamp)
+        ->and($seen)->toBe([$id, PostState::QUEUE, PostState::QUEUE])
+        ->and($receipt->group->id)->toBe($id)
+        ->and($receipt->queueVersion)->toBe(1)
+        ->and($receipt->forced)->toBeFalse();
+});
+
+it('creates a scheduled group in SCHEDULED at version 0, with its date and recurrence rule', function () {
+    $this->freezeTime();
+    $id = (string) Str::ulid();
+    $date = now()->addDays(2);
+    $until = now()->addMonths(1);
+
+    app(PostGroupLifecycle::class)->create($id, Intent::forType('schedule', $date, [
+        'repeat_unit' => RepeatUnit::DAY,
+        'repeat_interval' => 3,
+        'repeat_until' => $until,
+    ]), fn () => null);
+
+    $fresh = PostGroup::findOrFail($id);
+    expect($fresh->state)->toBe(PostState::SCHEDULED)
+        ->and($fresh->queue_version)->toBe(0)
+        ->and($fresh->publish_date?->timestamp)->toBe($date->timestamp)
+        ->and($fresh->repeat_unit)->toBe(RepeatUnit::DAY)
+        ->and($fresh->repeat_interval)->toBe(3);
+});
+
+it('creates a draft in DRAFT at version 0', function () {
+    $id = (string) Str::ulid();
+
+    app(PostGroupLifecycle::class)->create($id, Intent::forType('draft', now(), noRepeat()), fn () => null);
+
+    $fresh = PostGroup::findOrFail($id);
+    expect($fresh->state)->toBe(PostState::DRAFT)
+        ->and($fresh->queue_version)->toBe(0);
+});
+
+it('keeps the id it was given, so a date jittered from that id matches the row', function () {
+    $id = (string) Str::ulid();
+
+    $receipt = app(PostGroupLifecycle::class)->create($id, Intent::forType('schedule', now()->addDay(), noRepeat()), fn () => null);
+
+    expect($receipt->group->id)->toBe($id)
+        ->and(PostGroup::query()->whereKey($id)->exists())->toBeTrue()
+        ->and(PostGroup::count())->toBe(1);
+});
+
+it('leaves no group behind when the body throws', function () {
+    $id = (string) Str::ulid();
+
+    expect(fn () => app(PostGroupLifecycle::class)->create(
+        $id,
+        Intent::forType('now', now(), noRepeat()),
+        fn () => throw new RuntimeException('chains failed'),
+    ))->toThrow(RuntimeException::class);
+
+    expect(PostGroup::query()->whereKey($id)->exists())->toBeFalse();
 });

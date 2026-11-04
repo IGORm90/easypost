@@ -394,6 +394,58 @@ class PostGroupLifecycle
     }
 
     /**
+     * A brand-new group. The caller mints `$id` and resolves the publish date
+     * from it BEFORE this runs: jitter needs a stable identifier to seed from,
+     * so the scheduled instant and the id the row is inserted with must agree.
+     * `id` is deliberately absent from `$fillable`, so it is assigned as a
+     * property, never through the mass-assignment array — `PostGroup::create(
+     * ['id' => $id, ...])` would silently drop it and let `HasUlids` mint a
+     * second, different id in its own `creating` hook, which is exactly what
+     * happened before this was written as a direct assignment.
+     * `HasUniqueIds::setUniqueIds()` only fills a column that is still empty,
+     * so this pre-set value is what actually ships.
+     *
+     * No lock and no version bump, unlike every other write path: `$id` is a
+     * freshly-minted ulid nothing else can reference yet, so there is no
+     * concurrent writer to serialise against. A brand-new group's very first
+     * schedule generation is simply version 1, set only when it matters
+     * (entering QUEUE for an immediate "publish now"); a SCHEDULED group has
+     * its queue_version read fresh, whatever it is, at whatever future instant
+     * `DueDispatchService` claims it.
+     *
+     * Not `forced`: nothing older can hold this group's uniqueness lock.
+     *
+     * @param  Closure(PostGroup, PostState): void  $body
+     */
+    public function create(string $id, Intent $intent, Closure $body): Receipt
+    {
+        $group = DB::transaction(function () use ($id, $intent, $body) {
+            $target = $this->targetStateFor($intent->kind, PostState::DRAFT);
+
+            $group = new PostGroup([
+                'state' => PostState::DRAFT,
+                'publish_date' => $intent->date,
+                ...$intent->recurrence,
+            ]);
+            $group->id = $id;
+            $group->save();
+
+            $this->transitionToward($group, $target);
+
+            if ($target === PostState::QUEUE) {
+                $group->queue_version = 1;
+                $group->save();
+            }
+
+            $body($group, $target);
+
+            return $group->fresh(['posts.media', 'tags']);
+        });
+
+        return new Receipt($group, $group->queue_version);
+    }
+
+    /**
      * The write side for the HTTP-facing paths: one Intent at a time. Returns a
      * Receipt; the caller dispatches AFTER its own transaction has committed
      * (see PostGroupService::claimAndDispatch(), until that moves here too).
@@ -669,7 +721,7 @@ class PostGroupLifecycle
      * makes "this is a fresh generation" apply to the notify flag too,
      * not just to `PublishPostJob`'s own staleness check.
      */
-    public function bumpQueueVersionIfNotDraft(PostGroup $group, PostState $resultingState): void
+    private function bumpQueueVersionIfNotDraft(PostGroup $group, PostState $resultingState): void
     {
         if ($resultingState !== PostState::DRAFT) {
             $group->queue_version = $group->queue_version + 1;
@@ -687,7 +739,7 @@ class PostGroupLifecycle
      * `$target`, so every call site can call this unconditionally rather
      * than repeating `if ($target !== $model->state)` at each one.
      */
-    public function transitionToward(Post|PostGroup $model, PostState $target): void
+    private function transitionToward(Post|PostGroup $model, PostState $target): void
     {
         if ($model->state === $target) {
             return;

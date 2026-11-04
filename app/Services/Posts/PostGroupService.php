@@ -113,55 +113,24 @@ class PostGroupService
         $group = $this->planLimits->withLimit($organization, PlanLimit::POSTS_PER_MONTH, 1, function () use ($data) {
             $this->resolveIntegrations($data['posts']);
 
-            $targetState = $this->targetStateForType($data['type']);
-
-            // Minted here, explicitly, rather than left to HasUlids'
-            // creating-event default: jitter (below) needs a stable
-            // identifier to seed from BEFORE the row exists, so the
-            // scheduled instant this method computes and the id the
-            // group is actually inserted with agree. Assigned as a
-            // direct property, not through the constructor/`create()`'s
-            // mass-assignment array — `id` is deliberately absent from
-            // `$fillable`, so `PostGroup::create(['id' => $id, ...])`
-            // would silently DROP it and let `HasUlids` mint a second,
-            // DIFFERENT id in its own `creating` hook, which is exactly
-            // what happened before this was written as a direct
-            // assignment: the jitter offset and the row's real id
-            // diverged, so it publish_dated on the wrong id every time.
-            // `HasUniqueIds::setUniqueIds()` only fills a column that is
-            // still empty, so this pre-set value is what actually ships.
+            // Minted here, before the row exists, because the jitter applied
+            // to a scheduled date is seeded from it: see
+            // PostGroupLifecycle::create().
             $id = (string) Str::ulid();
-            $group = new PostGroup([
-                'state' => PostState::DRAFT,
-                'publish_date' => $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $id),
-                ...$this->recurrenceAttributes($data),
-            ]);
-            $group->id = $id;
-            $group->save();
 
-            // No lockGroup()/bumpQueueVersionIfNotDraft() needed here,
-            // unlike every other write path below: $group->id is a
-            // freshly-minted ulid nothing else can reference yet, so
-            // there is no concurrent writer to serialise against. A
-            // brand-new group's very first schedule generation is
-            // simply version 1 — set only when it matters (entering
-            // QUEUE for an immediate "publish now"; a `SCHEDULED` group
-            // has its queue_version read fresh, whatever it is, at
-            // whatever future instant `DueDispatchService` claims it).
-            $this->lifecycle->transitionToward($group, $targetState);
+            $intent = Intent::forType(
+                $data['type'],
+                $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $id),
+                $this->recurrenceAttributes($data),
+            );
 
-            if ($targetState === PostState::QUEUE) {
-                $group->queue_version = 1;
-                $group->save();
-            }
+            return $this->lifecycle->create($id, $intent, function (PostGroup $group, PostState $target) use ($data): void {
+                $this->replaceChains($group, $data['posts'], $target);
 
-            $this->replaceChains($group, $data['posts'], $targetState);
-
-            if (array_key_exists('tags', $data)) {
-                $this->syncTags($group, $data['tags'] ?? []);
-            }
-
-            return $group->fresh(['posts.media', 'tags']);
+                if (array_key_exists('tags', $data)) {
+                    $this->syncTags($group, $data['tags'] ?? []);
+                }
+            })->group;
         });
 
         $this->claimAndDispatch($group);
@@ -659,21 +628,6 @@ class PostGroupService
         $offsetSeconds = (crc32($seed) % (2 * $window + 1)) - $window;
 
         return $date->copy()->addSeconds($offsetSeconds);
-    }
-
-    /**
-     * `create()`'s equivalent of `resolveTargetState()` — no existing
-     * `$current` state to validate a `draft` request against (a brand
-     * new group is always `DRAFT` already), so this is the strictly
-     * simpler "what does this `type` mean" half, shared by both.
-     */
-    private function targetStateForType(string $type): PostState
-    {
-        return match ($type) {
-            'draft' => PostState::DRAFT,
-            'now' => PostState::QUEUE,
-            default => PostState::SCHEDULED,
-        };
     }
 
     /**
