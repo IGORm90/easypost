@@ -62,7 +62,7 @@ use Illuminate\Support\Facades\RateLimiter;
  *    ever builds a payload chain out of a channel's posts that satisfy
  *    BOTH `release_id IS NULL` AND `state === QUEUE`. A segment that
  *    already carries a `release_id` — set the instant a provider
- *    confirmed it went out, see `markPublished()` — is never included in
+ *    confirmed it went out, see `markPostPublished()` — is never included in
  *    a chain sent to `post()` again, on any future run. The database
  *    backs this up independently: `posts_release_id_immutable` (Task 18)
  *    makes a second UPDATE that tried to touch a set `release_id`
@@ -111,7 +111,7 @@ use Illuminate\Support\Facades\RateLimiter;
  *    `ERROR` — `release_id` stays null, only `state` changes — between
  *    this method's unlocked pre-check and this transaction acquiring the
  *    lock. Without the `state` predicate, this method would still pick
- *    those `ERROR` rows up, call the provider, and `markPublished()`
+ *    those `ERROR` rows up, call the provider, and `markPostPublished()`
  *    would then attempt `ERROR -> PUBLISHED`, a transition
  *    `PostStateMachine` rejects — throwing INSIDE this transaction AFTER
  *    the network call already went out, rolling `release_id` back to
@@ -170,7 +170,7 @@ use Illuminate\Support\Facades\RateLimiter;
  * `->delay()`, so for anything scheduled more than an hour out it has
  * already expired by the time the job runs and guards nothing. The row
  * locks below, `queue_version`, and (since this batch) `publishChannel()`
- * and `finalizeGroupState()`'s in-transaction re-checks are what
+ * and `settle()`'s in-transaction re-checks are what
  * actually carry the guarantee in the common case; a dynamic
  * `uniqueFor()` is deferred.
  *
@@ -183,7 +183,7 @@ use Illuminate\Support\Facades\RateLimiter;
  * failure, keyed by the same 0-based index `publishChannel()` used when
  * it built the payload chain (i.e. relative to the channel's PENDING
  * segments for this call, not the channel's absolute `order`). Every
- * index present in `$published` is persisted via `markPublished()` —
+ * index present in `$published` is persisted via `markPostPublished()` —
  * `release_id`/`release_url`/`published_at` set, state moved to
  * `PUBLISHED` — exactly as if `post()` had returned it directly; every
  * index NOT present is left completely untouched (still `QUEUE`, no
@@ -200,7 +200,7 @@ use Illuminate\Support\Facades\RateLimiter;
  * recomputes `$pending` for this channel — now starting after the
  * newly-published prefix — and separately looks up the LAST published
  * segment in the whole chain by `order` (which, after a partial failure,
- * is exactly the last one `markPublished()` touched) to use as
+ * is exactly the last one `markPostPublished()` touched) to use as
  * `$anchor`. `PostPayloadDto::withReplyToReleaseId($anchor)` is applied
  * to the resumed chain's first element ONLY — see that DTO's docblock
  * for why a provider that cannot honour this must throw
@@ -213,7 +213,6 @@ class PublishService
 {
     public function __construct(
         private readonly ProviderRegistry $registry,
-        private readonly PostStateMachine $stateMachine,
         private readonly PostGroupLifecycle $lifecycle,
         private readonly MediaTempFiles $mediaFiles,
         private readonly RecurrenceService $recurrence,
@@ -271,10 +270,10 @@ class PublishService
             throw new PublishRetryNeededException($retryAfterSeconds);
         }
 
-        $outcome = $this->finalizeGroupState($group->id, $queueVersion);
+        $outcome = $this->lifecycle->settle($group->id, $queueVersion);
 
         // Block 4. The successor of a recurring post is created here and
-        // nowhere else — AFTER finalizeGroupState()'s transaction has
+        // nowhere else — AFTER settle()'s transaction has
         // committed, and only when this run is the one that actually
         // moved the group to PUBLISHED.
         //
@@ -304,114 +303,14 @@ class PublishService
     }
 
     /**
-     * The other half of "a job that fires against a stale schedule must
-     * never publish" (review finding 1): everything still `QUEUE` in
-     * `$postGroupId` moves to `ERROR` with `$reason`, and the group is
-     * finalized. Called from `PublishPostJob::failed()` once retries are
-     * exhausted (see that class) — without this, a group that never
-     * manages to publish sits at `QUEUE` forever with no error recorded
-     * anywhere, which the calendar/API render identically to "still
-     * scheduled, nothing wrong yet" (review finding 3).
-     *
-     * A no-op if the group is no longer `QUEUE` by the time this runs —
-     * e.g. a run that was mid-flight when the job's LAST attempt failed
-     * already published or errored some/all channels and finalized the
-     * group itself; nothing here should second-guess that outcome.
+     * Retries exhausted: everything still `QUEUE` in the group moves to
+     * `ERROR` with `$reason`, and the group is finalized. Called from
+     * `PublishPostJob::failed()`; the guard and the writes live in
+     * `PostGroupLifecycle::abandon()`.
      */
     public function abandonGroup(string $postGroupId, string $reason, ?int $queueVersion = null): void
     {
-        DB::transaction(function () use ($postGroupId, $reason, $queueVersion): void {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($group === null) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $postGroupId,
-                    'reason' => 'group_not_found',
-                ]);
-
-                return;
-            }
-
-            if ($group->state !== PostState::QUEUE) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_queued',
-                    'state' => $group->state->value,
-                ]);
-
-                return;
-            }
-
-            // Task 31: same reasoning as PostGroupLifecycle::claim()'s queue_version
-            // check below — a stale job's OWN retries running out must not
-            // be allowed to error a group that has since been superseded by
-            // a new schedule generation, even in the residual case where
-            // isDueNow()'s due-date grace (checked next) would not by
-            // itself have caught it.
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'stale_queue_version',
-                    'job_queue_version' => $queueVersion,
-                    'current_queue_version' => $group->queue_version,
-                ]);
-
-                return;
-            }
-
-            // Same due-date grace as PostGroupLifecycle::claim() — post-review
-            // fix (finding 2, second defect). Without this, a group
-            // dragged further into the future while a now-dead job for
-            // its OLD schedule is still mid-retry gets marked ERROR the
-            // moment that dead job exhausts and this method runs, even
-            // though nothing has actually gone wrong yet — it just isn't
-            // due. The redispatched job for the NEW date then finds
-            // ERROR (not QUEUE) and no-ops on the state check above,
-            // just like the original swallowed-redispatch bug: a post
-            // that should still publish, silently doesn't. See
-            // isDueNow()'s docblock for why this predicate must stay a
-            // single shared source of truth between the two callers.
-            if (! $this->lifecycle->isDueNow($group)) {
-                Log::info('publish.abandon_guard_skipped', [
-                    'post_group_id' => $group->id,
-                    'reason' => 'not_due_yet',
-                    'publish_date' => $group->publish_date?->toIso8601String(),
-                ]);
-
-                return;
-            }
-
-            // lockForUpdate() — post-review fix (finding 2, first
-            // defect). Without it, this SELECT could read a snapshot
-            // taken just BEFORE a concurrent, still-in-flight
-            // publishGroup() run commits a segment's release_id, and the
-            // subsequent markAllError() below (a plain by-primary-key
-            // UPDATE, no state predicate) would then overwrite that
-            // freshly-PUBLISHED row with ERROR — no duplicate publish,
-            // but the product would show a post that DID go out as
-            // failed. Locking here forces this query to wait for any
-            // such concurrent transaction to finish, then re-read the
-            // qualifying rows fresh — exactly the same reasoning
-            // publishChannel() already applies to its own pending-rows
-            // read.
-            $stillPending = Post::withoutGlobalScope('organization')
-                ->where('post_group_id', $group->id)
-                ->whereNull('release_id')
-                ->where('state', PostState::QUEUE->value)
-                ->lockForUpdate()
-                ->get();
-
-            $this->markAllError($stillPending, $reason);
-
-            // Already inside this transaction's group lock — finalizeGroupState()
-            // re-takes it (a no-op for a lock this transaction already holds)
-            // and re-checks the same two predicates this method just checked.
-            $this->finalizeGroupState($group->id, $queueVersion);
-        });
+        $this->lifecycle->abandon($postGroupId, $reason, $queueVersion);
     }
 
     /**
@@ -659,7 +558,7 @@ class PublishService
             // so the redispatch it triggers can never collide with
             // whatever the stuck generation's own job is doing, and the
             // stuck generation's next `queue_version` check (here, or in
-            // `finalizeGroupState()`) cleanly no-ops once it sees itself
+            // `settle()`) cleanly no-ops once it sees itself
             // superseded (proven safe by `PublishRaceTest`'s "two
             // genuinely concurrent `publishGroup()` runs" test). Any
             // OTHER new bump path that skips `guardEditable()`'s row
@@ -670,7 +569,7 @@ class PublishService
             //
             // Aborting is "no retry, no error": the superseding
             // generation has its own job, and this run has no standing to
-            // mark anything failed on its behalf. `finalizeGroupState()`
+            // mark anything failed on its behalf. `settle()`
             // applies the same two predicates and will likewise decline
             // to settle the group.
             /** @var PostGroup|null $group */
@@ -700,7 +599,7 @@ class PublishService
                 // No publish.attempt line here: with no Integration row
                 // there is no provider value to report, and this branch
                 // is unreachable in practice per the note above.
-                $this->markAllError($pending, 'The connected channel no longer exists.');
+                $this->lifecycle->markPostsError($pending, 'The connected channel no longer exists.');
 
                 return [false, null];
             }
@@ -715,7 +614,7 @@ class PublishService
             // failure of the run.
             if (! $this->registry->has($integration->provider_identifier)) {
                 $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'unknown_provider');
-                $this->markAllError($pending, 'This channel\'s network is no longer available on this installation.');
+                $this->lifecycle->markPostsError($pending, 'This channel\'s network is no longer available on this installation.');
 
                 return [false, null];
             }
@@ -772,7 +671,7 @@ class PublishService
                 $allResolved = true;
                 foreach ($pending as $index => $post) {
                     if (array_key_exists($index, $results)) {
-                        $this->markPublished($post, $results[$index]);
+                        $this->lifecycle->markPostPublished($post, $results[$index]);
                     } else {
                         $allResolved = false;
                     }
@@ -790,7 +689,7 @@ class PublishService
             } catch (ProviderPartialFailureException $e) {
                 foreach ($pending as $index => $post) {
                     if (isset($e->published[$index])) {
-                        $this->markPublished($post, $e->published[$index]);
+                        $this->lifecycle->markPostPublished($post, $e->published[$index]);
                     }
                 }
 
@@ -832,12 +731,12 @@ class PublishService
                 // object's contents — because it lands in `posts.error`
                 // and is returned by `PostResource`.
                 $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'media');
-                $this->markAllError($pending, $e->getMessage());
+                $this->lifecycle->markPostsError($pending, $e->getMessage());
 
                 return [false, null];
             } catch (ProviderPermanentException $e) {
                 $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'permanent');
-                $this->markAllError($pending, $e->getMessage());
+                $this->lifecycle->markPostsError($pending, $e->getMessage());
 
                 return [false, null];
             } catch (ProviderAuthException $e) {
@@ -845,7 +744,7 @@ class PublishService
                 $integration->save();
 
                 $outcome = $this->publishAttemptOutcome($integration, $postGroupId, $group, 'failed', 'auth');
-                $this->markAllError($pending, $e->getMessage());
+                $this->lifecycle->markPostsError($pending, $e->getMessage());
 
                 return [false, null];
             }
@@ -1115,104 +1014,5 @@ class PublishService
         }
 
         return $chain;
-    }
-
-    private function markPublished(Post $post, PostResultDto $result): void
-    {
-        $post->release_id = $result->releaseId;
-        $post->release_url = $result->releaseUrl;
-        $post->published_at = now();
-        $this->stateMachine->transition($post, PostState::PUBLISHED);
-    }
-
-    /**
-     * @param  Collection<int, Post>  $posts
-     */
-    private function markAllError(Collection $posts, string $message): void
-    {
-        foreach ($posts as $post) {
-            $post->error = $message;
-            $this->stateMachine->transition($post, PostState::ERROR);
-        }
-    }
-
-    /**
-     * Reached only when no channel needs a retry — every post in the
-     * group has settled into either `PUBLISHED` or `ERROR` for this run.
-     * PUBLISHED iff every single one of them is; otherwise ERROR (brief
-     * point 9).
-     *
-     * Takes an ID and re-reads the row under `lockForUpdate()` rather
-     * than accepting the caller's in-memory `PostGroup` — final-review
-     * fix, Critical 1, reproduced with two forked processes against real
-     * Postgres (`PublishRaceTest`). `publishGroup()` locks the group in
-     * `PostGroupLifecycle::claim()` and COMMITS that lock immediately (the
-     * per-channel commit boundary — see the class docblock), so by the
-     * time this runs, at the very end of a run that spans several
-     * provider calls, the caller's instance can be arbitrarily stale.
-     * `PostStateMachine::transition()` validates only the IN-MEMORY
-     * `$from` and then issues a blind `save()` (UPDATE by primary key),
-     * so this method used to overwrite whatever a concurrent writer had
-     * committed in between. The observed outcome: an edit landing
-     * mid-run (`PostGroupService::update()`, allowed through because no
-     * channel had committed a `release_id` yet) recreated the group's
-     * posts as `QUEUE` at `queue_version` 2 — and then THIS method,
-     * still holding the version-1 instance, stamped the group `ERROR`.
-     * The version-2 job then found `ERROR != QUEUE` and no-opped, and
-     * nothing recovers that: `MissedPostsService::redispatchOrphaned()`
-     * scans `state = QUEUE` only. The customer's edited post is lost,
-     * permanently and silently.
-     *
-     * Both predicates are load-bearing and both are re-checked HERE,
-     * under the lock, not by the caller beforehand:
-     *
-     *  - `state === QUEUE`: another run (or `abandonGroup()`) may already
-     *    have settled this group. Nothing may transition it out of a
-     *    terminal state, and `PostStateMachine` would throw on
-     *    `PUBLISHED -> *` anyway — after this run's own writes, from
-     *    inside the caller's transaction in `abandonGroup()`'s case.
-     *  - `queue_version === $queueVersion`: the group has since been
-     *    superseded by a NEW schedule generation, which owns the group's
-     *    final state now. This run's verdict is about rows that generation
-     *    has already replaced or rescheduled, and must be discarded
-     *    entirely. `null` means "no opinion" (see `publishGroup()`), and
-     *    then only the state check applies.
-     *
-     * Lock ORDER is preserved: group first, posts second — the same order
-     * `PostGroupService::lockGroup()` -> `guardEditable()` and
-     * `abandonGroup()` take, so this introduces no new deadlock cycle.
-     * `abandonGroup()` calls this from INSIDE its own transaction, which
-     * already holds this exact row lock; re-taking a lock the same
-     * transaction holds is free, and the nested `DB::transaction()` is a
-     * savepoint, not a second top-level transaction.
-     */
-    private function finalizeGroupState(string $postGroupId, ?int $queueVersion): ?PostState
-    {
-        return DB::transaction(function () use ($postGroupId, $queueVersion): ?PostState {
-            /** @var PostGroup|null $group */
-            $group = PostGroup::withoutGlobalScope('organization')
-                ->whereKey($postGroupId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($group === null || $group->state !== PostState::QUEUE) {
-                return null;
-            }
-
-            if ($queueVersion !== null && $group->queue_version !== $queueVersion) {
-                return null;
-            }
-
-            $hasUnpublished = Post::withoutGlobalScope('organization')
-                ->where('post_group_id', $group->id)
-                ->where('state', '!=', PostState::PUBLISHED->value)
-                ->exists();
-
-            $outcome = $hasUnpublished ? PostState::ERROR : PostState::PUBLISHED;
-
-            $this->stateMachine->transition($group, $outcome);
-
-            return $outcome;
-        });
     }
 }

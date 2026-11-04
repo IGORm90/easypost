@@ -2,8 +2,12 @@
 
 use App\Enums\PostState;
 use App\Models\Organization;
+use App\Models\Post;
+use App\Services\Posts\Exceptions\InvalidStateTransition;
 use App\Services\Posts\PostGroupLifecycle;
+use App\Social\Dto\PostResultDto;
 use App\Support\OrganizationContext;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Str;
 
 /*
@@ -134,4 +138,150 @@ it('says a group is due up to 5 seconds ahead, and not beyond', function () {
 
     $group->publish_date = now()->addSeconds(6);
     expect(lifecycle()->isDueNow($group))->toBeFalse();
+});
+
+// --- settle(): the group's verdict, decided under the lock -------------------
+
+it('settles a QUEUE group to PUBLISHED when every post is PUBLISHED, and says so', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [, $posts] = publishableChannel($org, $group, ['a', 'b']);
+    foreach ($posts as $post) {
+        $post->update(['state' => PostState::PUBLISHED, 'release_id' => 'r']);
+    }
+
+    expect(lifecycle()->settle($group->id, null))->toBe(PostState::PUBLISHED);
+
+    expect($group->fresh()->state)->toBe(PostState::PUBLISHED);
+});
+
+it('settles a QUEUE group to ERROR when any post is not PUBLISHED', function (PostState $other) {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [, $posts] = publishableChannel($org, $group, ['a', 'b']);
+    $posts[0]->update(['state' => PostState::PUBLISHED, 'release_id' => 'r']);
+    $posts[1]->update(['state' => $other]);
+
+    expect(lifecycle()->settle($group->id, null))->toBe(PostState::ERROR);
+
+    expect($group->fresh()->state)->toBe(PostState::ERROR);
+})->with([
+    'error' => PostState::ERROR,
+    'still queued' => PostState::QUEUE,
+]);
+
+it('leaves a group that is not QUEUE alone, and never moves a PUBLISHED group', function (PostState $state) {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    $group->update(['state' => $state]);
+    publishableChannel($org, $group, ['a']);
+
+    expect(lifecycle()->settle($group->id, null))->toBeNull();
+
+    expect($group->fresh()->state)->toBe($state);
+})->with([
+    'published' => PostState::PUBLISHED,
+    'error' => PostState::ERROR,
+    'scheduled' => PostState::SCHEDULED,
+]);
+
+it('discards its verdict when the queue_version has moved on', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    $group->update(['queue_version' => 2]);
+    publishableChannel($org, $group, ['a']);
+
+    expect(lifecycle()->settle($group->id, 1))->toBeNull();
+
+    expect($group->fresh()->state)->toBe(PostState::QUEUE);
+});
+
+it('settles nothing for a group that does not exist', function () {
+    expect(lifecycle()->settle((string) Str::ulid(), null))->toBeNull();
+});
+
+// --- abandon(): retries exhausted --------------------------------------------
+
+it('abandons a QUEUE group: pending posts get the reason and the group goes to ERROR, published posts are untouched', function () {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [, $posts] = publishableChannel($org, $group, ['out', 'pending']);
+    $posts[0]->update(['state' => PostState::PUBLISHED, 'release_id' => 'remote-1']);
+
+    lifecycle()->abandon($group->id, 'retries exhausted', null);
+
+    expect($posts[0]->fresh()->state)->toBe(PostState::PUBLISHED)
+        ->and($posts[0]->fresh()->error)->toBeNull()
+        ->and($posts[1]->fresh()->state)->toBe(PostState::ERROR)
+        ->and($posts[1]->fresh()->error)->toBe('retries exhausted')
+        ->and($group->fresh()->state)->toBe(PostState::ERROR);
+});
+
+it('abandons nothing when the group is not QUEUE, the version is stale, or the group is not due yet', function (string $case) {
+    $org = Organization::factory()->create();
+    $group = queuedGroup($org);
+    [, $posts] = publishableChannel($org, $group, ['pending']);
+    $version = null;
+
+    if ($case === 'published') {
+        $group->update(['state' => PostState::PUBLISHED]);
+    } elseif ($case === 'stale version') {
+        $group->update(['queue_version' => 3]);
+        $version = 2;
+    } else {
+        $group->update(['publish_date' => now()->addHours(8)]);
+    }
+
+    lifecycle()->abandon($group->id, 'retries exhausted', $version);
+
+    expect($posts[0]->fresh()->state)->toBe(PostState::QUEUE)
+        ->and($posts[0]->fresh()->error)->toBeNull();
+
+    $expected = $case === 'published' ? PostState::PUBLISHED : PostState::QUEUE;
+    expect($group->fresh()->state)->toBe($expected);
+})->with(['published', 'stale version', 'not due yet']);
+
+it('abandons nothing for a group that does not exist', function () {
+    lifecycle()->abandon((string) Str::ulid(), 'retries exhausted', null);
+
+    expect(Post::count())->toBe(0);
+});
+
+// --- the post-level writers --------------------------------------------------
+
+it('marks a post published, recording where it went and when', function () {
+    $this->freezeTime();
+    $org = Organization::factory()->create();
+    [, $posts] = publishableChannel($org, queuedGroup($org));
+
+    lifecycle()->markPostPublished($posts[0], new PostResultDto('remote-9', 'https://example.test/p/9'));
+
+    $post = $posts[0]->fresh();
+    expect($post->state)->toBe(PostState::PUBLISHED)
+        ->and($post->release_id)->toBe('remote-9')
+        ->and($post->release_url)->toBe('https://example.test/p/9')
+        ->and($post->published_at?->timestamp)->toBe(now()->timestamp);
+});
+
+it('marks every given post as errored with the message', function () {
+    $org = Organization::factory()->create();
+    [, $posts] = publishableChannel($org, queuedGroup($org), ['a', 'b']);
+
+    lifecycle()->markPostsError(new EloquentCollection($posts), 'the channel is gone');
+
+    foreach ($posts as $post) {
+        expect($post->fresh()->state)->toBe(PostState::ERROR)
+            ->and($post->fresh()->error)->toBe('the channel is gone');
+    }
+});
+
+it('refuses to move a PUBLISHED post, which is terminal', function () {
+    $org = Organization::factory()->create();
+    [, $posts] = publishableChannel($org, queuedGroup($org));
+    $posts[0]->update(['state' => PostState::PUBLISHED, 'release_id' => 'remote-1']);
+
+    expect(fn () => lifecycle()->markPostsError(new EloquentCollection([$posts[0]]), 'x'))
+        ->toThrow(InvalidStateTransition::class);
+
+    expect($posts[0]->fresh()->state)->toBe(PostState::PUBLISHED);
 });
