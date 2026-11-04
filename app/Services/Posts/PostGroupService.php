@@ -85,6 +85,7 @@ class PostGroupService
 {
     public function __construct(
         private readonly PostStateMachine $stateMachine,
+        private readonly PostGroupLifecycle $lifecycle,
         private readonly PlanLimitService $planLimits,
     ) {}
 
@@ -149,7 +150,7 @@ class PostGroupService
             // QUEUE for an immediate "publish now"; a `SCHEDULED` group
             // has its queue_version read fresh, whatever it is, at
             // whatever future instant `DueDispatchService` claims it).
-            $this->transitionToward($group, $targetState);
+            $this->lifecycle->transitionToward($group, $targetState);
 
             if ($targetState === PostState::QUEUE) {
                 $group->queue_version = 1;
@@ -180,7 +181,7 @@ class PostGroupService
             // and before anything reads $group->state/queue_version for a
             // decision this method is about to persist. See lockGroup()'s
             // docblock (Task 31 review findings 1 and 4).
-            $group = $this->lockGroup($group);
+            $group = $this->lifecycle->lockGroup($group);
             $this->guardEditable($group);
             $this->resolveIntegrations($data['posts']);
 
@@ -199,10 +200,10 @@ class PostGroupService
             // this can only ever rewrite the rule of an occurrence that
             // has not published yet.
             $group->fill($this->recurrenceAttributes($data));
-            $this->bumpQueueVersionIfNotDraft($group, $targetState);
+            $this->lifecycle->bumpQueueVersionIfNotDraft($group, $targetState);
             $group->save();
 
-            $this->transitionToward($group, $targetState);
+            $this->lifecycle->transitionToward($group, $targetState);
 
             $this->replaceChains($group, $data['posts'], $targetState);
 
@@ -452,13 +453,13 @@ class PostGroupService
     public function updateDate(PostGroup $group, CarbonInterface $publishDate): PostGroup
     {
         return DB::transaction(function () use ($group, $publishDate) {
-            $group = $this->lockGroup($group);
+            $group = $this->lifecycle->lockGroup($group);
             $this->guardEditable($group);
 
             $group->publish_date = $publishDate;
 
             if ($group->state === PostState::QUEUE) {
-                $this->bumpQueueVersionIfNotDraft($group, PostState::SCHEDULED);
+                $this->lifecycle->bumpQueueVersionIfNotDraft($group, PostState::SCHEDULED);
                 $group->save();
                 $this->stateMachine->transition($group, PostState::SCHEDULED);
 
@@ -533,37 +534,11 @@ class PostGroupService
      */
     public function retry(PostGroup $group): PostGroup
     {
-        $group = DB::transaction(function () use ($group) {
-            $group = $this->lockGroup($group);
+        $receipt = $this->lifecycle->edit($group, Intent::retry());
 
-            if ($group->state !== PostState::ERROR) {
-                throw ValidationException::withMessages([
-                    'state' => ["Only a failed post can be retried (current state: {$group->state->value})."],
-                ]);
-            }
+        $this->claimAndDispatch($receipt->group, forceRedispatch: $receipt->forced);
 
-            $group->publish_date = Carbon::now();
-            $group->error = null;
-            $this->bumpQueueVersionIfNotDraft($group, PostState::QUEUE);
-            $group->save();
-
-            $this->transitionToward($group, PostState::QUEUE);
-
-            $group->posts()
-                ->where('state', PostState::ERROR->value)
-                ->whereNull('release_id')
-                ->get()
-                ->each(function (Post $post): void {
-                    $post->error = null;
-                    $this->transitionToward($post, PostState::QUEUE);
-                });
-
-            return $group->fresh(['posts.media', 'tags']);
-        });
-
-        $this->claimAndDispatch($group, forceRedispatch: true);
-
-        return $group;
+        return $receipt->group;
     }
 
     /**
@@ -582,7 +557,7 @@ class PostGroupService
     public function delete(PostGroup $group): void
     {
         DB::transaction(function () use ($group): void {
-            $group = $this->lockGroup($group);
+            $group = $this->lifecycle->lockGroup($group);
             $this->guardEditable($group);
 
             $group->delete();
@@ -778,29 +753,6 @@ class PostGroupService
     }
 
     /**
-     * Transitions `$model` toward `$target`, inserting the mandatory
-     * `SCHEDULED` hop first when jumping straight from `DRAFT`/`ERROR`
-     * to `QUEUE` — `PostStateMachine::TRANSITIONS` has no direct
-     * `DRAFT->QUEUE` or `ERROR->QUEUE` entry (every claim durably passes
-     * through `SCHEDULED`, even one this class immediately claims itself
-     * for `type=now`/retry). A no-op when `$model` is already at
-     * `$target`, so every call site can call this unconditionally rather
-     * than repeating `if ($target !== $model->state)` at each one.
-     */
-    private function transitionToward(Post|PostGroup $model, PostState $target): void
-    {
-        if ($model->state === $target) {
-            return;
-        }
-
-        if ($target === PostState::QUEUE && $model->state !== PostState::SCHEDULED) {
-            $this->stateMachine->transition($model, PostState::SCHEDULED);
-        }
-
-        $this->stateMachine->transition($model, $target);
-    }
-
-    /**
      * Dispatches `PublishPostJob` for `$group` iff it just entered
      * `QUEUE` — a no-op for `DRAFT` and, since the durable-scheduling
      * rewrite, for `SCHEDULED` too: a `type=schedule` save never reaches
@@ -912,117 +864,6 @@ class PostGroupService
         }
 
         PublishPostJob::dispatch($group->id, $group->queue_version);
-    }
-
-    /**
-     * Re-reads and locks `$group`'s row via `lockForUpdate()`. MUST be
-     * called FIRST inside the caller's own transaction — before
-     * `guardEditable()`'s post-row lock, and before reading
-     * `$group->state`/`$group->queue_version` for any decision this
-     * method is about to persist. Two independent reasons, both from
-     * Task 31 review:
-     *
-     *  - Authoritative `queue_version` (finding 1, CRITICAL). An earlier
-     *    revision bumped `queue_version` via Eloquent's own `increment()`,
-     *    called AFTER the caller's transaction had already committed —
-     *    the docblock there claimed `increment()` "refreshes the
-     *    in-memory attribute to match" the row's real committed value;
-     *    that was simply wrong. `increment()` issues an atomic
-     *    `UPDATE ... SET queue_version = queue_version + 1` in the
-     *    database, but sets its OWN in-memory attribute to (whatever
-     *    stale value this PHP object already held) + 1 — it never
-     *    re-reads the row. Two concurrent reschedules of the same group
-     *    (A and B both load `queue_version = 5`; B commits date T2,
-     *    increments — DB 6, its own memory 6 — dispatches v6; A commits
-     *    date T1 afterwards, increments from ITS stale in-memory 5 — DB
-     *    now 7, but A's memory is only 6 — dispatches v6) leaves the row
-     *    at version 7 while BOTH dispatched jobs carry v6: neither
-     *    matches, neither ever publishes, and because a version mismatch
-     *    is a silent no-op (never a failure), nothing reaches
-     *    `failed_jobs` either — the group sits at `QUEUE` forever. This
-     *    was a regression: before Task 31, both jobs were live and each
-     *    re-read `publish_date` under the lock, so whichever one matched
-     *    the current schedule published; the version-based replacement
-     *    must be at least as robust. Locking the row here, then bumping
-     *    the LOCKED instance's own already-current in-memory value by a
-     *    plain `+ 1` (see `bumpQueueVersionIfNotDraft()`) and saving it
-     *    together with `publish_date` in the SAME transaction, restores
-     *    that: the lock forces a concurrent caller to wait until this
-     *    transaction commits, then re-read the row fresh, so the
-     *    LAST committer's write — date and version together — is always
-     *    what every subsequent reader (including the next reschedule,
-     *    and `PostGroupLifecycle::claim()`) sees, and no
-     *    dispatched version is ever computed from a value another
-     *    transaction has since moved past. Covered by
-     *    `RescheduleTest`'s two-concurrent-`updateDate()` fork test.
-     *  - Lock ORDER (finding 4). `PublishService::abandonGroup()` locks
-     *    the group row, then post rows, inside one transaction. Every
-     *    caller in this class now does the same — this method first,
-     *    `guardEditable()`'s post-row lock second — because the reverse
-     *    order (an earlier revision's post-lock-then-unlocked-group-read)
-     *    is a deadlock cycle waiting to happen the moment the two run
-     *    concurrently against the same group: Postgres detects it and
-     *    aborts one side, a retryable job on one hand, a 500 on a
-     *    calendar drag on the other.
-     */
-    private function lockGroup(PostGroup $group): PostGroup
-    {
-        /** @var PostGroup $locked */
-        $locked = PostGroup::query()->whereKey($group->id)->lockForUpdate()->firstOrFail();
-
-        return $locked;
-    }
-
-    /**
-     * Bumps `$group->queue_version` by exactly 1, in memory, on the
-     * object the caller already holds locked via `lockGroup()` earlier in
-     * the SAME transaction. A plain PHP `+ 1` — never `increment()`, see
-     * `lockGroup()`'s docblock for why that was the bug — is exactly
-     * correct here specifically BECAUSE `$group` was read under
-     * `lockForUpdate()`: no other transaction can have changed this row
-     * since (the lock forces it to wait), so this object's current
-     * in-memory value IS the row's authoritative committed value. The
-     * caller's own `save()` immediately after (alongside `publish_date`)
-     * persists both together, atomically, in the order they belong —
-     * never as a separate write issued after commit, which is what let
-     * the date and the version drift out of sync under a race.
-     *
-     * A no-op unless `$resultingState` is `SCHEDULED` or `QUEUE`: nothing
-     * about a `DRAFT` write needs a fresh dispatch generation, since
-     * nothing is about to be dispatched for it. Durable-scheduling
-     * rewrite (widened from "unless QUEUE" alone): a `type=schedule` edit
-     * of an already-`QUEUE` group now lands on `SCHEDULED`, not `QUEUE`
-     * — see `updateDate()`/`update()` — so "re-entering the pipeline"
-     * has to cover both resulting states, or a schedule-edit-away-from-
-     * ERROR would skip the `notified_at` reset below exactly the way
-     * Task 32 review finding 1 originally found for QUEUE. Bumping the
-     * version on a `SCHEDULED` result is harmless even where it isn't
-     * strictly needed (`DueDispatchService` reads whatever value is
-     * current at claim time regardless): it still correctly invalidates
-     * any job dispatched under an OLDER generation of this row.
-     *
-     * Task 32 review finding 1 (CRITICAL): also clears `notified_at`
-     * here, in the SAME place `queue_version` is bumped — every path
-     * that re-enters the publish pipeline (a fresh dispatch generation)
-     * goes through this one method, `retry()` included. Without this, a
-     * group `MissedPostsService::notifyFailed()` already emailed once
-     * stays permanently un-notifiable: the customer retries, it fails
-     * again, `notifyFailed()`'s `whereNull('notified_at')` filter skips
-     * it forever, and — because `retry()` also clears `error` on the way
-     * back into the pipeline — `post_groups.error` never gets rewritten
-     * either (`buildErrorSummary()` is gated on the exact same
-     * never-reached notify pass), leaving `GET /api/posts/errors` and
-     * the calendar rendering a genuinely re-failed post with no reason
-     * at all. Resetting it here, alongside the version bump, is what
-     * makes "this is a fresh generation" apply to the notify flag too,
-     * not just to `PublishPostJob`'s own staleness check.
-     */
-    private function bumpQueueVersionIfNotDraft(PostGroup $group, PostState $resultingState): void
-    {
-        if ($resultingState !== PostState::DRAFT) {
-            $group->queue_version = $group->queue_version + 1;
-            $group->notified_at = null;
-        }
     }
 
     /**
