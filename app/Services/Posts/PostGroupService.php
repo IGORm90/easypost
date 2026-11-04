@@ -145,10 +145,13 @@ class PostGroupService
             $data['type'],
             $this->resolvePublishDate($data['type'], $data['publish_date'] ?? null, $group->id),
             $this->recurrenceAttributes($data),
-            check: fn () => $this->resolveIntegrations($data['posts']),
         );
 
         $receipt = $this->lifecycle->edit($group, $intent, function (PostGroup $locked, PostState $target) use ($data): void {
+            // Backstop only: the request has already refused an integration this
+            // organization does not own (a 422, same as a missing id).
+            $this->resolveIntegrations($data['posts']);
+
             // Full replace: every existing row is dropped first. Safe only
             // because guardEditable() already proved none of them carries a
             // release_id — see this class's docblock.

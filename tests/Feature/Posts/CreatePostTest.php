@@ -9,6 +9,7 @@ use App\Models\Post;
 use App\Models\PostGroup;
 use App\Models\Tag;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 
 /*
  * Task 20: POST /api/posts — one post_group per request, one Post row
@@ -111,20 +112,26 @@ it('rejects a post that violates provider limits', function () {
     expect(PostGroup::count())->toBe(0)->and(Post::count())->toBe(0);
 });
 
-it("forbids scheduling into another organization's integration", function () {
+it("refuses scheduling into another organization's integration exactly like one that does not exist", function () {
     $mine = Organization::factory()->create();
     actingAsMember($mine);
     $other = Organization::factory()->create();
     $foreign = Integration::factory()->for($other)->create(['provider_identifier' => 'fake']);
 
-    $response = $this->postJson('/api/posts', [
+    $payload = fn (string $integrationId): array => [
         'type' => 'draft',
-        'posts' => [
-            ['integration_id' => $foreign->id, 'value' => [['content' => 'A']]],
-        ],
-    ]);
+        'posts' => [['integration_id' => $integrationId, 'value' => [['content' => 'A']]]],
+    ];
 
-    $response->assertForbidden();
+    $foreignResponse = $this->postJson('/api/posts', $payload($foreign->id));
+    $missingResponse = $this->postJson('/api/posts', $payload((string) Str::ulid()));
+
+    // 422 for both, with the same error: the status must not tell a caller whether an
+    // integration id exists in some other organization.
+    $foreignResponse->assertStatus(422)->assertJsonValidationErrors(['posts.0.integration_id']);
+    $missingResponse->assertStatus(422)->assertJsonValidationErrors(['posts.0.integration_id']);
+    expect($foreignResponse->json('errors'))->toBe($missingResponse->json('errors'))
+        ->and($foreignResponse->json('message'))->toBe($missingResponse->json('message'));
     expect(PostGroup::count())->toBe(0)->and(Post::count())->toBe(0);
 });
 

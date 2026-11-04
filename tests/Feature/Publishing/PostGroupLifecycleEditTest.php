@@ -9,7 +9,6 @@ use App\Models\User;
 use App\Services\Posts\Intent;
 use App\Services\Posts\PostGroupLifecycle;
 use App\Support\OrganizationContext;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -319,23 +318,6 @@ it('rolls everything back when the body throws', function () {
     $fresh = $group->fresh();
     expect($fresh->state)->toBe(PostState::DRAFT)
         ->and($fresh->queue_version)->toBe(0);
-});
-
-it('runs the caller\'s check after the editability guard and before the state decision', function () {
-    $check = fn () => throw new AuthorizationException;
-
-    // Check before the "cannot go back to draft" rule: the caller gets the check's error.
-    $scheduled = groupIn(PostState::SCHEDULED);
-    expect(fn () => app(PostGroupLifecycle::class)->edit($scheduled, Intent::forType('draft', null, noRepeat(), $check)))
-        ->toThrow(AuthorizationException::class);
-
-    // Guard before the check: a published group answers 409 and the check never runs.
-    $ran = false;
-    $published = groupIn(PostState::PUBLISHED);
-    expect(fn () => app(PostGroupLifecycle::class)->edit($published, Intent::forType('draft', null, noRepeat(), function () use (&$ran): void {
-        $ran = true;
-    })))->toThrow(ConflictHttpException::class);
-    expect($ran)->toBeFalse();
 });
 
 it('does not see another organization\'s group when writing', function () {

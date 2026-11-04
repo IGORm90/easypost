@@ -2,6 +2,7 @@
 
 use App\Models\Integration;
 use App\Models\Organization;
+use Illuminate\Support\Str;
 
 /*
  * Task 21: GET /api/posts/find-slot. Full HTTP-level coverage of the
@@ -21,13 +22,18 @@ it('returns a publish_date for a channel with no configured slots', function () 
     expect($response->json('publish_date'))->not->toBeNull();
 });
 
-it('rejects an integration_id belonging to another organization', function () {
+it('refuses an integration_id belonging to another organization exactly like one that does not exist', function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $otherOrg = Organization::factory()->create();
     $foreignIntegration = Integration::factory()->for($otherOrg)->create();
 
-    $response = $this->getJson("/api/posts/find-slot?integration_id={$foreignIntegration->id}");
+    $foreignResponse = $this->getJson("/api/posts/find-slot?integration_id={$foreignIntegration->id}");
+    $missingResponse = $this->getJson('/api/posts/find-slot?integration_id='.Str::ulid());
 
-    $response->assertForbidden();
+    // 422 for both, with the same error: the status must not tell a caller whether an
+    // integration id exists in some other organization.
+    $foreignResponse->assertStatus(422)->assertJsonValidationErrors(['integration_id']);
+    $missingResponse->assertStatus(422)->assertJsonValidationErrors(['integration_id']);
+    expect($foreignResponse->json('errors'))->toBe($missingResponse->json('errors'));
 });

@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 
 /*
  * Task 20: GET/PUT/PATCH .../date on a post group. PUT is a full chain
@@ -127,7 +128,7 @@ it('refuses to move an already-scheduled group back to draft', function () {
     expect($group->fresh()->state)->toBe(PostState::SCHEDULED);
 });
 
-it("forbids PUT scheduling into another organization's integration", function () {
+it("refuses a PUT into another organization's integration exactly like one that does not exist", function () {
     $org = Organization::factory()->create();
     actingAsMember($org);
     $integration = Integration::factory()->for($org)->create(['provider_identifier' => 'fake']);
@@ -136,12 +137,17 @@ it("forbids PUT scheduling into another organization's integration", function ()
     $other = Organization::factory()->create();
     $foreign = Integration::factory()->for($other)->create(['provider_identifier' => 'fake']);
 
-    $response = $this->putJson("/api/posts/{$group->id}", [
+    $payload = fn (string $integrationId): array => [
         'type' => 'draft',
-        'posts' => [['integration_id' => $foreign->id, 'value' => [['content' => 'A']]]],
-    ]);
+        'posts' => [['integration_id' => $integrationId, 'value' => [['content' => 'A']]]],
+    ];
 
-    $response->assertForbidden();
+    $foreignResponse = $this->putJson("/api/posts/{$group->id}", $payload($foreign->id));
+    $missingResponse = $this->putJson("/api/posts/{$group->id}", $payload((string) Str::ulid()));
+
+    $foreignResponse->assertStatus(422)->assertJsonValidationErrors(['posts.0.integration_id']);
+    $missingResponse->assertStatus(422)->assertJsonValidationErrors(['posts.0.integration_id']);
+    expect($foreignResponse->json('errors'))->toBe($missingResponse->json('errors'));
     expect(Post::sole()->content)->toBe('original');
 });
 

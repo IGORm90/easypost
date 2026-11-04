@@ -50,9 +50,9 @@ class SlotFinderService
     {
         // Org-scoped via BelongsToOrganization's global scope, same
         // pattern as PostGroupService::resolveIntegrations(): a
-        // cross-tenant id resolves to null here even though it exists,
-        // and is rejected with 403, never 404/422 — the caller learns
-        // nothing about whether the id exists at all.
+        // cross-tenant id resolves to null here even though it exists. FindSlotRequest
+        // already refuses it (a 422 identical to a missing id), so this 403 is a
+        // backstop for a caller that does not go through that request.
         $integration = Integration::query()->find($integrationId);
 
         if ($integration === null) {

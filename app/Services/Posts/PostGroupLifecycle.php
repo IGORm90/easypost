@@ -473,7 +473,7 @@ class PostGroupLifecycle
 
     /**
      * A full-replace save (`PUT /api/posts/{group}`): lock, editability guard,
-     * the caller's check, then the target state, the new date and recurrence
+     * then the target state, the new date and recurrence
      * rule, the version bump, the transition, and finally `$body` — where the
      * caller drops and rebuilds the chains and tags, with the group already in
      * its new state so the new rows can be created in it. All in one
@@ -493,10 +493,6 @@ class PostGroupLifecycle
             // method is about to persist. See lockGroup()'s docblock.
             $group = $this->lockGroup($group);
             $this->guardEditable($group);
-
-            if ($intent->check !== null) {
-                ($intent->check)();
-            }
 
             $target = $this->targetStateFor($intent->kind, $group->state);
 

@@ -36,19 +36,18 @@ use Illuminate\Validation\Validator;
  *    malformed chain (e.g. a missing `value` array) would either crash
  *    or produce meaningless errors.
  *
- * What this trait deliberately does NOT check: whether a referenced
- * `integration_id` belongs to the CURRENT organization. `exists:
- * integrations,id` below matches the raw `integrations` table
- * (bypassing BelongsToOrganization's global scope, same as every other
- * Laravel `exists` rule in this codebase), so it only rules out
- * `integration_id`s that don't exist at all — anywhere, any tenant. A
- * value that exists but belongs to a different organization sails
- * through this class's rules() untouched and is instead rejected with
- * 403 by `PostGroupService` (`resolveIntegrations()`), never with 422 —
- * see the task-20 brief: "Cross-tenant integrations are 403, not 422."
- * `validateChannelLimits()` below mirrors that split: it silently skips
- * any `integration_id` it cannot resolve within the current tenant,
- * leaving that case entirely to the service.
+ * Integration ownership IS checked here, with the same scoped
+ * `Rule::exists(...)->where('organization_id', ...)` the other ids use.
+ * An `integration_id` that does not exist and one that belongs to ANOTHER
+ * organization are refused identically — a 422 on `posts.N.integration_id`
+ * with the same message — so the response never tells a caller whether an
+ * integration id exists in some other organization. (This used to be an
+ * unscoped rule plus a 403 from `PostGroupService::resolveIntegrations()`,
+ * which did exactly that: a missing id was a 422 and a foreign one a 403.)
+ * `resolveIntegrations()` stays as a backstop for a caller that does not go
+ * through this request. `validateChannelLimits()` below silently skips any
+ * `integration_id` it cannot resolve within the current tenant, since this
+ * rule has already refused it.
  *
  * `media_ids` (Task 28): shape (`ulid`) AND existence/ownership are both
  * checked right here, same pattern StoreSetRequest uses for
@@ -97,7 +96,7 @@ trait ValidatesPostChains
             // chain at order 0 and collide on
             // `posts_chain_order_unique`, which must surface as a clean
             // 422 here, not a raw QueryException from PostGroupService.
-            'posts.*.integration_id' => ['required', 'string', 'distinct', Rule::exists('integrations', 'id')->whereNull('deleted_at')],
+            'posts.*.integration_id' => ['required', 'string', 'distinct', Rule::exists('integrations', 'id')->where('organization_id', OrganizationContext::id())->whereNull('deleted_at')],
             'posts.*.settings' => ['sometimes', 'nullable', 'array'],
             'posts.*.value' => ['required', 'array', 'min:1'],
             'posts.*.value.*.content' => ['required', 'string'],

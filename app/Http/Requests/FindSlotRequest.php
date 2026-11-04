@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Support\OrganizationContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -25,7 +26,7 @@ class FindSlotRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'integration_id' => ['required', 'string', Rule::exists('integrations', 'id')->whereNull('deleted_at')],
+            'integration_id' => ['required', 'string', Rule::exists('integrations', 'id')->where('organization_id', OrganizationContext::id())->whereNull('deleted_at')],
         ];
     }
 }
