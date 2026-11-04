@@ -11,4 +11,5 @@ namespace App\Services\Posts;
 enum IntentKind
 {
     case Retry;
+    case Reschedule;
 }

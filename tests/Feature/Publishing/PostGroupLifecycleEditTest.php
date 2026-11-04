@@ -8,6 +8,7 @@ use App\Services\Posts\PostGroupLifecycle;
 use App\Support\OrganizationContext;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /*
  * The write side of PostGroupLifecycle: edit($group, Intent) for the
@@ -118,5 +119,90 @@ it('does not see another organization\'s group', function () {
     $other = failedGroup(Organization::factory()->create());
 
     expect(fn () => app(PostGroupLifecycle::class)->edit($other, Intent::retry()))
+        ->toThrow(ModelNotFoundException::class);
+});
+
+// --- Intent::reschedule() -----------------------------------------------------
+
+function groupIn(PostState $state, int $version = 3): PostGroup
+{
+    return PostGroup::factory()->create([
+        'organization_id' => currentOrg()->id,
+        'state' => $state,
+        'queue_version' => $version,
+        'notified_at' => now()->subHour(),
+        'publish_date' => now()->addDay(),
+    ]);
+}
+
+it('moves the date of a DRAFT or SCHEDULED group and nothing else: no version bump, no dispatch', function (PostState $state) {
+    $this->freezeTime();
+    $group = groupIn($state);
+    $newDate = now()->addDays(3);
+
+    $receipt = app(PostGroupLifecycle::class)->edit($group, Intent::reschedule($newDate));
+
+    $fresh = $group->fresh();
+    expect($fresh->publish_date?->timestamp)->toBe($newDate->timestamp)
+        ->and($fresh->state)->toBe($state)
+        ->and($fresh->queue_version)->toBe(3)
+        ->and($fresh->notified_at)->not->toBeNull()
+        ->and($receipt->group->id)->toBe($group->id)
+        ->and($receipt->forced)->toBeFalse();
+})->with([
+    'draft' => PostState::DRAFT,
+    'scheduled' => PostState::SCHEDULED,
+]);
+
+it('un-claims a QUEUE group back to SCHEDULED, bumping the version once so the job already dispatched goes stale', function () {
+    $this->freezeTime();
+    $group = groupIn(PostState::QUEUE);
+    [, $posts] = publishableChannel(currentOrg(), $group, ['a', 'b']);
+    $newDate = now()->addHours(2);
+
+    $receipt = app(PostGroupLifecycle::class)->edit($group, Intent::reschedule($newDate));
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::SCHEDULED)
+        ->and($fresh->queue_version)->toBe(4)
+        ->and($fresh->notified_at)->toBeNull()
+        ->and($fresh->publish_date?->timestamp)->toBe($newDate->timestamp)
+        ->and($posts[0]->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($posts[1]->fresh()->state)->toBe(PostState::SCHEDULED)
+        ->and($receipt->queueVersion)->toBe(4);
+});
+
+it('refuses to reschedule a group that has a segment on the network, changing nothing', function () {
+    $group = groupIn(PostState::QUEUE);
+    [, $posts] = publishableChannel(currentOrg(), $group, ['out', 'pending']);
+    $posts[0]->update(['state' => PostState::PUBLISHED, 'release_id' => 'remote-1']);
+    $originalDate = $group->publish_date;
+
+    expect(fn () => app(PostGroupLifecycle::class)->edit($group, Intent::reschedule(now()->addDays(2))))
+        ->toThrow(ConflictHttpException::class);
+
+    $fresh = $group->fresh();
+    expect($fresh->state)->toBe(PostState::QUEUE)
+        ->and($fresh->queue_version)->toBe(3)
+        ->and($fresh->publish_date?->timestamp)->toBe($originalDate?->timestamp)
+        ->and($posts[1]->fresh()->state)->toBe(PostState::QUEUE);
+});
+
+it('refuses to reschedule a PUBLISHED group', function () {
+    $group = groupIn(PostState::PUBLISHED);
+
+    expect(fn () => app(PostGroupLifecycle::class)->edit($group, Intent::reschedule(now()->addDays(2))))
+        ->toThrow(ConflictHttpException::class);
+
+    expect($group->fresh()->state)->toBe(PostState::PUBLISHED);
+});
+
+it('does not see another organization\'s group when rescheduling', function () {
+    $other = PostGroup::factory()->create([
+        'organization_id' => Organization::factory()->create()->id,
+        'state' => PostState::SCHEDULED,
+    ]);
+
+    expect(fn () => app(PostGroupLifecycle::class)->edit($other, Intent::reschedule(now()->addDay())))
         ->toThrow(ModelNotFoundException::class);
 });

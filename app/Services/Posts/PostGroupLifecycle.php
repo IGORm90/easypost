@@ -7,10 +7,13 @@ use App\Models\Post;
 use App\Models\PostGroup;
 use App\Social\Dto\PostResultDto;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use LogicException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /**
  * The one module that decides what may happen to a PostGroup's publish
@@ -398,7 +401,50 @@ class PostGroupLifecycle
     {
         return match ($intent->kind) {
             IntentKind::Retry => $this->retry($group),
+            IntentKind::Reschedule => $this->reschedule($group, $intent->date ?? throw new LogicException('Intent::reschedule() always carries a date.')),
         };
+    }
+
+    /**
+     * The calendar's drag-and-drop. The caller's request already enforces a
+     * future date, so this never has to handle "drag onto right now". A DRAFT
+     * or already-SCHEDULED group just gets a new `publish_date`. A QUEUE group
+     * (claimed: a job already exists for it) is UN-claimed back to SCHEDULED in
+     * the same write, bumping `queue_version` once so that job goes stale, and
+     * its pending posts move with it. Either way nothing is dispatched here:
+     * `DueDispatchService`'s next pass finds the row SCHEDULED with the new date
+     * and claims it exactly once, whenever it is actually due. The stale job
+     * finds `state !== QUEUE` in `claim()` and exits as a harmless no-op.
+     */
+    private function reschedule(PostGroup $group, CarbonInterface $publishDate): Receipt
+    {
+        $group = DB::transaction(function () use ($group, $publishDate) {
+            $group = $this->lockGroup($group);
+            $this->guardEditable($group);
+
+            $group->publish_date = $publishDate;
+
+            if ($group->state === PostState::QUEUE) {
+                $this->bumpQueueVersionIfNotDraft($group, PostState::SCHEDULED);
+                $group->save();
+                $this->stateMachine->transition($group, PostState::SCHEDULED);
+
+                // Posts move with the group — same reasoning as claim()'s
+                // un-claim branch: guardEditable()'s pending-post lock only
+                // means anything while these rows are genuinely QUEUE.
+                Post::query()
+                    ->where('post_group_id', $group->id)
+                    ->whereNull('release_id')
+                    ->where('state', PostState::QUEUE->value)
+                    ->update(['state' => PostState::SCHEDULED->value]);
+            } else {
+                $group->save();
+            }
+
+            return $group;
+        });
+
+        return new Receipt($group, $group->queue_version);
     }
 
     /**
@@ -576,5 +622,93 @@ class PostGroupLifecycle
         }
 
         $this->stateMachine->transition($model, $target);
+    }
+
+    /**
+     * A group may be replaced, rescheduled, or deleted only while every
+     * one of its segments has never been released — see this class's
+     * docblock. Callers MUST call `lockGroup()` first and pass its
+     * result here, inside the SAME transaction — this method's own
+     * post-row lock only means anything as the SECOND lock acquired
+     * (see `lockGroup()`'s docblock on lock order), and `$group->state`
+     * below is trusted directly (no separate `fresh()` read) precisely
+     * because `lockGroup()` already guarantees it is current.
+     *
+     * Task 31 hardening — deleting (or editing) a group mid-publish: an
+     * earlier revision of this check was a single unlocked read
+     * (`$group->posts()->whereNotNull('release_id')->exists()`), which
+     * left a real window open. `PublishService::publishChannel()` commits
+     * per CHANNEL, not for the whole group (see that class's docblock),
+     * so a group can sit with SOME channels already published and others
+     * still `QUEUE` while a `publishChannel()` transaction for one of the
+     * remaining channels is genuinely in flight — lock acquired on its
+     * pending rows, provider call made, `release_id` not yet committed.
+     * An unlocked read landing in exactly that gap would see "nothing
+     * published yet" for that channel, and a subsequent delete/replace
+     * would then discard the very rows that transaction is about to mark
+     * `PUBLISHED` — not a duplicate publish, but a message that is live
+     * on the network with NO local record it was ever sent, and (for
+     * delete) the whole group gone. The `lockForUpdate()` read below
+     * closes that: it targets the exact same predicate
+     * `publishChannel()`'s own re-lock uses (`state = QUEUE AND
+     * release_id IS NULL`), so this method is forced to wait for any such
+     * in-flight transaction to commit or roll back before its own
+     * `hasPublishedSegment` check runs — at which point that check, under
+     * Postgres READ COMMITTED, sees the freshly-committed truth rather
+     * than a stale snapshot. Proven directly with real OS-level
+     * concurrency (a sequential Pest call cannot reproduce this race) in
+     * `tests/Feature/Publishing/RescheduleTest.php`.
+     *
+     * ==========================================================
+     * INVARIANT — do not add a `queue_version`/`publish_date` write
+     * path that skips this method
+     * ==========================================================
+     *
+     * EVERY path that bumps `queue_version` or moves `publish_date` on a
+     * QUEUE group MUST take that group's pending post rows FOR UPDATE
+     * first — in practice, by calling this method. This is not only
+     * about the delete/replace case above; it is half of the fix for
+     * final-review Critical 2.
+     *
+     * `PublishService::publishChannel()` re-reads `post_groups` with a
+     * PLAIN (unlocked) read inside its own transaction, immediately
+     * before the provider call, and aborts the channel if the version
+     * has moved on. It cannot lock that row: it already holds these post
+     * locks, and a writer here holds the GROUP lock while waiting on
+     * them, so taking the group lock there would close a deadlock cycle.
+     * The plain read alone does NOT see a writer that has started and not
+     * yet committed. What closes the window is that such a writer is
+     * blocked HERE, on these post rows, until the publishing transaction
+     * ends — and then re-reads and 409s on the `release_id` it just
+     * committed. Either the publisher sees the new version and abandons
+     * the channel, or the writer sees the release and is refused.
+     *
+     * A new bump path that skips these row locks (a bulk reschedule, an
+     * admin tool, a future "move all posts" feature) breaks that pairing
+     * silently: the publisher's read would miss the bump, publish at the
+     * old time, and nothing in the test suite would necessarily go red.
+     * Route it through `lockGroup()` + this method, as every current
+     * caller does. `retry()` is the one path that legitimately does not
+     * call this method — it accepts ONLY a group already in `ERROR`, for
+     * which no run can be in flight by construction — and
+     * `MissedPostsService` never bumps at all.
+     */
+    public function guardEditable(PostGroup $group): void
+    {
+        Post::query()
+            ->where('post_group_id', $group->id)
+            ->whereNull('release_id')
+            ->where('state', PostState::QUEUE->value)
+            ->lockForUpdate()
+            ->get();
+
+        $hasPublishedSegment = Post::query()
+            ->where('post_group_id', $group->id)
+            ->whereNotNull('release_id')
+            ->exists();
+
+        if ($group->state === PostState::PUBLISHED || $hasPublishedSegment) {
+            throw new ConflictHttpException('This post has already been published and can no longer be edited or deleted.');
+        }
     }
 }
