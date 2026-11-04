@@ -17,10 +17,6 @@ use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
-use App\Social\Exceptions\ProviderRateLimitException;
-use App\Social\Exceptions\ProviderTransientException;
-use Closure;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use InvalidArgumentException;
 
@@ -145,16 +141,10 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
 
         $chatId = (string) $chatId;
 
-        $response = $this->send(fn (): Response => $this->http()->get(
+        $body = $this->api()->json(fn (): Response => $this->http()->get(
             $this->apiUrl($botToken, 'getChat'),
             ['chat_id' => $chatId],
-        ));
-
-        $body = $response->json();
-
-        if (! is_array($body) || ($body['ok'] ?? false) !== true) {
-            throw $this->authErrorFor($response);
-        }
+        ), 'verifying credentials', auth: true);
 
         /** @var array<string, mixed> $chat */
         $chat = $body['result'];
@@ -227,7 +217,7 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
         // publishing the day the parse mode became unconditional.
         $html = $this->markupAsHtml($text);
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->http()->asForm()->post($this->apiUrl($token, 'sendMessage'), array_filter([
                 'chat_id' => $chatId,
                 'text' => $html ?? $text,
@@ -251,7 +241,7 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
         // bug users would report as "bold randomly stops working".
         $captionHtml = $this->markupAsHtml($caption);
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $this->uploadHttp()->attach($field, $this->fileStream($media), $media->filename(), $this->fileHeaders($media))
                 ->post($this->apiUrl($token, $method), array_filter([
                     'chat_id' => $chatId,
@@ -297,7 +287,7 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
             $inputMedia[] = $item;
         }
 
-        $body = $this->call(
+        $body = $this->api()->json(
             fn (): Response => $request->post($this->apiUrl($token, 'sendMediaGroup'), array_filter([
                 'chat_id' => $chatId,
                 'media' => json_encode($inputMedia),
@@ -329,96 +319,9 @@ class TelegramProvider implements DeclaresAuthFields, ManualTokenAuth, SocialPro
         return new PostResultDto(releaseId: (string) $messageId);
     }
 
-    /**
-     * Runs one Telegram API call, translating both an unsuccessful HTTP
-     * response and a network-level failure into the App\Social\Exceptions
-     * taxonomy, and returns the decoded JSON body. $context is a short,
-     * human-readable phrase (no credentials in it) used in exception
-     * messages.
-     *
-     * @return array<string, mixed>
-     */
-    private function call(Closure $call, string $context): array
+    private function api(): ProviderCall
     {
-        $response = $this->send($call);
-        $body = $response->json();
-
-        if (! is_array($body) || ($body['ok'] ?? false) !== true) {
-            throw $this->errorFor($response, $context);
-        }
-
-        return $body;
-    }
-
-    /**
-     * Deliberately does NOT attach the caught ConnectionException as
-     * $previous (Task 14 review, Finding 2): every Telegram API call
-     * this provider makes embeds the bot token in the URL PATH
-     * (`https://api.telegram.org/bot{token}/{method}`), and Guzzle's
-     * connection-exception message conventionally includes the full
-     * request URI. The top-level ProviderTransientException message
-     * here is already token-free, but chaining the original exception
-     * would let any logger/error-tracker that serialises the full
-     * exception chain (Sentry, a Monolog handler that walks
-     * getPrevious()...) print a live bot token -- exactly the "tokens
-     * must never appear in ... thrown context" constraint. A generic,
-     * previous-less exception is the fix; a redacted message would still
-     * require trusting every future Guzzle version's message format not
-     * to change shape.
-     */
-    private function send(Closure $call): Response
-    {
-        try {
-            /** @var Response $response */
-            $response = $call();
-        } catch (ConnectionException) {
-            throw new ProviderTransientException('Network error while calling the Telegram API.');
-        }
-
-        return $this->refuseRedirect($response, $this->name());
-    }
-
-    /**
-     * post()-context mapping: distinguishes a revoked/invalid token, a
-     * bot removed from the chat, a malformed request and a rate limit as
-     * four different outcomes (task-14-brief.md's explicit requirement),
-     * using the shared status-code table from MapsHttpErrors for the
-     * parts that generalise (429, 5xx) and Telegram's own error envelope
-     * for the retry-after hint.
-     */
-    private function errorFor(Response $response, string $context): ProviderException
-    {
-        $body = $response->json();
-        $description = is_array($body) ? (string) ($body['description'] ?? 'unknown error') : 'unknown error';
-        $errorCode = is_array($body) && isset($body['error_code']) ? (int) $body['error_code'] : $response->status();
-        $retryAfter = is_array($body) ? (int) data_get($body, 'parameters.retry_after', 0) : 0;
-
-        return $this->exceptionForStatus($errorCode, "Telegram API error while {$context}: {$description}", $retryAfter);
-    }
-
-    /**
-     * authenticate()-context mapping: unlike errorFor(), every
-     * non-transient rejection (400 bad chat id, 401 revoked token, 403
-     * bot never added to the chat, 404 chat not found) means the same
-     * thing here -- these credentials do not work -- so they all become
-     * ProviderAuthException rather than being split by status code.
-     */
-    private function authErrorFor(Response $response): ProviderException
-    {
-        $body = $response->json();
-        $description = is_array($body) ? (string) ($body['description'] ?? 'unknown error') : 'unknown error';
-        $errorCode = is_array($body) && isset($body['error_code']) ? (int) $body['error_code'] : $response->status();
-        $retryAfter = is_array($body) ? (int) data_get($body, 'parameters.retry_after', 0) : 0;
-
-        if ($errorCode === 429) {
-            return new ProviderRateLimitException("Telegram rate-limited chat verification: {$description}", $retryAfter);
-        }
-
-        if ($errorCode >= 500) {
-            return new ProviderTransientException("Telegram API error while verifying credentials: {$description}");
-        }
-
-        return new ProviderAuthException("Telegram rejected the provided bot token/chat id: {$description}");
+        return new ProviderCall($this->name(), new TelegramErrors);
     }
 
     private function apiUrl(string $token, string $method): string
