@@ -30,10 +30,10 @@ use Illuminate\Support\Facades\Http;
  * message, `PublishService::markAllError()` writes it to `posts.error`,
  * and `PostResource` returns it to the caller.
  *
- * So `allow_redirects` is off on both builders below, and
- * `refuseRedirect()` turns any 3xx that comes back into a
- * `ProviderPermanentException` naming nothing but the status code. Two
- * deliberate choices:
+ * So `allow_redirects` is off on both builders below, and `ProviderCall`
+ * (the one place every provider call is sent from) turns any 3xx that comes
+ * back into a `ProviderPermanentException` naming nothing but the status
+ * code. Two deliberate choices:
  *
  *  - REFUSING rather than re-validating each `Location` and re-issuing:
  *    no API endpoint any of these five networks documents answers a
@@ -106,29 +106,5 @@ trait BoundsHttpTimeouts
         return Http::connectTimeout(self::HTTP_CONNECT_TIMEOUT_SECONDS)
             ->timeout(self::HTTP_UPLOAD_TIMEOUT_SECONDS)
             ->withOptions(['allow_redirects' => false]);
-    }
-
-    /**
-     * Applied by every provider's own `send()` — the single funnel each
-     * of them already routes every response through — so a 3xx can never
-     * reach the code that decides what a response MEANS. See this trait's
-     * docblock for why refusing beats following.
-     *
-     * $network is the provider's own display name, passed by the call
-     * site rather than read from anywhere central: this trait lives under
-     * `app/Social/Providers`, the one directory allowed to know a
-     * network's name at all.
-     */
-    protected function refuseRedirect(Response $response, string $network): Response
-    {
-        $status = $response->status();
-
-        if ($status >= 300 && $status < 400) {
-            throw new ProviderPermanentException(
-                "The {$network} API answered with an unexpected redirect ({$status}), which is never followed.",
-            );
-        }
-
-        return $response;
     }
 }

@@ -110,7 +110,8 @@ removed, so a stray reference cannot come back unnoticed — `tests/Unit/Archite
 `resources/js/__tests__/providerIsolation.spec.ts`.
 
 **HTTP timeouts in providers.** Never call the `Http` facade under `app/Social` outside the
-`BoundsHttpTimeouts` trait, and every provider must call `refuseRedirect(` —
+`BoundsHttpTimeouts` trait, and every provider must send its calls through `ProviderCall` (directly, or
+via a trait that does, like `UsesMetaGraph`), which is the one place a redirect is refused —
 `ProviderHttpTimeoutTest.php`. A bare `Http::post()` inherits Laravel's 30s default while the
 publish worker's own timeout is 90s.
 
@@ -277,7 +278,7 @@ The user should not be the one to find a broken endpoint.
 
 - [ ] Pint, PHPStan (with `-d memory_limit=1G`), Pest, typecheck, Vitest, build — all clean
 - [ ] No provider name in a quoted string outside `app/Social/Providers` / `previews/registry.ts`
-- [ ] No `Http::` under `app/Social` outside `BoundsHttpTimeouts`; new providers call `refuseRedirect(`
+- [ ] No `Http::` under `app/Social` outside `BoundsHttpTimeouts`; new providers send their calls through `ProviderCall`
 - [ ] No `withoutGlobalScopes()`; tenant scope removed by name only, and only where justified
 - [ ] New queries on tenant-owned models respect the `organization` scope
 - [ ] No colour literals — design tokens only

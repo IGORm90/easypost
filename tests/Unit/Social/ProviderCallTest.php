@@ -155,3 +155,34 @@ it('runs the request exactly once, even when it fails', function () {
 
     Http::assertSentCount(1);
 });
+
+it('refuses the whole 3xx range with the exact message, and nothing outside it', function (int $status, bool $refused) {
+    Http::fake(['api.example.test/*' => Http::response('', $status)]);
+    $adapter = stubAdapter(fn () => false);
+    $call = new ProviderCall('Example', $adapter);
+
+    if ($refused) {
+        try {
+            $call->json(apiCall(), 'fetching');
+            test()->fail('Expected a ProviderPermanentException.');
+        } catch (ProviderPermanentException $e) {
+            expect($e->getMessage())->toBe("The Example API answered with an unexpected redirect ({$status}), which is never followed.");
+        }
+
+        return;
+    }
+
+    $call->json(apiCall(), 'fetching');
+    expect($adapter->failedCalls)->toBe(1);
+})->with([
+    '299 passes through' => [299, false],
+    '300 is refused' => [300, true],
+    '399 is refused' => [399, true],
+    '400 passes through' => [400, false],
+]);
+
+it('returns null from raw() when the body is not JSON', function () {
+    Http::fake(['api.example.test/*' => Http::response('', 201)]);
+
+    expect((new ProviderCall('Example', stubAdapter(fn () => false)))->raw(apiCall(), 'uploading'))->toBeNull();
+});

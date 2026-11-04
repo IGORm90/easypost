@@ -16,14 +16,9 @@ use Illuminate\Http\Client\Response;
  * Page does not use this — it accepts a direct `/feed` or `/photos`
  * call — so this trait is not on UsesMetaGraph itself.
  *
- * Calls `$this->call()` — each consuming provider's own
- * network-error/redirect/status wrapper (the same small method Reddit,
- * Bluesky and Telegram each define), not a shared trait method: the
- * project's HTTP-timeout guard
- * (tests/Unit/Architecture/ProviderHttpTimeoutTest.php) greps every
- * `*Provider.php` FILE for a literal `refuseRedirect(` call site, so
- * that call must live in the provider's own source, not be reached only
- * through a trait it composes.
+ * Calls `$this->call()` — UsesMetaGraph's one wrapper around ProviderCall,
+ * which owns the network-error, redirect and Graph-error handling — so this
+ * trait is only usable by a provider that also uses UsesMetaGraph.
  */
 trait PublishesViaMetaContainers
 {

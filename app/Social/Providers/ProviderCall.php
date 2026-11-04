@@ -46,9 +46,9 @@ final class ProviderCall
      *
      * @param  Closure(): Response  $request
      */
-    public function raw(Closure $request, string $context, bool $auth = false): mixed
+    public function raw(Closure $request, string $context): mixed
     {
-        return $this->run($request, $context, $auth)->json();
+        return $this->run($request, $context, false)->json();
     }
 
     /**

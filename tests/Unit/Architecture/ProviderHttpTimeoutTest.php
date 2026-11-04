@@ -58,31 +58,27 @@ it('never calls the Http facade directly anywhere under app/Social', function ()
 
 /**
  * Final-review batch 2, Critical 2, made executable for FUTURE providers
- * too: the five adapters each refuse redirects through their own send()
- * (proven behaviourally in tests/Unit/Social/ProviderRedirectTest.php),
- * and a sixth adapter added later must not silently reopen the hole by
- * omission — the same failure mode that made the timeout guard above
- * necessary.
+ * too: no provider may follow, or quietly pass on, a redirect, and a new
+ * adapter added later must not reopen the hole by omission -- the same
+ * failure mode that made the timeout guard above necessary.
  *
- * A structural check, not a behavioural one: it asserts each provider
- * routes its responses through BoundsHttpTimeouts::refuseRedirect(). The
- * behavioural tests are what prove the refusal actually works; this is
- * what makes forgetting it visible.
+ * The refusal lives in `ProviderCall` (proven behaviourally in
+ * tests/Unit/Social/ProviderCallTest.php and ProviderRedirectTest.php).
+ * This is the structural half: every provider must send its calls through
+ * it, either by constructing it or by using a trait that does
+ * (UsesMetaGraph builds it once for Facebook Page, Instagram and Threads).
  */
-it('routes every provider response through the redirect refusal', function () {
+it('sends every provider call through ProviderCall', function () {
     $files = glob(base_path('app/Social/Providers').'/*Provider.php') ?: [];
 
     expect($files)->not->toBe([], 'no provider classes found — the guard cannot have run');
 
-    // Traits that send their calls through ProviderCall on the providers'
-    // behalf (UsesMetaGraph builds it once for Facebook Page, Instagram and
-    // Threads). Using one of them is as good as constructing ProviderCall
-    // in the provider file.
     $delegating = [];
 
     foreach (glob(base_path('app/Social/Providers').'/*.php') ?: [] as $candidate) {
         if (str_contains((string) file_get_contents($candidate), 'new ProviderCall(')
-            && ! str_ends_with($candidate, 'Provider.php')) {
+            && ! str_ends_with($candidate, 'Provider.php')
+            && ! str_ends_with($candidate, 'ProviderCall.php')) {
             $delegating[] = basename($candidate, '.php');
         }
     }
@@ -92,32 +88,45 @@ it('routes every provider response through the redirect refusal', function () {
     foreach ($files as $file) {
         $source = (string) file_get_contents($file);
 
-        // A provider either refuses redirects itself, constructs
-        // `ProviderCall`, or uses a trait that does. The first form goes
-        // away as each provider migrates; the last migration tightens this
-        // to the ProviderCall forms only.
         $delegates = array_filter(
             $delegating,
             fn (string $trait): bool => preg_match('/\b'.preg_quote($trait, '/').'\b/', $source) === 1,
         );
 
-        if (! str_contains($source, 'refuseRedirect(') && ! str_contains($source, 'new ProviderCall(') && $delegates === []) {
+        if (! str_contains($source, 'new ProviderCall(') && $delegates === []) {
             $missing[] = basename($file);
         }
     }
 
-    expect($missing)->toBe([], "these providers never refuse a redirect:\n".implode("\n", $missing));
+    expect($missing)->toBe([], "these providers do not send their calls through ProviderCall, so nothing refuses a redirect for them:\n".implode("\n", $missing));
 });
 
 /**
- * The other half of the check above: a provider that delegates to
- * `ProviderCall` is only safe while `ProviderCall` itself refuses the
- * redirect. Without this, deleting the refusal there would leave every
- * migrated provider green and unguarded. The behaviour is proven in
- * tests/Unit/Social/ProviderCallTest.php; this makes its removal visible.
+ * A provider that delegates to `ProviderCall` is only safe while
+ * `ProviderCall` itself refuses the redirect. Without this, deleting the
+ * refusal there would leave every provider green and unguarded. Checks the
+ * call in the pipeline, not just the method's existence; the behaviour is
+ * proven in ProviderCallTest.
  */
 it('keeps the redirect refusal inside ProviderCall itself', function () {
     $source = (string) file_get_contents(base_path('app/Social/Providers/ProviderCall.php'));
 
-    expect($source)->toContain('refuseRedirect(');
+    expect($source)->toContain('function refuseRedirect(');
+    expect($source)->toContain('$this->refuseRedirect(');
+});
+
+/**
+ * One redirect refusal, in one place. A second copy is how the rule drifts
+ * (a different message, a different range) while the guard above stays green.
+ */
+it('defines the redirect refusal nowhere but ProviderCall', function () {
+    $definitions = [];
+
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(base_path('app/Social'))) as $file) {
+        if ($file->getExtension() === 'php' && str_contains((string) file_get_contents($file->getPathname()), 'function refuseRedirect(')) {
+            $definitions[] = basename($file->getPathname());
+        }
+    }
+
+    expect($definitions)->toBe(['ProviderCall.php']);
 });
