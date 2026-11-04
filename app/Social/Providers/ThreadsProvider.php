@@ -15,10 +15,7 @@ use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderException;
 use App\Social\Exceptions\ProviderPartialFailureException;
 use App\Social\Exceptions\ProviderPermanentException;
-use App\Social\Exceptions\ProviderTransientException;
 use Carbon\CarbonImmutable;
-use Closure;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 
 /**
@@ -294,47 +291,8 @@ class ThreadsProvider implements SocialProviderInterface, SupportsRefresh
         );
     }
 
-    private function requireConfig(string $key): string
+    protected function configPrefix(): string
     {
-        $value = config("services.meta_threads.{$key}");
-
-        if (! is_string($value) || $value === '') {
-            throw new ProviderPermanentException("{$this->name()} is not configured: missing services.meta_threads.{$key}.");
-        }
-
-        return $value;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function call(Closure $call, string $context): array
-    {
-        $response = $this->send($call);
-
-        if (! $response->successful()) {
-            throw $this->metaErrorFor($response, $context);
-        }
-
-        $body = $response->json();
-
-        /** @var array<string, mixed> */
-        return is_array($body) ? $body : [];
-    }
-
-    /**
-     * Deliberately does NOT attach the caught ConnectionException as
-     * $previous — see FacebookPageProvider::send() for why.
-     */
-    private function send(Closure $call): Response
-    {
-        try {
-            /** @var Response $response */
-            $response = $call();
-        } catch (ConnectionException) {
-            throw new ProviderTransientException("Network error while calling the {$this->name()} API.");
-        }
-
-        return $this->refuseRedirect($response, $this->name());
+        return 'services.meta_threads';
     }
 }

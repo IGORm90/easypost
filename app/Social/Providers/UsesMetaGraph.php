@@ -2,21 +2,18 @@
 
 namespace App\Social\Providers;
 
-use App\Social\Exceptions\ProviderAuthException;
-use App\Social\Exceptions\ProviderException;
-use App\Social\Exceptions\ProviderRateLimitException;
+use App\Social\Exceptions\ProviderPermanentException;
+use Closure;
 use Illuminate\Http\Client\Response;
 
 /**
  * The one piece of the three Meta-backed providers (Facebook Page,
  * Instagram, Threads — Block 5) that is genuinely shared: how a Graph
- * API URL is built and how Graph's error envelope is decoded. Modelled
- * on MapsHttpErrors' split — a shared decision table, provider-specific
- * detection — because Meta's *detection* half (an error's shape) is
- * identical across all three, unlike the token-exchange step
- * (UsesOAuth2Pkce's docblock explains why that one stays out of shared
- * code: different hosts, different grant param names, different client
- * auth).
+ * API URL is built, and the one place a Graph call is sent
+ * (`call()`, via ProviderCall with the MetaGraphErrors adapter). The
+ * token-exchange step stays out of shared code (UsesOAuth2Pkce's
+ * docblock explains why: different hosts, different grant param names,
+ * different client auth).
  *
  * Threads lives on a different host (`graph.threads.net`, not
  * `graph.facebook.com`) but answers with the same envelope shape, which
@@ -24,8 +21,6 @@ use Illuminate\Http\Client\Response;
  */
 trait UsesMetaGraph
 {
-    use MapsHttpErrors;
-
     /**
      * Threads versions its API independently of the main Graph API
      * (`v1.0`, not `v21.0`), so this is overridable the same way
@@ -38,21 +33,6 @@ trait UsesMetaGraph
     {
         return 'v21.0';
     }
-
-    /**
-     * @var array<int, int> Error subcodes Meta uses for "this credential
-     *                      no longer works" — expired/invalid session (190), app not
-     *                      installed (102), password changed (460), token expired due to
-     *                      re-authorization required (463), Business Manager permission
-     *                      revoked (467). See Meta's "Error Codes for Login API".
-     */
-    private const array AUTH_ERROR_SUBCODES = [190, 102, 460, 463, 467];
-
-    /**
-     * @var array<int, int> Top-level error codes Meta uses for
-     *                      application- and account-level rate limiting.
-     */
-    private const array RATE_LIMIT_CODES = [4, 17, 32, 613];
 
     /**
      * The display host a subclass' Graph calls target. Facebook Page and
@@ -70,34 +50,33 @@ trait UsesMetaGraph
     }
 
     /**
-     * Decodes Graph's `{"error": {message, type, code, error_subcode}}`
-     * envelope and maps it onto the shared exception taxonomy.
-     * Deliberately never includes Meta's own `message` in the returned
-     * exception's text — see BoundsHttpTimeouts' docblock: that text
-     * reaches `posts.error` and the API response verbatim, and Meta's
-     * message text is not this app's to repeat to a customer.
+     * The `config()` key prefix a provider's credentials live under, e.g.
+     * `services.instagram`.
      */
-    protected function metaErrorFor(Response $response, string $context): ProviderException
+    abstract protected function configPrefix(): string;
+
+    /**
+     * Every Graph call goes through here: the request closure is built by
+     * the provider with `http()`/`uploadHttp()`, and ProviderCall owns the
+     * rest (transport errors, redirect refusal, Graph's error envelope via
+     * MetaGraphErrors, decoding).
+     *
+     * @param  Closure(): Response  $call
+     * @return array<string, mixed>
+     */
+    private function call(Closure $call, string $context): array
     {
-        $body = $response->json();
-        $error = is_array($body) ? ($body['error'] ?? null) : null;
+        return (new ProviderCall($this->name(), new MetaGraphErrors($this->name())))->json($call, $context);
+    }
 
-        $code = is_array($error) ? ($error['code'] ?? null) : null;
-        $subcode = is_array($error) ? ($error['error_subcode'] ?? null) : null;
-        $retryAfter = (int) $response->header('Retry-After');
+    private function requireConfig(string $key): string
+    {
+        $value = config("{$this->configPrefix()}.{$key}");
 
-        if (is_int($subcode) && in_array($subcode, self::AUTH_ERROR_SUBCODES, true)) {
-            return new ProviderAuthException("The {$this->name()} API rejected the credential while {$context} (subcode {$subcode}).");
+        if (! is_string($value) || $value === '') {
+            throw new ProviderPermanentException("{$this->name()} is not configured: missing {$this->configPrefix()}.{$key}.");
         }
 
-        if (is_int($code) && in_array($code, self::RATE_LIMIT_CODES, true)) {
-            return new ProviderRateLimitException("The {$this->name()} API rate-limited the request while {$context}.", $retryAfter);
-        }
-
-        return $this->exceptionForStatus(
-            $response->status(),
-            "The {$this->name()} API rejected the request while {$context} ({$response->status()}).",
-            $retryAfter,
-        );
+        return $value;
     }
 }

@@ -74,16 +74,34 @@ it('routes every provider response through the redirect refusal', function () {
 
     expect($files)->not->toBe([], 'no provider classes found — the guard cannot have run');
 
+    // Traits that send their calls through ProviderCall on the providers'
+    // behalf (UsesMetaGraph builds it once for Facebook Page, Instagram and
+    // Threads). Using one of them is as good as constructing ProviderCall
+    // in the provider file.
+    $delegating = [];
+
+    foreach (glob(base_path('app/Social/Providers').'/*.php') ?: [] as $candidate) {
+        if (str_contains((string) file_get_contents($candidate), 'new ProviderCall(')
+            && ! str_ends_with($candidate, 'Provider.php')) {
+            $delegating[] = basename($candidate, '.php');
+        }
+    }
+
     $missing = [];
 
     foreach ($files as $file) {
         $source = (string) file_get_contents($file);
 
-        // A provider either refuses redirects itself or sends its calls
-        // through `ProviderCall`, which does. The first form goes away as
-        // each provider migrates; the last migration tightens this to
-        // `new ProviderCall(` only.
-        if (! str_contains($source, 'refuseRedirect(') && ! str_contains($source, 'new ProviderCall(')) {
+        // A provider either refuses redirects itself, constructs
+        // `ProviderCall`, or uses a trait that does. The first form goes
+        // away as each provider migrates; the last migration tightens this
+        // to the ProviderCall forms only.
+        $delegates = array_filter(
+            $delegating,
+            fn (string $trait): bool => preg_match('/\b'.preg_quote($trait, '/').'\b/', $source) === 1,
+        );
+
+        if (! str_contains($source, 'refuseRedirect(') && ! str_contains($source, 'new ProviderCall(') && $delegates === []) {
             $missing[] = basename($file);
         }
     }

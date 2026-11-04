@@ -15,11 +15,8 @@ use App\Social\Dto\PostResultDto;
 use App\Social\Dto\ProviderCapabilities;
 use App\Social\Exceptions\ProviderAuthException;
 use App\Social\Exceptions\ProviderPermanentException;
-use App\Social\Exceptions\ProviderTransientException;
 use App\Social\Exceptions\UnknownProviderOptionException;
 use Carbon\CarbonImmutable;
-use Closure;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 
 /**
@@ -387,50 +384,8 @@ class FacebookPageProvider implements DeclaresUpdatableSettings, SocialProviderI
         );
     }
 
-    private function requireConfig(string $key): string
+    protected function configPrefix(): string
     {
-        $value = config("services.facebook_page.{$key}");
-
-        if (! is_string($value) || $value === '') {
-            throw new ProviderPermanentException("{$this->name()} is not configured: missing services.facebook_page.{$key}.");
-        }
-
-        return $value;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function call(Closure $call, string $context): array
-    {
-        $response = $this->send($call);
-
-        if (! $response->successful()) {
-            throw $this->metaErrorFor($response, $context);
-        }
-
-        $body = $response->json();
-
-        /** @var array<string, mixed> */
-        return is_array($body) ? $body : [];
-    }
-
-    /**
-     * Deliberately does NOT attach the caught ConnectionException as
-     * $previous, same as every other provider in this directory: its
-     * message can echo request details (here, the bearer token appended
-     * to the URL as `access_token`) depending on the underlying HTTP
-     * client's error formatting.
-     */
-    private function send(Closure $call): Response
-    {
-        try {
-            /** @var Response $response */
-            $response = $call();
-        } catch (ConnectionException) {
-            throw new ProviderTransientException("Network error while calling the {$this->name()} API.");
-        }
-
-        return $this->refuseRedirect($response, $this->name());
+        return 'services.facebook_page';
     }
 }
