@@ -123,6 +123,11 @@ publish worker's own timeout is 90s.
 (no `withLimit(` / `->check(` there). Enforcement belongs in `EnforcePlanLimit` middleware and the
 services.
 
+**Publish lifecycle.** Only `PostGroupLifecycle` writes `queue_version`, `last_dispatched_at` and
+`dispatch_attempts`, and only it moves a `Post` or `PostGroup` between states (`PostState::PUBLISHED` has no exit).
+Reading them anywhere is fine; the version arithmetic, the lock order and the terminal guard live in that one class —
+`PostGroupLifecycleOwnershipTest.php`. `BackfillDurableSchedulingCommand` is exempt by decision.
+
 **Colour.** No hex literals, no `rgb()`/`hsl()`, no CSS named colours, no default Tailwind palette
 classes (including `from-`/`to-`/`via-`/`fill-`/`stroke-`/`divide-` variants) anywhere in
 `.vue`, `.ts`, `.blade.php` or `.css`. Use the design tokens only — Tailwind maps every colour to a
@@ -281,6 +286,7 @@ The user should not be the one to find a broken endpoint.
 - [ ] No `Http::` under `app/Social` outside `BoundsHttpTimeouts`; new providers send their calls through `ProviderCall`
 - [ ] No `withoutGlobalScopes()`; tenant scope removed by name only, and only where justified
 - [ ] New queries on tenant-owned models respect the `organization` scope
+- [ ] Nothing outside `PostGroupLifecycle` writes `queue_version` / `last_dispatched_at` / `dispatch_attempts`
 - [ ] No colour literals — design tokens only
 - [ ] Translation keys added to all four locale files (`lang/en`, `lang/ru`, `i18n/en.json`, `i18n/ru.json`)
 - [ ] Every new input has a real label
