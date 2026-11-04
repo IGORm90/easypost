@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
+use App\Services\Posts\PostGroupLifecycle;
 use App\Services\Posts\PublishService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -289,7 +290,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
      * `PublishService`, which resolves every provider exception type
      * itself and never lets one propagate this far).
      *
-     * Delegates to `PublishService::abandonGroup()`: every post still
+     * Delegates to `PublishService::PostGroupLifecycle::abandon()`: every post still
      * `QUEUE` in this group moves to `ERROR` with a message, and the
      * group is finalized. Review finding 3 — without this, a group that
      * exhausts retries is loud to `failed_jobs`/Horizon but silent to
@@ -310,7 +311,7 @@ final class PublishPostJob implements ShouldBeUnique, ShouldQueue
             ? "Publishing failed after the maximum number of attempts: {$e->getMessage()}"
             : 'Publishing failed after the maximum number of attempts.';
 
-        app(PublishService::class)->abandonGroup($this->postGroupId, $reason, $this->queueVersion);
+        app(PostGroupLifecycle::class)->abandon($this->postGroupId, $reason, $this->queueVersion);
     }
 
     /**

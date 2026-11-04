@@ -433,7 +433,7 @@ class PostGroupService
      * The `state === ERROR` check below runs against `$group` AFTER
      * `lockGroup()` has re-read and locked its row (Task 31 review
      * finding 2) — every other guard in this pipeline
-     * (`PostGroupLifecycle::claim()`, `abandonGroup()`,
+     * (`PostGroupLifecycle::claim()`, `PostGroupLifecycle::abandon()`,
      * `guardEditable()` above) re-checks state under `lockForUpdate()`
      * rather than trusting whatever `$group` instance the caller
      * happened to pass in; this method matches that pattern rather than

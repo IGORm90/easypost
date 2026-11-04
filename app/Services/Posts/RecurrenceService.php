@@ -45,7 +45,7 @@ class RecurrenceService
      * THIS METHOD NEVER THROWS. By the time it runs, the network already
      * has the post. An exception escaping here would take
      * `PublishPostJob` down its `failed()` path, which calls
-     * `PublishService::abandonGroup()` and writes a row to `failed_jobs`
+     * `PublishService::PostGroupLifecycle::abandon()` and writes a row to `failed_jobs`
      * — recording as a failure the one thing that unambiguously
      * succeeded, and (worse) presenting a publishing failure to an
      * operator who would go looking for a post that went out perfectly.

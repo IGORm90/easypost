@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Log;
  *  1. `redispatchOrphaned()` — groups stuck at `QUEUE` with a
  *     `publish_date` well in the past, re-issued a `PublishPostJob`.
  *  2. `notifyFailed()` — groups that have already settled to `ERROR`
- *     (via `PublishService::abandonGroup()`/`finalizeGroupState()`, from
+ *     (via `PublishService::PostGroupLifecycle::abandon()`/`finalizeGroupState()`, from
  *     EITHER the original publish attempt or a scan-triggered
  *     redispatch — this class does not care which), emailing the author
  *     exactly once.
@@ -207,7 +207,7 @@ class MissedPostsService
                 'max_dispatch_attempts' => $maxAttempts,
             ]);
 
-            app(PublishService::class)->abandonGroup(
+            app(PostGroupLifecycle::class)->abandon(
                 $group->id,
                 'This post could not be published after repeated attempts and was not sent.',
                 $group->queue_version,
@@ -247,7 +247,7 @@ class MissedPostsService
      * is also precisely why the notification does not live inside
      * `redispatchIfOrphaned()`/`PublishPostJob::failed()`: see the class
      * docblock's "do not fight the exhaustion path" framing in the task
-     * brief — `abandonGroup()` already owns the QUEUE->ERROR transition
+     * brief — `PostGroupLifecycle::abandon()` already owns the QUEUE->ERROR transition
      * exclusively, this method only ever REACTS to that outcome, on its
      * own schedule, never causes it.
      */
@@ -339,7 +339,7 @@ class MissedPostsService
     /**
      * A short, customer-facing sentence naming the channel(s) that
      * failed — never the raw provider/`MaxAttemptsExceededException`
-     * message `Post::$error`/`abandonGroup()`'s `$reason` carries
+     * message `Post::$error`/`PostGroupLifecycle::abandon()`'s `$reason` carries
      * internally (see `PublishService::markAllError()` and
      * `PublishPostJob::failed()`), which can be arbitrary provider text
      * a customer has no context to interpret. `unique('integration_id')`

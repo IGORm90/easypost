@@ -106,7 +106,7 @@ use Illuminate\Support\Facades\RateLimiter;
  *    This re-lock's `WHERE` MUST filter on `state = QUEUE` as well as
  *    `release_id IS NULL` — post-review fix, not a simplification to
  *    ever reverse. `release_id IS NULL` alone is not sufficient: a
- *    concurrent `abandonGroup()` run (`PublishPostJob::failed()`, once
+ *    concurrent `PostGroupLifecycle::abandon()` run (`PublishPostJob::failed()`, once
  *    retries are exhausted) can mark a channel's still-unpublished rows
  *    `ERROR` — `release_id` stays null, only `state` changes — between
  *    this method's unlocked pre-check and this transaction acquiring the
@@ -284,7 +284,7 @@ class PublishService
         // by a worker before the row it refers to is visible.
         //
         // Only on PUBLISHED, and only on THIS run's own verdict. A null
-        // outcome means some other run (or abandonGroup()) had already
+        // outcome means some other run (or PostGroupLifecycle::abandon()) had already
         // settled the group, or this run's queue_version was superseded
         // — in both cases the decision is not ours to act on. An ERROR
         // outcome deliberately spawns nothing: a series that failed
@@ -300,17 +300,6 @@ class PublishService
         if ($outcome === PostState::PUBLISHED) {
             $this->recurrence->spawnNext($group->id);
         }
-    }
-
-    /**
-     * Retries exhausted: everything still `QUEUE` in the group moves to
-     * `ERROR` with `$reason`, and the group is finalized. Called from
-     * `PublishPostJob::failed()`; the guard and the writes live in
-     * `PostGroupLifecycle::abandon()`.
-     */
-    public function abandonGroup(string $postGroupId, string $reason, ?int $queueVersion = null): void
-    {
-        $this->lifecycle->abandon($postGroupId, $reason, $queueVersion);
     }
 
     /**

@@ -670,7 +670,7 @@ class PostGroupLifecycle
      *    dispatched version is ever computed from a value another
      *    transaction has since moved past. Covered by
      *    `RescheduleTest`'s two-concurrent-`updateDate()` fork test.
-     *  - Lock ORDER (finding 4). `PublishService::abandonGroup()` locks
+     *  - Lock ORDER (finding 4). `PublishService::PostGroupLifecycle::abandon()` locks
      *    the group row, then post rows, inside one transaction. Every
      *    caller in this class now does the same — this method first,
      *    `guardEditable()`'s post-row lock second — because the reverse

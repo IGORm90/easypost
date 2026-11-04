@@ -242,7 +242,7 @@ it('pauses the series and warns the author when the monthly quota is exhausted',
 
 it('never lets a failure to spawn break the publish that already happened', function () {
     // The network has the post by this point. Anything thrown from here
-    // would send PublishPostJob down failed() -> abandonGroup() and
+    // would send PublishPostJob down failed() -> PostGroupLifecycle::abandon() and
     // record a failure that did not happen.
     fakeProvider();
     $org = Organization::factory()->create();

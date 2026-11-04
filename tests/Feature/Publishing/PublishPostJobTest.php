@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Post;
 use App\Models\PostGroup;
 use App\Services\Posts\Exceptions\PublishRetryNeededException;
+use App\Services\Posts\PostGroupLifecycle;
 use App\Services\Posts\PostGroupService;
 use App\Services\Posts\PublishService;
 use App\Social\Exceptions\ProviderRateLimitException;
@@ -221,7 +222,7 @@ it('skips already published posts on retry, at both channel and segment level', 
 it('never re-locks or republishes a segment that is ERROR with no release_id', function () {
     // Review, round 4: the re-lock's WHERE must filter on state as well
     // as release_id. A segment can be ERROR with release_id still null —
-    // e.g. a concurrent abandonGroup() run (PublishPostJob::failed())
+    // e.g. a concurrent abandon() run (PublishPostJob::failed())
     // settling this channel between publishChannel()'s unlocked
     // pre-check and this transaction acquiring the lock — and
     // release_id IS NULL alone would still pick it up, call the
@@ -345,7 +346,7 @@ it('treats a 429 carrying no Retry-After (retryAfterSeconds = 0) as "no specific
     // null, so min(0, 60) = 0 -> release(0): attempts 2, 3 and 4 were
     // consumed within milliseconds of the first 429, hammering the
     // rate-limited API three more times on the way, and then failed() ->
-    // abandonGroup() marked every segment ERROR. A transient rate limit
+    // abandon() marked every segment ERROR. A transient rate limit
     // became a permanent, customer-visible failure. 0 must mean
     // "unspecified", i.e. this attempt's own backoff position.
     $org = Organization::factory()->create();
@@ -475,7 +476,7 @@ it('logs the reason when a claimed group is not materially due yet, before un-cl
     app(PublishService::class)->publishGroup($group->id);
 });
 
-it('logs the reason when abandonGroup() no-ops because the group is not QUEUE', function () {
+it('logs the reason when abandon() no-ops because the group is not QUEUE', function () {
     $org = Organization::factory()->create();
     $group = queuedGroup($org);
 
@@ -488,10 +489,10 @@ it('logs the reason when abandonGroup() no-ops because the group is not QUEUE', 
         'state' => PostState::PUBLISHED->value,
     ]);
 
-    app(PublishService::class)->abandonGroup($group->id, 'irrelevant');
+    app(PostGroupLifecycle::class)->abandon($group->id, 'irrelevant');
 });
 
-it('logs the reason when abandonGroup() no-ops because the queue_version is stale', function () {
+it('logs the reason when abandon() no-ops because the queue_version is stale', function () {
     $org = Organization::factory()->create();
     $group = queuedGroup($org);
 
@@ -502,10 +503,10 @@ it('logs the reason when abandonGroup() no-ops because the queue_version is stal
         'current_queue_version' => $group->queue_version,
     ]);
 
-    app(PublishService::class)->abandonGroup($group->id, 'irrelevant', 999);
+    app(PostGroupLifecycle::class)->abandon($group->id, 'irrelevant', 999);
 });
 
-it('logs the reason when abandonGroup() no-ops because the group has since been rescheduled further out', function () {
+it('logs the reason when abandon() no-ops because the group has since been rescheduled further out', function () {
     $org = Organization::factory()->create();
     $group = queuedGroup($org, now()->addHours(6));
 
@@ -515,7 +516,7 @@ it('logs the reason when abandonGroup() no-ops because the group has since been 
         'publish_date' => $group->publish_date->toIso8601String(),
     ]);
 
-    app(PublishService::class)->abandonGroup($group->id, 'irrelevant', $group->queue_version);
+    app(PostGroupLifecycle::class)->abandon($group->id, 'irrelevant', $group->queue_version);
 });
 
 // --- Stale schedule / rescheduling (review finding 1) ---------------------
@@ -722,7 +723,7 @@ it('failed() does not error a group that has since been rescheduled further into
     // must not be marked ERROR just because that dead job's retries ran
     // out — it isn't due yet, and the redispatched job for the NEW date
     // (see the redispatch tests above) is what should get to publish it.
-    // Without abandonGroup()'s due-date grace, this would wrongly settle
+    // Without abandon()'s due-date grace, this would wrongly settle
     // the group to ERROR, and the redispatched job would then find ERROR
     // (not QUEUE) and silently no-op — the post never publishes at all.
     $org = Organization::factory()->create();
