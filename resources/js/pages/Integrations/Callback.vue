@@ -158,7 +158,7 @@ function backToChannels(): void {
 <template>
     <AppLayout>
         <div class="mx-auto flex max-w-md flex-col items-start gap-4">
-            <h1 class="text-lg font-semibold text-text">{{ t('integrations.callback.title') }}</h1>
+            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('integrations.callback.title') }}</h1>
 
             <p v-if="status === 'pending'" class="text-sm text-muted">{{ t('integrations.callback.inProgress') }}</p>
 

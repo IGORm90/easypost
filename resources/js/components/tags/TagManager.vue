@@ -31,11 +31,11 @@ const emit = defineEmits<{ close: []; changed: []; created: [CalendarTag] }>();
 const { t } = useI18n();
 
 /**
- * `--accent` from color.md. Any other literal would fail palette.spec.ts,
- * which only tolerates hexes that document lists — and the accent is
- * already what DemoSeeder gives its tag, for the same reason.
+ * `--primary` from color.md. Any other literal would fail palette.spec.ts,
+ * which only tolerates hexes that document lists — and it is what
+ * DemoSeeder gives its tag, for the same reason.
  */
-const DEFAULT_COLOR = '#A94E08';
+const DEFAULT_COLOR = '#2453D6';
 
 const tags = ref<CalendarTag[]>([]);
 const loading = ref(false);

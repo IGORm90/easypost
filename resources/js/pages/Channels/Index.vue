@@ -185,7 +185,7 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
              shared a starting x. `max-w-3xl` stays — it caps the line
              length and the card grid, it does not centre anything. -->
         <div class="flex max-w-3xl flex-col gap-8">
-            <h1 class="text-lg font-semibold text-text">{{ t('channels.title') }}</h1>
+            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('channels.title') }}</h1>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
             <Toast v-else-if="noticeMessage" variant="neutral" @dismiss="noticeMessage = null">{{ noticeMessage }}</Toast>

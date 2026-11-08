@@ -100,7 +100,7 @@ const until = computed({
                 id="repeat-unit"
                 v-model="unit"
                 data-testid="repeat-unit"
-                class="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
+                class="w-full rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
             >
                 <option value="">{{ t('editor.repeat.never') }}</option>
                 <option v-for="option in UNITS" :key="option" :value="option">
@@ -119,7 +119,7 @@ const until = computed({
                     type="number"
                     min="1"
                     :max="MAX_INTERVAL[modelValue.unit]"
-                    class="w-24 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    class="w-24 rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                 />
             </div>
 
@@ -130,7 +130,7 @@ const until = computed({
                     v-model="until"
                     data-testid="repeat-until"
                     type="datetime-local"
-                    class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                 />
             </div>
         </div>

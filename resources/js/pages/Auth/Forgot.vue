@@ -30,7 +30,7 @@ async function submit(): Promise<void> {
 
 <template>
     <AuthLayout>
-        <h1 class="mb-4 text-center text-lg font-semibold text-text">{{ t('auth.forgot.title') }}</h1>
+        <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.forgot.title') }}</h1>
 
         <p v-if="done" role="status" class="text-sm text-text">{{ t('auth.forgot.success') }}</p>
 

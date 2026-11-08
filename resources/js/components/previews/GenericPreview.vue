@@ -24,7 +24,7 @@ const hasContent = computed(() => props.segments.some((segment) => segment.conte
 </script>
 
 <template>
-    <div class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <div class="flex items-center gap-2">
             <PreviewAvatar :name="channelName" :picture="channelPicture" shape="circle" />
             <p class="truncate text-sm font-semibold text-text">{{ channelName }}</p>

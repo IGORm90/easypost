@@ -77,7 +77,7 @@ function dedupe(values: number[]): number[] {
             <select
                 :id="`slot-weekday-${index}`"
                 :value="row.weekday"
-                class="rounded-xl border border-border bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                 @change="onWeekdayChange(index, $event)"
             >
                 <option v-for="(label, weekday) in weekdayLabels" :key="weekday" :value="weekday">{{ label }}</option>
@@ -88,7 +88,7 @@ function dedupe(values: number[]): number[] {
                 :id="`slot-time-${index}`"
                 type="time"
                 :value="timeString(row.hour, row.minute)"
-                class="rounded-xl border border-border bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                 @change="onTimeChange(index, $event)"
             />
 

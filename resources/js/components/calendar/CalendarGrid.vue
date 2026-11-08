@@ -231,7 +231,7 @@ function goToday(): void {
             <span class="text-sm font-medium text-text">{{ title }}</span>
         </div>
 
-        <div class="calendar-shell rounded-xl border border-border bg-surface p-2">
+        <div class="calendar-shell rounded-lg border border-border bg-surface p-2">
             <FullCalendar ref="calendarRef" :options="calendarOptions" />
         </div>
     </div>

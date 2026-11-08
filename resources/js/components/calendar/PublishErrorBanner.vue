@@ -103,14 +103,14 @@ watch(() => props.range, load, { immediate: true, deep: true });
         v-if="failures.length > 0 && !dismissed"
         role="alert"
         data-test="publish-error-banner"
-        class="flex flex-col gap-3 rounded-xl border border-danger/40 bg-danger-soft p-3 text-sm text-danger"
+        class="flex flex-col gap-3 rounded-xl border border-danger-border bg-danger-soft p-3 text-sm text-danger"
     >
         <div class="flex items-start justify-between gap-2">
             <h2 class="font-semibold">{{ t('calendar.errors.title', { count: failures.length }) }}</h2>
 
             <button
                 type="button"
-                class="-m-1 rounded-xl p-1 text-danger/70 hover:text-danger focus:outline-none focus:ring-2 focus:ring-primary"
+                class="-m-1 rounded-xl p-1 text-danger hover:text-danger focus:outline-none focus:ring-2 focus:ring-primary"
                 :aria-label="t('ui.close')"
                 data-test="dismiss-publish-errors"
                 @click="dismissed = true"

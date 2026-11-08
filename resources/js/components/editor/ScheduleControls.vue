@@ -94,7 +94,7 @@ async function findSlot(): Promise<void> {
                 <select
                     id="slot-integration"
                     v-model="slotIntegrationId"
-                    class="rounded-xl border border-border bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                     <option value="">{{ t('editor.schedule.chooseChannel') }}</option>
                     <option v-for="integration in integrations" :key="integration.id" :value="integration.id">
@@ -114,7 +114,7 @@ async function findSlot(): Promise<void> {
                 id="publish-date"
                 v-model="localValue"
                 type="datetime-local"
-                class="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
+                class="w-full rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
             />
             <p class="text-xs text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
         </div>

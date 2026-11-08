@@ -171,7 +171,7 @@ function removeSegment(index: number): void {
                         </span>
                         <button
                             type="button"
-                            class="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-surface/90 text-[10px] text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            class="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-surface text-[10px] text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                             :aria-label="t('editor.thread.removeMedia')"
                             @click="removeMedia(index, mediaId)"
                         >

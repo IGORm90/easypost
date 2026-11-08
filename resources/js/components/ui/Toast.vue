@@ -8,10 +8,10 @@ withDefaults(defineProps<{ variant?: Variant }>(), { variant: 'neutral' });
 const emit = defineEmits<{ dismiss: [] }>();
 
 const variantClasses: Record<Variant, string> = {
-    success: 'border-success/40 bg-success-soft text-success',
-    warning: 'border-warning/40 bg-warning-soft text-warning',
-    danger: 'border-danger/40 bg-danger-soft text-danger',
-    neutral: 'border-border bg-surface text-text',
+    success: 'border-success-border bg-success-soft text-success',
+    warning: 'border-warning-border bg-warning-soft text-warning',
+    danger: 'border-danger-border bg-danger-soft text-danger',
+    neutral: 'border-border-strong bg-surface text-text',
     // color.md §3.8 (final review, Important 9): a notice that is neither
     // a failure nor a limit — "this is locked", "confirm this" — must not
     // borrow --warning, which on the editor screen already means "plan
@@ -25,7 +25,7 @@ const variantClasses: Record<Variant, string> = {
 <template>
     <div
         role="status"
-        class="flex items-start gap-2 rounded-xl border p-3 text-sm shadow-sm"
+        class="flex items-start gap-2 rounded-lg border p-3 text-sm"
         :class="variantClasses[variant]"
     >
         <div class="flex-1">

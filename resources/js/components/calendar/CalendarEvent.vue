@@ -47,6 +47,25 @@ const badgeStatus = computed(() => {
 
 const isDraft = computed(() => props.entry.state === 'DRAFT');
 
+/**
+ * «Кобальт» tints the whole card for the two outcomes — failed and
+ * published — so a failed post can be spotted across a busy week without
+ * reading every badge. In-flight states stay on the plain surface: a week
+ * where every card is coloured stops saying anything (color.md §3.2).
+ */
+const cardTone = computed(() => {
+    switch (props.entry.state) {
+        case 'ERROR':
+            return 'border-danger-border bg-danger-soft';
+        case 'PUBLISHED':
+            return 'border-success-border bg-success-soft';
+        case 'DRAFT':
+            return 'border-border-strong bg-surface';
+        default:
+            return 'border-border bg-surface';
+    }
+});
+
 const isShared = computed(() => props.entry.share_token !== null);
 
 /**
@@ -101,8 +120,8 @@ const preview = computed(() => props.entry.posts[0]?.content ?? '');
 
 <template>
     <div
-        class="flex w-full flex-col gap-1 rounded-xl border border-border px-2 py-1.5 text-left text-xs"
-        :class="{ 'border-dashed': isDraft }"
+        class="flex w-full flex-col gap-1 rounded-xl border px-2 py-1.5 text-left text-xs"
+        :class="[cardTone, { 'border-dashed': isDraft }]"
     >
         <div class="flex items-center justify-between gap-1">
             <span class="flex items-center gap-1 truncate font-medium text-text">

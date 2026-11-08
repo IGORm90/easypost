@@ -17,7 +17,7 @@ const views: CalendarView[] = ['month', 'week', 'day'];
      is not the screen's action, and the calendar already spends its two
      primaries on the active nav link and "New post". `aria-pressed` plus
      the weight change keep it distinguishable without colour alone (§4). -->
-    <div class="inline-flex rounded-xl border border-border bg-surface p-0.5" role="group" :aria-label="t('calendar.title')">
+    <div class="inline-flex rounded-xl border border-border-strong bg-surface p-0.5" role="group" :aria-label="t('calendar.title')">
         <button
             v-for="view in views"
             :key="view"

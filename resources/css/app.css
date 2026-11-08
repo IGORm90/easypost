@@ -1,63 +1,95 @@
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * «Кобальт». Every value below is a row in color.md — palette.spec.ts
+ * rejects any literal that file does not list, and theme.spec.ts fails
+ * if :root and .dark stop defining the same set of tokens.
+ */
 :root {
-    --bg: #F1F5F2;
+    --bg: #F4F6FA;
     --surface: #FFFFFF;
-    --surface-2: #F7FAF8;
-    --border: #DBE5DD;
-    --text: #0B1F17;
-    --muted: #5A7267;
+    --surface-2: #F8FAFD;
+    --border: #E1E6F0;
+    /* Inputs and secondary buttons need a visibly firmer edge than a card
+       divider; one shared --border made fields disappear into cards. */
+    --border-strong: #D5DCEA;
+    --text: #0E1A33;
+    --muted: #5B6784;
     /*
      * The modal scrim. The alpha is baked into the token because the
      * Tailwind mapping is a bare `var(--token)` with no <alpha-value>
      * placeholder, so `bg-overlay/65` would be silently dropped by
-     * Tailwind 3 and dim nothing at all — which is exactly what the old
-     * `bg-text/40` did.
+     * Tailwind 3 and dim nothing at all.
      */
-    --overlay: #0B1F17A6;
-    --primary: #0F726B;
-    --primary-hover: #0C5B55;
+    --overlay: #0E1A33A6;
+    --nav: #0B1B3F;
+    --nav-active: #1A2E5C;
+    --nav-border: #1F3364;
+    --nav-text: #C9D3EA;
+    --nav-muted: #8FA0C6;
+    --on-nav: #FFFFFF;
+    --primary: #2453D6;
+    --primary-hover: #1A3FA8;
     --on-primary: #FFFFFF;
-    --primary-soft: #D5EDEA;
-    --accent: #A94E08;
+    --primary-soft: #E3EBFD;
+    --accent: #4A5675;
     --on-accent: #FFFFFF;
-    --accent-soft: #F7E9D5;
-    --success: #147839;
-    --success-soft: #D8F0DF;
-    --warning: #896605;
-    --warning-soft: #FAF0D2;
-    --danger: #B91C1C;
-    --danger-soft: #FADEDE;
+    --accent-soft: #EDF0F5;
+    --success: #11603A;
+    --success-soft: #E6F5EC;
+    --success-border: #B8E2C8;
+    --warning: #7A5200;
+    --warning-soft: #FFF6DB;
+    --warning-border: #F2DD9C;
+    --danger: #A11F26;
+    --danger-soft: #FDECEC;
+    --danger-border: #F3C7C9;
     --on-danger: #FFFFFF;
 }
 
 .dark {
-    /* «Глубокий лес» — не инверсия светлой темы */
-    --bg: #07110E;
-    --surface: #0F1D18;
-    --surface-2: #0A1613;
-    --border: #1E332B;
-    --text: #E4EFE9;
-    --muted: #8AA598;
-    /* Deliberately darker than the light theme's: --text here is nearly
-       white, so reusing it would wash the page out instead of dimming it. */
-    --overlay: #07110EBF;
-    --primary: #2DD4BF;
-    --primary-hover: #5EEAD4;
-    --on-primary: #032620;
-    --primary-soft: #0F332D;
-    --accent: #FB923C;
-    --on-accent: #2A1206;
-    --accent-soft: #38230F;
-    --success: #4ADE80;
-    --success-soft: #123120;
-    --warning: #FCD34D;
-    --warning-soft: #332A0B;
-    --danger: #F87171;
-    --danger-soft: #38191B;
-    --on-danger: #2A0A0A;
+    /* «Ночь» — not an inversion of the light theme (color.md §3.6) */
+    --bg: #0A1225;
+    --surface: #111B33;
+    --surface-2: #0D162B;
+    --border: #22304F;
+    --border-strong: #2E3E63;
+    --text: #E6ECF8;
+    --muted: #93A0BE;
+    /* Deliberately darker than the light theme's scrim: the page under it
+       is already dark, so the light value would barely dim it. */
+    --overlay: #050A16BF;
+    --nav: #070D1C;
+    --nav-active: #1A2848;
+    --nav-border: #1A2540;
+    --nav-text: #C9D3EA;
+    --nav-muted: #8FA0C6;
+    --on-nav: #FFFFFF;
+    --primary: #7AA2FF;
+    --primary-hover: #A3BFFF;
+    --on-primary: #0A1225;
+    --primary-soft: #1A2B57;
+    --accent: #B4BFD6;
+    --on-accent: #0A1225;
+    --accent-soft: #1C2740;
+    --success: #5FD394;
+    --success-soft: #10301F;
+    --success-border: #1E5236;
+    --warning: #F2C55C;
+    --warning-soft: #33280C;
+    --warning-border: #5A4714;
+    --danger: #FF8A8A;
+    --danger-soft: #3A1619;
+    --danger-border: #6A2A30;
+    --on-danger: #1A0607;
 }
 
 body {

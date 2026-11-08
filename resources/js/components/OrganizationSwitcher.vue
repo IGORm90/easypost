@@ -22,7 +22,7 @@ function onChange(event: Event): void {
         <select
             id="organization-switcher"
             :value="organization.current?.id"
-            class="min-w-0 max-w-full truncate rounded-xl border border-border bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:max-w-xs"
+            class="min-w-0 max-w-full truncate rounded-xl border border-border-strong bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:max-w-xs"
             @change="onChange"
         >
             <option v-if="!auth.organizations.length" value="">{{ t('organization.switcher.empty') }}</option>

@@ -723,7 +723,7 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                     :value="commonContent"
                     :placeholder="t('editor.commonContentPlaceholder')"
                     rows="3"
-                    class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
                     @input="onCommonContentInput(($event.target as HTMLTextAreaElement).value)"
                 />
             </div>
@@ -747,7 +747,7 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                         <select
                             id="channel-signature"
                             v-model="activeDraft.signatureId"
-                            class="rounded-xl border border-border bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                            class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                         >
                             <!--
                                 Finding 4: editing an existing group can never

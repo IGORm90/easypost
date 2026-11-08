@@ -18,7 +18,7 @@ const modes: DisplayMode[] = ['grid', 'list'];
      control reports state and must not spend the screen's primary budget,
      which the active nav link and "New post" have already used up.
      `aria-pressed` plus the weight change carry it without colour (§4). -->
-    <div class="inline-flex rounded-xl border border-border bg-surface p-0.5" role="group" :aria-label="t('calendar.mode.label')">
+    <div class="inline-flex rounded-xl border border-border-strong bg-surface p-0.5" role="group" :aria-label="t('calendar.mode.label')">
         <button
             v-for="mode in modes"
             :key="mode"

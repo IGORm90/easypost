@@ -72,6 +72,28 @@ it('keeps the sidebar hidden on small screens, as the layout intends', () => {
     expect(w.get('aside').classes()).toContain('md:flex');
 });
 
+it('draws the sidebar on the dark navigation surface, as the Cobalt theme does', () => {
+    const w = mountLayout();
+
+    expect(w.get('aside').classes()).toContain('bg-nav');
+    expect(w.get('aside').classes()).toContain('text-nav-text');
+});
+
+it('groups the settings destinations under their own heading in both menus', () => {
+    const w = mountLayout();
+
+    for (const menu of ['aside', '[data-test="mobile-nav"]']) {
+        const group = w.get(`${menu} [data-test="nav-group-settings"]`);
+        expect(group.get('p').text()).toBe('Settings');
+        expect(group.findAll('a[data-route]').map((a) => a.attributes('data-route'))).toEqual([
+            'settings-profile',
+            'settings-team',
+            'settings-sets',
+            'settings-signatures',
+        ]);
+    }
+});
+
 it('offers a navigation toggle below the md breakpoint, where the sidebar is not rendered', () => {
     const w = mountLayout();
 
@@ -129,15 +151,15 @@ it.each(['workspaces', 'workspace-create'])('marks Workspaces active on %s in bo
 
     for (const menu of ['aside', '[data-test="mobile-nav"]']) {
         const link = wrapper.get(`${menu} a[data-route="workspaces"]`);
-        expect(link.classes()).toContain('bg-primary-soft');
-        expect(link.classes()).toContain('text-primary');
+        expect(link.classes()).toContain('bg-nav-active');
+        expect(link.classes()).toContain('text-on-nav');
     }
 
     route.name = 'home';
     route.meta = {};
     await nextTick();
     for (const menu of ['aside', '[data-test="mobile-nav"]']) {
-        expect(wrapper.get(`${menu} a[data-route="workspaces"]`).classes()).not.toContain('bg-primary-soft');
+        expect(wrapper.get(`${menu} a[data-route="workspaces"]`).classes()).not.toContain('bg-nav-active');
     }
 });
 

@@ -111,7 +111,7 @@ function onGridKeydown(event: KeyboardEvent, char: string): void {
             data-testid="emoji-panel"
             role="dialog"
             :aria-label="t('editor.emoji.open')"
-            class="absolute left-0 z-20 mt-1 flex w-72 flex-col gap-2 rounded-xl border border-border bg-surface p-2 shadow-lg"
+            class="absolute left-0 z-20 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-2 shadow-lg"
             @keydown.escape="close"
         >
             <Input

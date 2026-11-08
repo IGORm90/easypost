@@ -198,7 +198,7 @@ async function remove(set: SetDto): Promise<void> {
     <AppLayout>
         <div class="mx-auto flex max-w-3xl flex-col gap-4">
             <div class="flex flex-col gap-1">
-                <h1 class="text-lg font-semibold text-text">{{ t('sets.title') }}</h1>
+                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('sets.title') }}</h1>
                 <p class="text-sm text-muted">{{ t('sets.intro') }}</p>
             </div>
 

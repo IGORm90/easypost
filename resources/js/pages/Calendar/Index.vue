@@ -376,7 +376,7 @@ function onEditorSaved(): void {
         <div class="flex flex-col gap-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex items-baseline gap-2">
-                    <h1 class="text-lg font-semibold text-text">{{ t('calendar.title') }}</h1>
+                    <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('calendar.title') }}</h1>
                     <span v-if="loading" class="text-xs text-muted">{{ t('ui.loading') }}</span>
                 </div>
                 <div class="flex items-center gap-3">

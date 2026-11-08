@@ -14,7 +14,7 @@ const organization = useOrganizationStore();
         <div class="mx-auto flex min-w-0 max-w-3xl flex-col gap-6">
             <div class="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div class="flex flex-col gap-1">
-                    <h1 class="text-xl font-semibold text-text">{{ t('organization.list.title') }}</h1>
+                    <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('organization.list.title') }}</h1>
                     <p class="text-sm text-muted">{{ t('organization.list.description') }}</p>
                 </div>
                 <router-link
@@ -30,7 +30,7 @@ const organization = useOrganizationStore();
                     v-for="workspace in auth.organizations"
                     :key="workspace.id"
                     :aria-current="workspace.id === organization.current?.id ? 'true' : undefined"
-                    class="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-border bg-surface p-4"
+                    class="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-border bg-surface p-4"
                 >
                     <span class="min-w-0 text-sm font-medium text-text [overflow-wrap:anywhere]">{{ workspace.name }}</span>
                     <span
@@ -41,7 +41,7 @@ const organization = useOrganizationStore();
                     </span>
                 </li>
             </ul>
-            <p v-else class="rounded-xl border border-border bg-surface p-6 text-sm text-muted">
+            <p v-else class="rounded-lg border border-border bg-surface p-6 text-sm text-muted">
                 {{ t('organization.list.empty') }}
             </p>
         </div>

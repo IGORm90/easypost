@@ -96,7 +96,7 @@ function onClick(): void {
                 {{ t('media.video') }}
             </span>
 
-            <span v-if="item.pending" class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-surface/90 px-2 text-xs text-muted">
+            <span v-if="item.pending" class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-surface px-2 text-xs text-muted">
                 {{ t('media.uploading') }}
                 <span v-if="item.progress !== undefined" class="h-1.5 w-3/4 overflow-hidden rounded-xl bg-surface-2">
                     <span class="block h-full rounded-xl bg-primary transition-all" :style="{ width: `${item.progress}%` }" />

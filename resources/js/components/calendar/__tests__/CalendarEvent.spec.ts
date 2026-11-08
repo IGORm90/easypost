@@ -30,7 +30,21 @@ it('a DRAFT card is distinguishable by more than colour: dashed border plus a te
   // two must never sit together in one component.
   const badge = w.findAll('span').find((span) => span.text() === en.calendar.state.DRAFT)
   expect(badge?.classes().join(' ')).not.toMatch(/warning/)
-  expect(badge?.classes().join(' ')).toMatch(/surface-2|muted/)
+  expect(badge?.classes().join(' ')).toMatch(/accent-soft|surface-2|muted/)
+})
+
+// «Кобальт»: an outcome the user has to act on, or can stop thinking
+// about, tints the whole card — not only its badge — so a failed post is
+// findable across a busy week at a glance. Everything still in flight
+// stays on the plain surface, which keeps the week from turning into a
+// wall of colour (color.md §3.2).
+it.each([
+  ['ERROR', ['bg-danger-soft', 'border-danger-border']],
+  ['PUBLISHED', ['bg-success-soft', 'border-success-border']],
+  ['QUEUE', ['bg-surface', 'border-border']],
+])('tints a %s card by its outcome', (state, classes) => {
+  const w = mount(CalendarEvent, { props: { entry: entry({ state }), locked: false } })
+  expect(w.classes()).toEqual(expect.arrayContaining(classes))
 })
 
 it('a non-draft card has a solid border, not dashed', () => {

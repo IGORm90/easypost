@@ -21,7 +21,7 @@ it('renders the primary variant on semantic tokens', () => {
 
 it('renders the secondary variant as an outline, never as accent', () => {
   const w = mount(Button, { props: { variant: 'secondary' } })
-  expect(w.classes()).toEqual(expect.arrayContaining(['border-border', 'text-text']))
+  expect(w.classes()).toEqual(expect.arrayContaining(['border-border-strong', 'bg-surface', 'text-text']))
   expect(w.classes().join(' ')).not.toMatch(/accent|primary/)   // color.md §3.2
 })
 
@@ -53,4 +53,9 @@ it('renders the danger variant on the on-danger token, never a raw palette class
   // dark-theme --danger (#F87171) fails contrast (~2.77:1); text-white must
   // never come back here.
   expect(w.classes()).not.toContain('text-white')
+})
+
+it('gives the primary action the Cobalt weight, so it reads as the one thing to press', () => {
+  const w = mount(Button, { props: { variant: 'primary' } })
+  expect(w.classes()).toContain('font-semibold')
 })

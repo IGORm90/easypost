@@ -79,7 +79,7 @@ async function submit(): Promise<void> {
 <template>
     <AppLayout>
         <div class="mx-auto flex max-w-lg flex-col gap-4">
-            <h1 class="text-xl font-semibold text-text">{{ t('organization.create.title') }}</h1>
+            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('organization.create.title') }}</h1>
             <Card>
                 <div class="flex flex-col gap-4">
                     <p class="text-sm text-muted">{{ t('organization.create.description') }}</p>

@@ -32,10 +32,10 @@ const emit = defineEmits<{ click: [MouseEvent] }>();
 const { t } = useI18n();
 
 const variantClasses: Record<Variant, string> = {
-    primary: 'bg-primary text-on-primary hover:bg-primary-hover focus-visible:ring-primary',
-    secondary: 'border border-border text-text hover:bg-surface-2 focus-visible:ring-border',
-    ghost: 'text-muted hover:text-text focus-visible:ring-border',
-    danger: 'bg-danger text-on-danger hover:opacity-90 focus-visible:ring-danger',
+    primary: 'bg-primary font-semibold text-on-primary hover:bg-primary-hover focus-visible:ring-primary',
+    secondary: 'font-medium border border-border-strong bg-surface text-text hover:bg-surface-2 focus-visible:ring-border-strong',
+    ghost: 'font-medium text-muted hover:bg-surface-2 hover:text-text focus-visible:ring-border-strong',
+    danger: 'bg-danger font-medium text-on-danger hover:opacity-90 focus-visible:ring-danger',
 };
 
 const classes = computed(() => variantClasses[props.variant]);
@@ -56,7 +56,7 @@ function handleClick(event: MouseEvent): void {
         :aria-busy="loading"
         :disabled="isDisabled"
         :class="[
-            'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition',
+            'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm transition',
             'focus-visible:outline-none focus-visible:ring-2',
             'disabled:cursor-not-allowed disabled:opacity-60',
             classes,

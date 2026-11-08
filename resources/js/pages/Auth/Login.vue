@@ -72,7 +72,7 @@ async function continueWithGoogle(): Promise<void> {
 
 <template>
     <AuthLayout>
-        <h1 class="mb-4 text-center text-lg font-semibold text-text">{{ t('auth.login.title') }}</h1>
+        <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.login.title') }}</h1>
 
         <form class="flex flex-col gap-4" @submit.prevent="submit">
             <Input

@@ -29,7 +29,7 @@ const states: PostStateFilter[] = ['all', 'DRAFT', 'SCHEDULED', 'QUEUE', 'PUBLIS
     <!-- Same segmented-control styling as ViewSwitcher/DisplayModeSwitcher,
      same reason: color.md §3.1 caps the screen at one primary element, and
      the active nav link plus "New post" already hold both. -->
-    <div class="inline-flex flex-wrap rounded-xl border border-border bg-surface p-0.5" role="group" :aria-label="t('calendar.list.stateFilter')">
+    <div class="inline-flex flex-wrap rounded-xl border border-border-strong bg-surface p-0.5" role="group" :aria-label="t('calendar.list.stateFilter')">
         <button
             v-for="state in states"
             :key="state"

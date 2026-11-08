@@ -9,7 +9,7 @@ const { t } = useI18n();
 <template>
     <button
         type="button"
-        class="inline-flex items-center justify-center rounded-xl border border-border bg-surface p-2 text-text hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary"
+        class="inline-flex items-center justify-center rounded-xl border border-border-strong bg-surface p-2 text-text hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary"
         :aria-label="t('nav.toggleTheme')"
         :aria-pressed="theme === 'dark'"
         @click="toggle"

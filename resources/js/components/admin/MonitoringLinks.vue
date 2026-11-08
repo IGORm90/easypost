@@ -27,7 +27,7 @@ const LINKS = [
 </script>
 
 <template>
-    <p data-test="monitoring-heading" class="mt-3 px-2 text-xs font-semibold text-muted">
+    <p data-test="monitoring-heading" class="mt-3 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-nav-muted">
         {{ t('nav.monitoring') }}
     </p>
     <!-- A separate application: its own tab keeps the SPA's place. -->

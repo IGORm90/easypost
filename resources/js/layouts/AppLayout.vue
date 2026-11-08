@@ -14,40 +14,49 @@ const auth = useAuthStore();
 const route = useRoute();
 
 /**
- * One list, rendered twice: the `md`-and-up sidebar and the below-`md`
- * menu. Final review, Important 11 — the sidebar is `hidden … md:flex`
- * and the header held only the org switcher, the theme toggle and
- * Logout, so on a phone a signed-in user could see whichever page they
- * landed on and reach no other. Sharing the source keeps the two from
- * drifting the next time a destination is added.
+ * One set of groups, rendered twice: the `md`-and-up sidebar and the
+ * below-`md` menu. Final review, Important 11 — the sidebar is
+ * `hidden … md:flex`, so on a phone the mobile menu is the only way to
+ * reach another page. Sharing the source keeps the two from drifting the
+ * next time a destination is added.
+ *
+ * «Кобальт» splits the list into the daily destinations, the settings
+ * group under its own heading, and — for a platform admin only — the
+ * instance group. The flattened order is unchanged, so every existing
+ * "reachable from both menus" assertion still reads the same list.
  */
-const NAV_ITEMS = [
-    { name: 'home', label: 'calendar.title' },
-    { name: 'channels', label: 'nav.channels' },
-    { name: 'media', label: 'nav.media' },
-    { name: 'workspaces', label: 'nav.workspaces' },
+const MAIN_ITEMS = [
+    { name: 'home', label: 'calendar.title', icon: 'M3 5h18v16H3zM3 10h18M8 3v4M16 3v4' },
+    { name: 'channels', label: 'nav.channels', icon: 'M6 14.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM18 8.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM18 20.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM8.2 11l7.6-4M8.2 13l7.6 4' },
+    { name: 'media', label: 'nav.media', icon: 'M3 4h18v16H3zM21 16l-5-5-9 9M9 12a2 2 0 100-4 2 2 0 000 4z' },
+    { name: 'workspaces', label: 'nav.workspaces', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' },
+] as const;
+
+const SETTINGS_ITEMS = [
     { name: 'settings-profile', label: 'nav.settingsProfile' },
     { name: 'settings-team', label: 'nav.settingsTeam' },
     { name: 'settings-sets', label: 'nav.settingsSets' },
     { name: 'settings-signatures', label: 'nav.settingsSignatures' },
-    // Task 1.7. The only entry that is not for everyone: it goes to the
-    // one route gated by more than a session, so offering it to a user
-    // the guard would immediately turn around is worse than not showing
-    // it. Hiding is not the security boundary — the `superadmin`
-    // middleware on /api/admin/* is.
-    { name: 'admin-users', label: 'nav.admin', superadminOnly: true },
 ] as const;
 
-const navItems = computed(() => NAV_ITEMS.filter((item) => !('superadminOnly' in item) || auth.isSuperadmin));
+const ADMIN_ITEMS = [{ name: 'admin-users', label: 'nav.admin' }] as const;
 
-const NAV_LINK_CLASS = 'rounded-xl px-2 py-1.5 text-sm text-muted hover:bg-surface hover:text-text';
+const adminItems = computed(() => (auth.isSuperadmin ? ADMIN_ITEMS : []));
+
+const NAV_LINK_CLASS =
+    'flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm text-nav-text hover:bg-nav-active hover:text-on-nav focus:outline-none focus-visible:ring-2 focus-visible:ring-nav-muted';
 /**
- * The active nav item is one of the two resting primaries color.md §3.1
- * allows a screen (the other is "New post"); the mobile menu reuses it
- * rather than adding a third, because only one of the two is ever on
- * screen at a time.
+ * The active item is the dark navigation's own highlight, not
+ * --primary-soft: on the Cobalt menu the blue stays reserved for the
+ * page's one primary action (color.md §3.1), so "where am I" and "do
+ * this" no longer compete for the same colour.
  */
-const NAV_ACTIVE_CLASS = 'bg-primary-soft text-primary';
+const NAV_ACTIVE_CLASS = 'bg-nav-active text-on-nav font-medium';
+const GROUP_HEADING_CLASS = 'mt-5 mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-nav-muted';
+
+function isActive(name: string): boolean {
+    return route.meta?.navSection === name;
+}
 
 const mobileNavOpen = ref(false);
 </script>
@@ -55,8 +64,7 @@ const mobileNavOpen = ref(false);
 <template>
     <!--
         An outer column so the impersonation banner can span the full
-        width above both the sidebar and the content. The inner row is
-        the layout that was here before, unchanged.
+        width above both the sidebar and the content.
     -->
     <div class="flex min-h-screen flex-col bg-bg text-text">
         <!-- Global "plan limit reached" warning (Task 36) — one instance
@@ -64,95 +72,141 @@ const mobileNavOpen = ref(false);
              LimitToast.vue's docblock. -->
         <LimitToast />
 
-        <!-- Task 1.7: one instance for the whole authenticated app, for
-             the same reason LimitToast has one — and mounted here rather
-             than at the root because there is no App.vue (app.ts does
-             `createApp(RouterView)`). See ImpersonationBanner.vue. -->
+        <!-- Task 1.7: one instance for the whole authenticated app — there
+             is no App.vue (app.ts does `createApp(RouterView)`). -->
         <ImpersonationBanner />
 
         <div class="flex flex-1">
-        <!-- Sidebar sits on the third background level (color.md §3.4). -->
-        <aside class="hidden w-56 shrink-0 border-r border-border bg-surface-2 p-4 md:flex md:flex-col md:gap-1">
-            <p class="mb-3 text-sm font-semibold">{{ t('app.name') }}</p>
-            <router-link
-                v-for="item in navItems"
-                :key="item.name"
-                :to="{ name: item.name }"
-                :class="[NAV_LINK_CLASS, route.meta.navSection === item.name ? NAV_ACTIVE_CLASS : '']"
-                :active-class="NAV_ACTIVE_CLASS"
-            >
-                {{ t(item.label) }}
-            </router-link>
-            <MonitoringLinks v-if="auth.isSuperadmin" :link-class="NAV_LINK_CLASS" />
-        </aside>
-
-        <div class="flex min-w-0 flex-1 flex-col">
-            <header class="flex items-center justify-between gap-4 border-b border-border bg-surface px-4 py-3">
-                <button
-                    data-test="mobile-nav-toggle"
-                    type="button"
-                    class="-ml-1 shrink-0 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
-                    :aria-expanded="mobileNavOpen ? 'true' : 'false'"
-                    aria-controls="app-mobile-nav"
-                    :aria-label="t('nav.menu')"
-                    @click="mobileNavOpen = !mobileNavOpen"
-                >
-                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path
-                            fill-rule="evenodd"
-                            d="M3 5.75A.75.75 0 013.75 5h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 5.75zm0 4.25a.75.75 0 01.75-.75h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 10zm0 4.25a.75.75 0 01.75-.75h12.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75z"
-                            clip-rule="evenodd"
-                        />
-                    </svg>
-                </button>
-                <OrganizationSwitcher v-if="auth.user" />
-                <div class="ml-auto flex shrink-0 items-center gap-3">
-                    <ThemeToggle />
-                    <button
-                        v-if="auth.user"
-                        type="button"
-                        class="text-sm text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        @click="auth.logout()"
-                    >
-                        {{ t('nav.logout') }}
-                    </button>
+            <aside class="hidden w-60 shrink-0 bg-nav px-3.5 py-5 text-nav-text md:flex md:flex-col md:gap-0.5">
+                <div class="mb-5 flex items-center gap-2.5 px-2.5">
+                    <span class="flex h-7 w-7 items-center justify-center rounded bg-on-nav text-xs font-bold text-nav" aria-hidden="true">EP</span>
+                    <span class="text-[15px] font-semibold text-on-nav">{{ t('app.name') }}</span>
                 </div>
-            </header>
-
-            <!--
-                `v-show`, not `v-if`: the toggle's `aria-controls` above
-                has to name an element that exists in both states, or the
-                reference dangles exactly when it matters — while the menu
-                is collapsed and the user is deciding whether to open it.
-                `display: none` keeps the links out of the a11y tree and
-                the tab order just as removal did.
-            -->
-            <nav
-                v-show="mobileNavOpen"
-                id="app-mobile-nav"
-                data-test="mobile-nav"
-                class="flex flex-col gap-1 border-b border-border bg-surface-2 p-4 md:hidden"
-                :aria-label="t('nav.menu')"
-            >
                 <router-link
-                    v-for="item in navItems"
+                    v-for="item in MAIN_ITEMS"
                     :key="item.name"
                     :to="{ name: item.name }"
-                    :class="[NAV_LINK_CLASS, route.meta.navSection === item.name ? NAV_ACTIVE_CLASS : '']"
+                    :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
                     :active-class="NAV_ACTIVE_CLASS"
-                    @click="mobileNavOpen = false"
                 >
+                    <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path :d="item.icon" /></svg>
                     {{ t(item.label) }}
                 </router-link>
-                <MonitoringLinks v-if="auth.isSuperadmin" :link-class="NAV_LINK_CLASS" />
-            </nav>
+                <div data-test="nav-group-settings" class="flex flex-col gap-0.5">
+                    <p :class="GROUP_HEADING_CLASS">{{ t('nav.settings') }}</p>
+                    <router-link
+                        v-for="item in SETTINGS_ITEMS"
+                        :key="item.name"
+                        :to="{ name: item.name }"
+                        :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
+                        :active-class="NAV_ACTIVE_CLASS"
+                    >
+                        {{ t(item.label) }}
+                    </router-link>
+                </div>
+                <div v-if="auth.isSuperadmin" class="flex flex-col gap-0.5">
+                    <p :class="GROUP_HEADING_CLASS">{{ t('nav.instance') }}</p>
+                    <router-link
+                        v-for="item in adminItems"
+                        :key="item.name"
+                        :to="{ name: item.name }"
+                        :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
+                        :active-class="NAV_ACTIVE_CLASS"
+                    >
+                        {{ t(item.label) }}
+                    </router-link>
+                    <MonitoringLinks :link-class="NAV_LINK_CLASS" />
+                </div>
+            </aside>
 
-            <main class="flex-1 p-4">
-                <slot>
-                    <p class="text-sm text-muted">{{ t('shell.comingSoon') }}</p>
-                </slot>
-            </main>
-        </div>
+            <div class="flex min-w-0 flex-1 flex-col">
+                <header class="flex items-center justify-between gap-4 border-b border-border bg-surface px-4 py-3 md:px-8">
+                    <button
+                        data-test="mobile-nav-toggle"
+                        type="button"
+                        class="-ml-1 shrink-0 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
+                        :aria-expanded="mobileNavOpen ? 'true' : 'false'"
+                        aria-controls="app-mobile-nav"
+                        :aria-label="t('nav.menu')"
+                        @click="mobileNavOpen = !mobileNavOpen"
+                    >
+                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M4 7h16M4 12h16M4 17h16" />
+                        </svg>
+                    </button>
+                    <OrganizationSwitcher v-if="auth.user" />
+                    <div class="ml-auto flex shrink-0 items-center gap-3">
+                        <ThemeToggle />
+                        <button
+                            v-if="auth.user"
+                            type="button"
+                            class="rounded-xl px-2 py-1 text-sm text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            @click="auth.logout()"
+                        >
+                            {{ t('nav.logout') }}
+                        </button>
+                    </div>
+                </header>
+
+                <!--
+                    `v-show`, not `v-if`: the toggle's `aria-controls` above
+                    has to name an element that exists in both states.
+                    `display: none` keeps the links out of the a11y tree and
+                    the tab order just as removal did.
+                -->
+                <nav
+                    v-show="mobileNavOpen"
+                    id="app-mobile-nav"
+                    data-test="mobile-nav"
+                    class="flex flex-col gap-0.5 bg-nav p-4 text-nav-text md:hidden"
+                    :aria-label="t('nav.menu')"
+                >
+                    <router-link
+                        v-for="item in MAIN_ITEMS"
+                        :key="item.name"
+                        :to="{ name: item.name }"
+                        :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
+                        :active-class="NAV_ACTIVE_CLASS"
+                        @click="mobileNavOpen = false"
+                    >
+                        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path :d="item.icon" /></svg>
+                        {{ t(item.label) }}
+                    </router-link>
+                    <div data-test="nav-group-settings" class="flex flex-col gap-0.5">
+                        <p :class="GROUP_HEADING_CLASS">{{ t('nav.settings') }}</p>
+                        <router-link
+                            v-for="item in SETTINGS_ITEMS"
+                            :key="item.name"
+                            :to="{ name: item.name }"
+                            :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
+                            :active-class="NAV_ACTIVE_CLASS"
+                            @click="mobileNavOpen = false"
+                        >
+                            {{ t(item.label) }}
+                        </router-link>
+                    </div>
+                    <div v-if="auth.isSuperadmin" class="flex flex-col gap-0.5">
+                        <p :class="GROUP_HEADING_CLASS">{{ t('nav.instance') }}</p>
+                        <router-link
+                            v-for="item in adminItems"
+                            :key="item.name"
+                            :to="{ name: item.name }"
+                            :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
+                            :active-class="NAV_ACTIVE_CLASS"
+                            @click="mobileNavOpen = false"
+                        >
+                            {{ t(item.label) }}
+                        </router-link>
+                        <MonitoringLinks :link-class="NAV_LINK_CLASS" />
+                    </div>
+                </nav>
+
+                <main class="flex-1 px-4 py-6 md:px-8">
+                    <slot>
+                        <p class="text-sm text-muted">{{ t('shell.comingSoon') }}</p>
+                    </slot>
+                </main>
+            </div>
         </div>
     </div>
 </template>

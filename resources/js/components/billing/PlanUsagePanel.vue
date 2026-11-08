@@ -78,7 +78,7 @@ function remainingLabel(limit: LimitUsage): string {
     <Card v-if="plan || failed" data-test="plan-usage">
         <div class="flex flex-col gap-3 p-3">
             <div class="flex items-baseline justify-between gap-2">
-                <h2 class="text-sm font-semibold text-text">{{ t('settings.plan.title') }}</h2>
+                <h2 class="text-base font-semibold text-text">{{ t('settings.plan.title') }}</h2>
                 <span v-if="plan" data-test="plan-name" class="text-xs text-muted">
                     {{ t('settings.plan.current', { plan: plan.plan }) }}
                 </span>
@@ -89,7 +89,7 @@ function remainingLabel(limit: LimitUsage): string {
             <dl v-else-if="plan" class="flex flex-col gap-2 text-sm">
                 <div class="flex items-baseline justify-between gap-2">
                     <dt class="text-muted">{{ t('settings.plan.channels') }}</dt>
-                    <dd data-test="usage-channels" class="text-text">{{ remainingLabel(plan.usage.channels) }}</dd>
+                    <dd data-test="usage-channels" class="font-mono text-[13px] text-text">{{ remainingLabel(plan.usage.channels) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between gap-2">
                     <dt class="text-muted">
@@ -100,11 +100,11 @@ function remainingLabel(limit: LimitUsage): string {
                             ({{ plan.usage.posts_per_month.period }})
                         </span>
                     </dt>
-                    <dd data-test="usage-posts" class="text-text">{{ remainingLabel(plan.usage.posts_per_month) }}</dd>
+                    <dd data-test="usage-posts" class="font-mono text-[13px] text-text">{{ remainingLabel(plan.usage.posts_per_month) }}</dd>
                 </div>
                 <div class="flex items-baseline justify-between gap-2">
                     <dt class="text-muted">{{ t('settings.plan.mediaStorage') }}</dt>
-                    <dd data-test="usage-media" class="text-text">{{ remainingLabel(plan.usage.media_storage_mb) }}</dd>
+                    <dd data-test="usage-media" class="font-mono text-[13px] text-text">{{ remainingLabel(plan.usage.media_storage_mb) }}</dd>
                 </div>
             </dl>
         </div>

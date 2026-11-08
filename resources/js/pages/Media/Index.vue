@@ -88,7 +88,7 @@ async function remove(id: string): Promise<void> {
 <template>
     <AppLayout>
         <div class="mx-auto flex max-w-5xl flex-col gap-4">
-            <h1 class="text-lg font-semibold text-text">{{ t('media.title') }}</h1>
+            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('media.title') }}</h1>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
 

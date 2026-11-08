@@ -147,7 +147,7 @@ async function copyInviteUrl(): Promise<void> {
     <AppLayout>
         <div class="mx-auto flex max-w-3xl flex-col gap-4">
             <div class="flex items-center justify-between">
-                <h1 class="text-lg font-semibold text-text">{{ t('settings.team.title') }}</h1>
+                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('settings.team.title') }}</h1>
                 <!-- secondary, not primary: the modal's own submit button
                      below is this screen's one primary action (color.md
                      §3.1 — at most one primary element per screen, and
@@ -185,7 +185,7 @@ async function copyInviteUrl(): Promise<void> {
                                 <select
                                     v-if="assignableRoles(member).length"
                                     :value="member.role"
-                                    class="rounded-xl border border-border bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                    class="rounded-xl border border-border-strong bg-surface px-2 py-1 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                                     @change="changeRole(member, ($event.target as HTMLSelectElement).value as Role)"
                                 >
                                     <option v-for="role in assignableRoles(member)" :key="role" :value="role">
@@ -228,7 +228,7 @@ async function copyInviteUrl(): Promise<void> {
                     <select
                         id="invite-role"
                         v-model="inviteForm.role"
-                        class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                        class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                     >
                         <option v-for="role in invitableRoles" :key="role" :value="role">{{ t(`settings.team.roles.${role}`) }}</option>
                     </select>

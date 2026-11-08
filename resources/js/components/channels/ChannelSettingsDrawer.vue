@@ -171,7 +171,7 @@ async function submit(): Promise<void> {
                 <select
                     :id="`channel-setting-${field.key}`"
                     v-model="settingValues[field.key]"
-                    class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                     <!--
                         Only while nothing is chosen. Re-selecting it on a

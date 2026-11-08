@@ -147,7 +147,7 @@ watch(
                     :data-field="field.key"
                     :required="field.required"
                     :value="values[field.key]"
-                    class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     @change="onInput(field, ($event.target as HTMLSelectElement).value)"
                 >
                     <option value="">{{ t('editor.postSettings.choose') }}</option>
@@ -167,7 +167,7 @@ watch(
                     :required="field.required"
                     :value="values[field.key]"
                     rows="3"
-                    class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     @input="onInput(field, ($event.target as HTMLTextAreaElement).value)"
                 />
             </template>

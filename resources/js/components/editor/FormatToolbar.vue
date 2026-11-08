@@ -102,7 +102,7 @@ const STYLES: Record<TextMark, string> = {
 
         <div
             v-if="linkOpen"
-            class="absolute left-0 top-full z-20 mt-1 flex w-72 flex-col gap-2 rounded-xl border border-border bg-surface p-2 shadow-lg"
+            class="absolute left-0 top-full z-20 mt-1 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-2 shadow-lg"
             @keydown.escape="linkOpen = false"
         >
             <Input

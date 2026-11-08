@@ -168,7 +168,7 @@ class DemoSeeder extends Seeder
                     // the demo consistent with the design system anyway.
                     // `--accent`, the token color.md documents for
                     // "highlight in the content plan".
-                    'color' => '#A94E08',
+                    'color' => '#2453D6',
                 ]);
 
                 $this->createPostGroups($organization, $user, $integrations, $media, $tag);

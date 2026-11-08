@@ -157,7 +157,7 @@ const channelNames = (row: PostListRow): string => row.channels.map((channel) =>
 
 <template>
     <div class="flex flex-col gap-4">
-        <p v-if="entries.length === 0" class="rounded-xl border border-border bg-surface px-4 py-6 text-sm text-muted">
+        <p v-if="entries.length === 0" class="rounded-xl border border-border-strong bg-surface px-4 py-6 text-sm text-muted">
             {{ t(`calendar.list.empty.${stateFilter}`) }}
         </p>
 
@@ -168,7 +168,7 @@ const channelNames = (row: PostListRow): string => row.channels.map((channel) =>
                  absolutely positioned inside a row, and clipping the list to
                  its own rounded corners cut that menu in half. The rows carry
                  no background of their own, so nothing needs clipping. -->
-            <ul class="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface">
+            <ul class="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
                 <li
                     v-for="row in group.rows"
                     :key="row.id"

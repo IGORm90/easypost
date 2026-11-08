@@ -157,7 +157,7 @@ async function impersonate(user: AdminUser): Promise<void> {
     <AppLayout>
         <div class="mx-auto flex max-w-4xl flex-col gap-4">
             <div class="flex flex-col gap-1">
-                <h1 class="text-lg font-semibold text-text">{{ t('admin.users.title') }}</h1>
+                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('admin.users.title') }}</h1>
                 <p class="text-sm text-muted">{{ t('admin.users.intro') }}</p>
             </div>
 

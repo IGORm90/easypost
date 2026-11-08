@@ -57,7 +57,7 @@ const describedBy = computed(() => (props.error ? errorId.value : undefined));
 
 <template>
     <div class="flex flex-col gap-1">
-        <label v-if="label" :for="inputId" class="text-sm font-medium text-text">{{ label }}</label>
+        <label v-if="label" :for="inputId" class="text-[13px] font-medium text-text">{{ label }}</label>
         <input
             :id="inputId"
             v-bind="$attrs"
@@ -67,11 +67,11 @@ const describedBy = computed(() => (props.error ? errorId.value : undefined));
             :disabled="disabled"
             :aria-invalid="Boolean(error)"
             :aria-describedby="describedBy"
-            class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted"
+            class="rounded-xl border border-border-strong bg-surface px-3 py-2.5 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-muted"
             :class="error ? 'border-danger focus:ring-danger' : ''"
             @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
         />
-        <p v-if="error" :id="errorId" class="flex items-center gap-1 text-sm text-danger">
+        <p v-if="error" :id="errorId" class="flex items-center gap-1 text-xs text-danger">
             <svg class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path
                     fill-rule="evenodd"

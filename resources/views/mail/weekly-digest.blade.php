@@ -20,7 +20,7 @@
 <head>
     <meta charset="utf-8">
 </head>
-<body style="font-family: -apple-system, Helvetica, Arial, sans-serif; color: #0B1F17; background: #F1F5F2; margin: 0; padding: 24px;">
+<body style="font-family: -apple-system, Helvetica, Arial, sans-serif; color: #0E1A33; background: #F4F6FA; margin: 0; padding: 24px;">
     <table role="presentation" width="100%" style="max-width: 600px; margin: 0 auto; background: #FFFFFF; border-radius: 8px; padding: 24px;">
         <tr>
             <td>
@@ -29,7 +29,7 @@
 
                 <h3>{{ __('mail.weekly_digest.published_heading') }}</h3>
                 @if ($summary->published->isEmpty())
-                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.published_empty') }}</p>
+                    <p style="color: #5B6784;">{{ __('mail.weekly_digest.published_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->published->items as $group)
@@ -41,13 +41,13 @@
                         @endforeach
                     </ul>
                     @if ($summary->published->hasMore())
-                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->published->moreCount()]) }}</p>
+                        <p style="color: #5B6784;">{{ __('mail.weekly_digest.more', ['count' => $summary->published->moreCount()]) }}</p>
                     @endif
                 @endif
 
                 <h3>{{ __('mail.weekly_digest.failed_heading') }}</h3>
                 @if ($summary->failed->isEmpty())
-                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.failed_empty') }}</p>
+                    <p style="color: #5B6784;">{{ __('mail.weekly_digest.failed_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->failed->items as $group)
@@ -61,18 +61,18 @@
                                      outside the "this week" framing the heading promises. --}}
                                 {{ $group->notified_at?->clone()->setTimezone($recipientTimezone)->locale(app()->getLocale())->translatedFormat('D, d M Y H:i') }}
                                 <br>
-                                <span style="color: #B91C1C;">{{ $group->error }}</span>
+                                <span style="color: #A11F26;">{{ $group->error }}</span>
                             </li>
                         @endforeach
                     </ul>
                     @if ($summary->failed->hasMore())
-                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->failed->moreCount()]) }}</p>
+                        <p style="color: #5B6784;">{{ __('mail.weekly_digest.more', ['count' => $summary->failed->moreCount()]) }}</p>
                     @endif
                 @endif
 
                 <h3>{{ __('mail.weekly_digest.scheduled_heading') }}</h3>
                 @if ($summary->scheduled->isEmpty())
-                    <p style="color: #5A7267;">{{ __('mail.weekly_digest.scheduled_empty') }}</p>
+                    <p style="color: #5B6784;">{{ __('mail.weekly_digest.scheduled_empty') }}</p>
                 @else
                     <ul>
                         @foreach ($summary->scheduled->items as $group)
@@ -84,12 +84,12 @@
                         @endforeach
                     </ul>
                     @if ($summary->scheduled->hasMore())
-                        <p style="color: #5A7267;">{{ __('mail.weekly_digest.more', ['count' => $summary->scheduled->moreCount()]) }}</p>
+                        <p style="color: #5B6784;">{{ __('mail.weekly_digest.more', ['count' => $summary->scheduled->moreCount()]) }}</p>
                     @endif
                 @endif
 
-                <hr style="border: none; border-top: 1px solid #DBE5DD; margin: 24px 0;">
-                <p style="color: #5A7267; font-size: 12px;">{{ __('mail.weekly_digest.footer') }}</p>
+                <hr style="border: none; border-top: 1px solid #E1E6F0; margin: 24px 0;">
+                <p style="color: #5B6784; font-size: 12px;">{{ __('mail.weekly_digest.footer') }}</p>
             </td>
         </tr>
     </table>

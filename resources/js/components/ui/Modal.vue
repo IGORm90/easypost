@@ -271,11 +271,11 @@ onBeforeUnmount(() => {
                     aria-modal="true"
                     :aria-labelledby="title ? titleId : undefined"
                     tabindex="-1"
-                    class="modal-panel relative w-full rounded-xl border border-border bg-surface p-6 shadow-lg"
+                    class="modal-panel relative w-full rounded-2xl border border-border bg-surface p-6 shadow-lg"
                     :class="sizeClass"
                 >
                     <div class="mb-4 flex shrink-0 items-center justify-between gap-2">
-                        <h2 v-if="title" :id="titleId" class="text-base font-semibold text-text">{{ title }}</h2>
+                        <h2 v-if="title" :id="titleId" class="text-lg font-semibold text-text">{{ title }}</h2>
                         <!--
                             Header actions (Task 1.1's "Share"). Deliberately
                             placed BEFORE the close button so both the visual

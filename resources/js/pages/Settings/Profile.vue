@@ -108,7 +108,7 @@ async function copyApiKey(): Promise<void> {
                         <select
                             id="profile-timezone"
                             v-model="form.timezone"
-                            class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                         >
                             <option v-for="zone in timezones" :key="zone" :value="zone">{{ zone }}</option>
                         </select>
@@ -122,7 +122,7 @@ async function copyApiKey(): Promise<void> {
                         <select
                             id="profile-locale"
                             v-model="form.locale"
-                            class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
                         >
                             <option v-for="l in availableLocales" :key="l" :value="l">{{ l }}</option>
                         </select>

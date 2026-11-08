@@ -18,7 +18,9 @@
     "monitoringPerformance": "Performance (Pulse)",
     "monitoringLogs": "Logs",
     "opensInNewTab": "(opens in a new tab)",
-    "logout": "Log out"
+    "logout": "Log out",
+    "settings": "Settings",
+    "instance": "Instance"
   },
   "ui": {
     "close": "Close",
@@ -69,6 +71,10 @@
       "success": "Password changed. You can sign in now.",
       "invalidLink": "This password reset link is invalid or has expired.",
       "loginLink": "Go to sign in"
+    },
+    "brand": {
+      "title": "Every network on one week.",
+      "subtitle": "Write once, adapt the text for each network, and schedule it."
     }
   },
   "organization": {

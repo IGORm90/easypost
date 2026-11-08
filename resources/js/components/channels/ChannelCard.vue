@@ -41,7 +41,7 @@ const icon = computed(() => resolveProviderIcon(props.integration.provider_ident
                 v-if="integration.picture"
                 :src="integration.picture"
                 :alt="providerName"
-                class="h-10 w-10 shrink-0 rounded-full object-cover"
+                class="h-10 w-10 shrink-0 rounded-lg object-cover"
             />
             <!-- --surface-2, not --accent-soft: the mark may carry a
                  brand colour (color.md §6) and a neutral ground keeps that
@@ -50,7 +50,7 @@ const icon = computed(() => resolveProviderIcon(props.integration.provider_ident
                  the same thing. -->
             <div
                 v-else
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-muted"
+                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted"
                 aria-hidden="true"
             >
                 <component :is="icon" class="h-6 w-6" />

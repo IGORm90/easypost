@@ -35,7 +35,7 @@ const MARKS: TextMark[] = [];
 </script>
 
 <template>
-    <div class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+    <div class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <div class="flex items-center gap-2">
             <PreviewAvatar :name="channelName" :picture="channelPicture" shape="circle" />
             <div class="min-w-0">
