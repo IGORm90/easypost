@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Badge from '../ui/Badge.vue';
 import PostActionsMenu from './PostActionsMenu.vue';
+import { stateCardTone } from './stateTone';
 import type { CalendarEntry } from '../../stores/posts';
 
 /**
@@ -47,24 +48,7 @@ const badgeStatus = computed(() => {
 
 const isDraft = computed(() => props.entry.state === 'DRAFT');
 
-/**
- * «Кобальт» tints the whole card for the two outcomes — failed and
- * published — so a failed post can be spotted across a busy week without
- * reading every badge. In-flight states stay on the plain surface: a week
- * where every card is coloured stops saying anything (color.md §3.2).
- */
-const cardTone = computed(() => {
-    switch (props.entry.state) {
-        case 'ERROR':
-            return 'border-danger-border bg-danger-soft';
-        case 'PUBLISHED':
-            return 'border-success-border bg-success-soft';
-        case 'DRAFT':
-            return 'border-border-strong bg-surface';
-        default:
-            return 'border-border bg-surface';
-    }
-});
+const cardTone = computed(() => stateCardTone(props.entry.state));
 
 const isShared = computed(() => props.entry.share_token !== null);
 

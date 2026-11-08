@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 
-export type DisplayMode = 'grid' | 'list';
+export type DisplayMode = 'channels' | 'grid' | 'list';
 
 defineProps<{ modelValue: DisplayMode }>();
 const emit = defineEmits<{ 'update:modelValue': [DisplayMode] }>();
 
 const { t } = useI18n();
 
-const modes: DisplayMode[] = ['grid', 'list'];
+const modes: DisplayMode[] = ['channels', 'grid', 'list'];
 </script>
 
 <template>

@@ -2,6 +2,8 @@
 import { useI18n } from 'vue-i18n';
 import { useTheme } from '../../composables/useTheme';
 
+withDefaults(defineProps<{ tone?: 'default' | 'nav' }>(), { tone: 'default' });
+
 const { theme, toggle } = useTheme();
 const { t } = useI18n();
 </script>
@@ -9,7 +11,8 @@ const { t } = useI18n();
 <template>
     <button
         type="button"
-        class="inline-flex items-center justify-center rounded-xl border border-border-strong bg-surface p-2 text-text hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-primary"
+        class="inline-flex items-center justify-center rounded-xl p-2 focus:outline-none focus:ring-2"
+        :class="tone === 'nav' ? 'text-nav-muted hover:bg-nav-active hover:text-on-nav focus:ring-nav-muted' : 'border border-border-strong bg-surface text-text hover:bg-surface-2 focus:ring-primary'"
         :aria-label="t('nav.toggleTheme')"
         :aria-pressed="theme === 'dark'"
         @click="toggle"

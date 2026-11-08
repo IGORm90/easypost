@@ -48,7 +48,7 @@ function goToLogin(): void {
             <Button variant="primary" @click="goToLogin">{{ t('auth.register.loginLink') }}</Button>
         </div>
 
-        <form v-else class="flex flex-col gap-4" @submit.prevent="submit">
+        <form v-else class="flex flex-col gap-3.5" @submit.prevent="submit">
             <Input
                 id="register-name"
                 v-model="form.name"
@@ -75,14 +75,8 @@ function goToLogin(): void {
                 required
             />
 
-            <Button type="submit" variant="primary" :loading="loading">{{ t('auth.register.submit') }}</Button>
+            <Button type="submit" variant="primary" class="mt-1 w-full py-3 text-[15px]" :loading="loading">{{ t('auth.register.submit') }}</Button>
         </form>
 
-        <p v-if="!done" class="mt-4 text-center text-sm text-muted">
-            {{ t('auth.register.haveAccount') }}
-            <router-link :to="{ name: 'login' }" class="text-primary hover:underline">
-                {{ t('auth.register.loginLink') }}
-            </router-link>
-        </p>
     </AuthLayout>
 </template>

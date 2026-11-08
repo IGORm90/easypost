@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import { api } from '../../api/client';
-import Card from '../../components/ui/Card.vue';
 
 /**
  * The public, unauthenticated landing page for a share link
@@ -101,38 +100,53 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="flex min-h-screen justify-center bg-bg p-4 text-text">
-        <div class="w-full max-w-lg py-8">
-            <p class="mb-4 text-sm font-semibold">{{ t('app.name') }}</p>
+    <!-- «Кобальт» public preview: a slim header that says this is a
+         read-only preview, then each channel's version as a card. -->
+    <div class="flex min-h-screen flex-col bg-bg text-text">
+        <header class="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-6 py-3.5 sm:px-8">
+            <span class="flex h-7 w-7 items-center justify-center rounded bg-nav text-[11px] font-bold text-on-nav" aria-hidden="true">EP</span>
+            <span class="font-semibold">{{ t('app.name') }}</span>
+            <span class="rounded bg-accent-soft px-2 py-0.5 text-xs text-accent">{{ t('sharedPost.readOnly') }}</span>
+        </header>
 
+        <main class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-5 px-6 py-8">
             <p v-if="status === 'loading'" class="text-sm text-muted">{{ t('ui.loading') }}</p>
-
-            <p v-else-if="status === 'not-found'" role="alert" class="text-sm text-danger">
+            <p v-else-if="status === 'not-found'" role="alert" class="rounded-lg border border-danger-border bg-danger-soft px-4 py-3 text-sm text-danger">
                 {{ t('sharedPost.notFound') }}
             </p>
-
-            <div v-else-if="post" class="flex flex-col gap-4">
-                <p v-if="publishedAt" class="text-sm text-muted">{{ t('sharedPost.publishDate') }}: {{ publishedAt }}</p>
-
-                <Card v-for="(channel, index) in post.channels" :key="index">
-                    <div class="mb-3 flex items-center gap-2">
-                        <img
-                            v-if="channel.picture"
-                            :src="channel.picture"
-                            alt=""
-                            class="h-8 w-8 rounded-xl object-cover"
-                        />
-                        <span class="text-sm font-semibold text-text">{{ channel.name }}</span>
-                        <span class="text-xs text-muted">({{ channel.provider_identifier }})</span>
+            <template v-else-if="post">
+                <div class="flex flex-wrap items-end gap-4">
+                    <div class="flex flex-col gap-1">
+                        <h1 class="text-2xl font-semibold tracking-tight">{{ t('sharedPost.title') }}</h1>
+                        <p class="text-sm text-muted">{{ t('sharedPost.subtitle') }}</p>
                     </div>
+                    <dl v-if="publishedAt" class="ml-auto">
+                        <dt class="text-xs text-muted">{{ t('sharedPost.publishDate') }}</dt>
+                        <dd class="mt-0.5 font-mono text-[13px]">{{ publishedAt }}</dd>
+                    </dl>
+                </div>
 
-                    <p v-for="(segment, segmentIndex) in channel.content" :key="segmentIndex" class="whitespace-pre-wrap text-sm text-text">
-                        {{ segment }}
-                    </p>
-                </Card>
-
+                <div class="grid items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                    <article
+                        v-for="(channel, index) in post.channels"
+                        :key="index"
+                        class="overflow-hidden rounded-xl border border-border bg-surface"
+                    >
+                        <div class="flex items-center gap-2.5 border-b border-border px-4 py-3">
+                            <img v-if="channel.picture" :src="channel.picture" alt="" class="h-7 w-7 rounded-full object-cover" />
+                            <span class="text-sm font-semibold">{{ channel.name }}</span>
+                            <span class="text-xs text-muted">({{ channel.provider_identifier }})</span>
+                        </div>
+                        <div class="flex flex-col gap-3 p-4">
+                            <p v-for="(segment, segmentIndex) in channel.content" :key="segmentIndex" class="whitespace-pre-wrap text-sm leading-relaxed">
+                                {{ segment }}
+                            </p>
+                        </div>
+                    </article>
+                </div>
                 <p v-if="post.channels.length === 0" class="text-sm text-muted">{{ t('sharedPost.empty') }}</p>
-            </div>
-        </div>
+            </template>
+        </main>
+        <footer class="p-4 text-center text-xs text-muted">{{ t('sharedPost.footer') }}</footer>
     </div>
 </template>

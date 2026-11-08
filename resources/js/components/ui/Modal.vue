@@ -92,7 +92,7 @@ import { useI18n } from 'vue-i18n';
  * keyboard equivalent of the close button. Every one of those is fixed
  * below, and none of it changes what a mouse user sees.
  */
-const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean; size?: 'md' | 'full' }>(), {
+const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean; size?: 'md' | 'full' | 'page' | 'drawer' }>(), {
     open: false,
     title: undefined,
     ignoreBackdropClick: false,
@@ -113,10 +113,19 @@ const emit = defineEmits<{ close: [] }>();
  * Whole class strings, never `max-w-${size}` — Tailwind scans source text
  * and cannot see a class that only exists after interpolation.
  */
-const SIZES: Record<'md' | 'full', string> = {
-    md: 'max-w-3xl',
-    full: 'max-w-none max-h-[90vh] flex flex-col',
+const SIZES: Record<'md' | 'full' | 'page' | 'drawer', string> = {
+    md: 'max-w-3xl rounded-2xl border border-border p-6',
+    full: 'max-w-none max-h-[90vh] flex flex-col rounded-2xl border border-border p-6',
+    // «Кобальт» composer: the whole viewport, a dark title bar, and the
+    // body owns its own padding and scrolling (three columns + a footer).
+    page: 'h-screen max-h-screen max-w-none flex flex-col rounded-none border-0 p-0',
+    // «Кобальт» side panel (channel settings): full height, docked right.
+    drawer: 'h-screen max-h-screen max-w-[560px] flex flex-col rounded-none border-0 border-l border-border p-0',
 };
+
+const isDrawer = computed(() => props.size === 'drawer');
+
+const isPage = computed(() => props.size === 'page');
 
 const sizeClass = computed(() => SIZES[props.size]);
 
@@ -263,7 +272,7 @@ onBeforeUnmount(() => {
             leave instantly, silently reverting to the old instant pop.
         -->
         <Transition name="modal" appear :duration="{ enter: 180, leave: 120 }">
-            <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div v-if="open" class="fixed inset-0 z-50 flex items-center" :class="[isPage || isDrawer ? 'p-0' : 'p-4', isDrawer ? 'justify-end' : 'justify-center']">
                 <div class="modal-backdrop absolute inset-0 bg-overlay" @click="onBackdropClick" />
                 <div
                     ref="dialog"
@@ -271,11 +280,15 @@ onBeforeUnmount(() => {
                     aria-modal="true"
                     :aria-labelledby="title ? titleId : undefined"
                     tabindex="-1"
-                    class="modal-panel relative w-full rounded-2xl border border-border bg-surface p-6 shadow-lg"
+                    class="modal-panel relative w-full bg-surface shadow-lg"
                     :class="sizeClass"
                 >
-                    <div class="mb-4 flex shrink-0 items-center justify-between gap-2">
-                        <h2 v-if="title" :id="titleId" class="text-lg font-semibold text-text">{{ title }}</h2>
+                    <div
+                        data-test="modal-header"
+                        class="flex shrink-0 items-center justify-between gap-2"
+                        :class="isPage ? 'bg-nav px-6 py-3 text-on-nav' : isDrawer ? 'border-b border-border px-6 py-5' : 'mb-4'"
+                    >
+                        <h2 v-if="title" :id="titleId" class="font-semibold" :class="isPage ? 'text-[15px] text-on-nav' : 'text-lg text-text'">{{ title }}</h2>
                         <!--
                             Header actions (Task 1.1's "Share"). Deliberately
                             placed BEFORE the close button so both the visual
@@ -287,7 +300,8 @@ onBeforeUnmount(() => {
                             <slot name="actions" />
                             <button
                                 type="button"
-                                class="rounded-xl p-1 text-muted hover:text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                class="rounded-xl p-1 focus:outline-none focus:ring-2"
+                                :class="isPage ? 'text-nav-text hover:bg-nav-active hover:text-on-nav focus:ring-nav-muted' : 'text-muted hover:text-text focus:ring-primary'"
                                 :aria-label="t('ui.close')"
                                 @click="emit('close')"
                             >

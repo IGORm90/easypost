@@ -157,105 +157,118 @@ const channelNames = (row: PostListRow): string => row.channels.map((channel) =>
 
 <template>
     <div class="flex flex-col gap-4">
-        <p v-if="entries.length === 0" class="rounded-xl border border-border-strong bg-surface px-4 py-6 text-sm text-muted">
+        <p v-if="entries.length === 0" class="rounded-lg border border-border bg-surface px-4 py-6 text-sm text-muted">
             {{ t(`calendar.list.empty.${stateFilter}`) }}
         </p>
 
-        <section v-for="group in groups" :key="group.key" class="flex flex-col gap-1">
-            <h2 data-test="day-heading" class="text-xs font-semibold uppercase tracking-wide text-muted">{{ group.label }}</h2>
-
-            <!-- No `overflow-hidden` here, deliberately: the actions menu is
-                 absolutely positioned inside a row, and clipping the list to
-                 its own rounded corners cut that menu in half. The rows carry
-                 no background of their own, so nothing needs clipping. -->
-            <ul class="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
-                <li
-                    v-for="row in group.rows"
-                    :key="row.id"
-                    data-test="post-row"
-                    class="flex items-start gap-3 px-3 py-2"
-                >
-                    <!-- The row itself is the button, so the whole line is
-                         one keyboard-reachable target with an accessible
-                         name; the actions menu sits outside it rather than
-                         inside, because a button inside a button is invalid
-                         markup and unreachable by keyboard. -->
-                    <button type="button" class="flex min-w-0 flex-1 items-start gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary" @click="emit('edit', row.id)">
-                        <!-- Accent on a channel avatar is an explicit
-                             color.md §1 use case, not a primary action. -->
-                        <span class="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent" aria-hidden="true">
-                            <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M10 2a6 6 0 00-6 6c0 4.5 6 10 6 10s6-5.5 6-10a6 6 0 00-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z" />
-                            </svg>
-                        </span>
-
-                        <span class="flex min-w-0 flex-1 flex-col gap-1">
-                            <span class="flex flex-wrap items-center gap-2">
-                                <span class="truncate text-sm font-medium text-text">{{ channelNames(row) }}</span>
-                                <span class="text-xs text-muted">{{ timeLabel(row.publish_date) }}</span>
+        <!--
+            «Кобальт»: a table, one row per post, under one heading row per
+            day. No `overflow-hidden` on the frame, deliberately: the
+            actions menu is absolutely positioned inside a row, and clipping
+            the table to its rounded corners cut that menu in half. Narrow
+            screens scroll the table sideways instead (`overflow-x-auto`
+            sits on the outer box, the menu opens inside the scroll area).
+        -->
+        <div v-else class="overflow-x-auto rounded-lg border border-border bg-surface">
+            <table class="w-full min-w-[820px] border-collapse text-[13px]">
+                <thead>
+                    <tr class="bg-surface-2 text-left text-xs text-muted">
+                        <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('calendar.list.columns.when') }}</th>
+                        <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('calendar.list.columns.channel') }}</th>
+                        <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('calendar.list.columns.post') }}</th>
+                        <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('calendar.list.columns.tags') }}</th>
+                        <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('calendar.list.columns.status') }}</th>
+                        <th scope="col" class="px-3.5 py-2.5"><span class="sr-only">{{ t('calendar.actions') }}</span></th>
+                    </tr>
+                </thead>
+                <tbody v-for="group in groups" :key="group.key">
+                    <tr>
+                        <th
+                            data-test="day-heading"
+                            scope="colgroup"
+                            colspan="6"
+                            class="border-t border-border bg-surface px-3.5 pb-1 pt-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted"
+                        >
+                            {{ group.label }}
+                        </th>
+                    </tr>
+                    <tr v-for="row in group.rows" :key="row.id" data-test="post-row" class="border-t border-border align-top">
+                        <td class="whitespace-nowrap px-3.5 py-3 font-mono text-xs text-muted">{{ timeLabel(row.publish_date) }}</td>
+                        <td class="px-3.5 py-3">
+                            <span class="flex items-center gap-2">
+                                <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent" aria-hidden="true">
+                                    <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M10 2a6 6 0 00-6 6c0 4.5 6 10 6 10s6-5.5 6-10a6 6 0 00-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z" />
+                                    </svg>
+                                </span>
+                                <span class="max-w-[180px] truncate text-text">{{ channelNames(row) }}</span>
                             </span>
-
-                            <span class="truncate text-sm text-muted">{{ row.preview }}</span>
-
-                            <span class="flex flex-wrap items-center gap-1.5">
-                                <Badge :status="badgeStatus(row)">{{ t(`calendar.state.${row.state}`) }}</Badge>
-
+                        </td>
+                        <td class="max-w-[360px] px-3.5 py-3">
+                            <!-- The post cell is the row's button: one
+                                 keyboard-reachable target with an accessible
+                                 name. The actions menu sits in its own cell,
+                                 because a button inside a button is invalid. -->
+                            <button type="button" class="flex w-full flex-col gap-0.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary" @click="emit('edit', row.id)">
+                                <span class="truncate font-medium text-text">{{ row.preview }}</span>
+                                <span class="flex flex-wrap items-center gap-2 text-xs text-muted">
+                                    <span v-if="row.comments_count > 0">{{ t('calendar.list.comments', { count: row.comments_count }) }}</span>
+                                    <span v-if="row.share_token !== null" class="sr-only">{{ t('calendar.share.indicator') }}</span>
+                                    <svg v-if="row.share_token !== null" class="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path
+                                            d="M8.5 11.5a3.5 3.5 0 005 0l2.5-2.5a3.536 3.536 0 10-5-5l-1 1a.75.75 0 101.06 1.06l1-1a2.036 2.036 0 112.88 2.88l-2.5 2.5a2 2 0 01-2.88 0 .75.75 0 10-1.06 1.06zm3-3a3.5 3.5 0 00-5 0L4 11a3.536 3.536 0 105 5l1-1a.75.75 0 10-1.06-1.06l-1 1a2.036 2.036 0 11-2.88-2.88l2.5-2.5a2 2 0 012.88 0 .75.75 0 101.06-1.06z"
+                                        />
+                                    </svg>
+                                    <!-- Block 4: icon plus real text, the same
+                                         rule the share and lock indicators follow. -->
+                                    <span v-if="row.repeats" class="sr-only">{{ t('calendar.repeatIndicator') }}</span>
+                                    <svg v-if="row.repeats" class="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path
+                                            fill-rule="evenodd"
+                                            d="M4 5.5A2.5 2.5 0 016.5 3h7.19l-1.22-1.22a.75.75 0 111.06-1.06l2.5 2.5a.75.75 0 010 1.06l-2.5 2.5a.75.75 0 11-1.06-1.06L13.69 4.5H6.5A1 1 0 005.5 5.5v3a.75.75 0 01-1.5 0v-3zm11.25 4a.75.75 0 01.75.75v3a2.5 2.5 0 01-2.5 2.5H6.31l1.22 1.22a.75.75 0 11-1.06 1.06l-2.5-2.5a.75.75 0 010-1.06l2.5-2.5a.75.75 0 111.06 1.06L6.31 14.5h7.19a1 1 0 001-1v-3a.75.75 0 01.75-.75z"
+                                            clip-rule="evenodd"
+                                        />
+                                    </svg>
+                                    <span v-if="isLocked(row)" class="sr-only">{{ t('calendar.locked') }}</span>
+                                    <svg v-if="isLocked(row)" class="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path
+                                            fill-rule="evenodd"
+                                            d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z"
+                                            clip-rule="evenodd"
+                                        />
+                                    </svg>
+                                </span>
+                            </button>
+                        </td>
+                        <td class="px-3.5 py-3">
+                            <span class="flex flex-wrap gap-1">
                                 <span
                                     v-for="tag in row.tags"
                                     :key="tag.id"
-                                    class="inline-flex items-center gap-1 rounded-xl border border-border px-1.5 py-0.5 text-[10px] text-text"
+                                    class="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-text"
                                 >
-                                    <!-- Server-validated ^#[0-9a-fA-F]{6}$ user
-                                         input (StoreTagRequest), and the name is
-                                         always shown beside the dot, so the tag is
-                                         never identified by colour alone. -->
+                                    <!-- Server-validated ^#[0-9a-fA-F]{6}$ user input
+                                         (StoreTagRequest); the name is always shown
+                                         beside the dot, never colour alone. -->
                                     <span class="h-2 w-2 shrink-0 rounded-full" :style="{ backgroundColor: tag.color }" aria-hidden="true" />
                                     {{ tag.name }}
                                 </span>
-
-                                <span v-if="row.comments_count > 0" class="text-xs text-muted">
-                                    {{ t('calendar.list.comments', { count: row.comments_count }) }}
-                                </span>
+                                <span v-if="row.tags.length === 0" class="text-muted">—</span>
                             </span>
-                        </span>
-                    </button>
-
-                    <span class="flex shrink-0 items-center gap-1 pt-0.5">
-                        <span v-if="row.share_token !== null" class="sr-only">{{ t('calendar.share.indicator') }}</span>
-                        <svg v-if="row.share_token !== null" class="h-3 w-3 shrink-0 text-muted" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path
-                                d="M8.5 11.5a3.5 3.5 0 005 0l2.5-2.5a3.536 3.536 0 10-5-5l-1 1a.75.75 0 101.06 1.06l1-1a2.036 2.036 0 112.88 2.88l-2.5 2.5a2 2 0 01-2.88 0 .75.75 0 10-1.06 1.06zm3-3a3.5 3.5 0 00-5 0L4 11a3.536 3.536 0 105 5l1-1a.75.75 0 10-1.06-1.06l-1 1a2.036 2.036 0 11-2.88-2.88l2.5-2.5a2 2 0 012.88 0 .75.75 0 101.06-1.06z"
+                        </td>
+                        <td class="px-3.5 py-3">
+                            <Badge :status="badgeStatus(row)">{{ t(`calendar.state.${row.state}`) }}</Badge>
+                        </td>
+                        <td class="px-3.5 py-2 text-right">
+                            <PostActionsMenu
+                                :items="menuItems(row)"
+                                :label="t('calendar.actions')"
+                                @select="onMenuSelect($event, row.id)"
                             />
-                        </svg>
-
-                        <!-- Block 4: icon plus real text, the same rule the
-                             share and lock indicators above follow. -->
-                        <span v-if="row.repeats" class="sr-only">{{ t('calendar.repeatIndicator') }}</span>
-                        <svg v-if="row.repeats" class="h-3 w-3 shrink-0 text-muted" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path
-                                fill-rule="evenodd"
-                                d="M4 5.5A2.5 2.5 0 016.5 3h7.19l-1.22-1.22a.75.75 0 111.06-1.06l2.5 2.5a.75.75 0 010 1.06l-2.5 2.5a.75.75 0 11-1.06-1.06L13.69 4.5H6.5A1 1 0 005.5 5.5v3a.75.75 0 01-1.5 0v-3zm11.25 4a.75.75 0 01.75.75v3a2.5 2.5 0 01-2.5 2.5H6.31l1.22 1.22a.75.75 0 11-1.06 1.06l-2.5-2.5a.75.75 0 010-1.06l2.5-2.5a.75.75 0 111.06 1.06L6.31 14.5h7.19a1 1 0 001-1v-3a.75.75 0 01.75-.75z"
-                                clip-rule="evenodd"
-                            />
-                        </svg>
-
-                        <span v-if="isLocked(row)" class="sr-only">{{ t('calendar.locked') }}</span>
-                        <svg v-if="isLocked(row)" class="h-3 w-3 shrink-0 text-muted" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path
-                                fill-rule="evenodd"
-                                d="M10 1a4 4 0 00-4 4v2H5a2 2 0 00-2 2v7a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a4 4 0 00-4-4zm2 6V5a2 2 0 10-4 0v2h4z"
-                                clip-rule="evenodd"
-                            />
-                        </svg>
-
-                        <PostActionsMenu
-                            :items="menuItems(row)"
-                            :label="t('calendar.actions')"
-                            @select="onMenuSelect($event, row.id)"
-                        />
-                    </span>
-                </li>
-            </ul>
-        </section>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </template>

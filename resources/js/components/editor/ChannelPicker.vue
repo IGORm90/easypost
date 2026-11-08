@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import type { Integration, Provider } from '../../stores/integrations';
@@ -120,19 +119,26 @@ function submitSetName(): void {
         <div class="flex flex-col gap-1.5">
             <span class="text-xs font-medium text-muted">{{ t('editor.picker.channels') }}</span>
             <p v-if="integrations.length === 0" class="text-sm text-muted">{{ t('editor.picker.empty') }}</p>
+            <!-- «Кобальт»: a checklist, one row per channel — name over the
+                 network (or a reconnect warning), the row tinted while it is
+                 selected. -->
             <label
                 v-for="integration in integrations"
                 :key="integration.id"
-                class="flex cursor-pointer items-center gap-2 rounded-xl border border-border px-2.5 py-1.5 text-sm text-text hover:bg-surface-2"
+                class="flex cursor-pointer items-center gap-2.5 rounded-xl px-2 py-2 text-[13px] text-text hover:bg-surface-2"
+                :class="isSelected(integration.id) ? 'bg-surface-2' : ''"
             >
                 <input
                     type="checkbox"
-                    class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    class="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                     :checked="isSelected(integration.id)"
                     @change="toggle(integration.id)"
                 />
-                <span class="truncate">{{ integration.name }}</span>
-                <Badge status="neutral">{{ providerName(integration.provider_identifier) }}</Badge>
+                <span class="flex min-w-0 flex-col">
+                    <span class="truncate font-medium">{{ integration.name }}</span>
+                    <span v-if="integration.refresh_needed" class="truncate text-[11px] text-danger">{{ t('channels.status.refreshNeeded') }}</span>
+                    <span v-else class="truncate text-[11px] text-muted">{{ providerName(integration.provider_identifier) }}</span>
+                </span>
             </label>
         </div>
 

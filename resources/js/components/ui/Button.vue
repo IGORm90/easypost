@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-text';
 
 // `disabled` is declared explicitly (rather than left to fall through as
 // a bare HTML attribute) so it can be combined with `loading` instead of
@@ -36,6 +36,9 @@ const variantClasses: Record<Variant, string> = {
     secondary: 'font-medium border border-border-strong bg-surface text-text hover:bg-surface-2 focus-visible:ring-border-strong',
     ghost: 'font-medium text-muted hover:bg-surface-2 hover:text-text focus-visible:ring-border-strong',
     danger: 'bg-danger font-medium text-on-danger hover:opacity-90 focus-visible:ring-danger',
+    // «Кобальт» row action ("Remove" on a card or table row): red text, no
+    // fill — a solid red button on every row would shout over the page.
+    'danger-text': 'font-medium text-danger hover:bg-danger-soft focus-visible:ring-danger',
 };
 
 const classes = computed(() => variantClasses[props.variant]);

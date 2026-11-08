@@ -679,218 +679,237 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
 </script>
 
 <template>
-    <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" size="full" @close="emit('close')">
+    <Modal :open="open" :title="modalTitle" :ignore-backdrop-click="true" size="page" @close="emit('close')">
         <template v-if="canShare" #actions>
             <Button variant="secondary" @click="shareOpen = true">{{ t('calendar.share.menuItem') }}</Button>
         </template>
 
-        <div v-if="loading" class="py-8 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
+        <div v-if="loading" class="flex-1 py-16 text-center text-sm text-muted">{{ t('ui.loading') }}</div>
 
         <!--
-            The height now belongs to Modal (max-h-[90vh] on a column-flexed
-            dialog); `min-h-0 flex-1` is what lets this body take the leftover
-            space and scroll inside it instead of stretching the dialog past
-            the viewport, which is what a flex child does by default.
+            «Кобальт» composer: three columns — channels | text | preview —
+            over a footer that holds the schedule and the save actions. Each
+            column scrolls on its own (`min-h-0` lets the grid row shrink to
+            the page instead of growing past it); below `lg` the columns
+            stack and the whole body scrolls as one.
         -->
-        <div v-else class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-            <!-- variant="muted", not "warning" (color.md §3.8, final review
-                 Important 9): this screen renders accent-tinted channel
-                 avatars, and --warning here would be the third unrelated
-                 meaning that colour carried on one screen. It is reserved
-                 for the plan-limit toast. -->
-            <Toast v-if="groupLocked" variant="muted">{{ t('editor.locked') }}</Toast>
-            <Toast v-if="networkError" variant="danger" @dismiss="networkError = false">{{ t('editor.networkError') }}</Toast>
-            <Toast v-if="generalErrors.length" variant="danger" @dismiss="generalErrors = []">
-                <p v-for="(message, index) in generalErrors" :key="index">{{ message }}</p>
-            </Toast>
-
-            <ChannelPicker
-                v-model="selectedChannelIds"
-                :integrations="integrations.list"
-                :providers="integrations.providers"
-                :sets="sets"
-                @save-set="saveSet"
-            />
-
-            <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-1">
-                <label for="common-content" class="text-sm font-medium text-text">{{ t('editor.commonContent') }}</label>
-                <div class="flex flex-wrap items-center gap-1">
-                    <EmojiPicker @select="insertIntoCommon" />
-                </div>
-                <textarea
-                    id="common-content"
-                    ref="commonField"
-                    :value="commonContent"
-                    :placeholder="t('editor.commonContentPlaceholder')"
-                    rows="3"
-                    class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
-                    @input="onCommonContentInput(($event.target as HTMLTextAreaElement).value)"
-                />
-            </div>
-
-            <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-3">
-                <div class="flex flex-wrap gap-2">
-                    <ChannelTab
-                        v-for="id in selectedChannelIds"
-                        :key="id"
-                        :name="integrationName(id)"
-                        :provider-name="providerNameFor(id)"
-                        :active="id === activeChannelId"
-                        :has-error="channelHasError(id)"
-                        @click="activeChannelId = id"
+        <div v-else class="flex min-h-0 flex-1 flex-col">
+            <div class="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[264px_minmax(0,1fr)_minmax(320px,400px)] lg:overflow-hidden">
+                <aside data-test="editor-channels" class="flex flex-col gap-3 border-b border-border bg-surface p-5 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+                    <ChannelPicker
+                        v-model="selectedChannelIds"
+                        :integrations="integrations.list"
+                        :providers="integrations.providers"
+                        :sets="sets"
+                        @save-set="saveSet"
                     />
-                </div>
+                </aside>
 
-                <div v-if="activeChannelId && activeDraft && activeCapabilities" class="flex flex-col gap-3 rounded-xl border border-border bg-surface-2 p-3">
-                    <div class="flex flex-wrap items-center gap-2">
-                        <label for="channel-signature" class="text-xs font-medium text-muted">{{ t('editor.signature') }}</label>
-                        <select
-                            id="channel-signature"
-                            v-model="activeDraft.signatureId"
-                            class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                        >
-                            <!--
-                                Finding 4: editing an existing group can never
-                                truthfully claim "no signature" — the API has
-                                nowhere to record whether the stored text
-                                already carries one (see loadGroup()'s
-                                docblock), so a plain "No signature" default
-                                reads as "none was applied", inviting the user
-                                to "correct" it and append a second, invisible
-                                copy. The relabelled option makes picking one
-                                here a deliberate, informed act instead.
-                            -->
-                            <option :value="null">{{ loadedFromServer ? t('editor.signatureUnknown') : t('editor.noSignature') }}</option>
-                            <option v-for="signature in signatures" :key="signature.id" :value="signature.id">
-                                {{ signature.content.slice(0, 40) }}
-                            </option>
-                        </select>
-                        <!--
-                            Task 1.5: a new tab, not a router-link. The
-                            signatures screen is a page rather than a
-                            stacked modal (unlike TagManager), so
-                            navigating to it from inside the editor would
-                            unmount this modal and take the unsaved draft
-                            with it. Opening it alongside costs the user
-                            nothing and loses nothing.
-                        -->
-                        <a
-                            href="/settings/signatures"
-                            target="_blank"
-                            rel="noopener"
-                            class="text-xs text-primary underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        >
-                            {{ t('signatures.manage') }}
-                        </a>
+                <section data-test="editor-text" class="flex min-w-0 flex-col gap-4 bg-bg p-6 lg:overflow-y-auto">
+                    <!-- variant="muted", not "warning" (color.md §3.8, final review
+                         Important 9): this screen renders accent-tinted channel
+                         avatars, and --warning here would be the third unrelated
+                         meaning that colour carried on one screen. It is reserved
+                         for the plan-limit toast. -->
+                    <Toast v-if="groupLocked" variant="muted">{{ t('editor.locked') }}</Toast>
+                    <Toast v-if="networkError" variant="danger" @dismiss="networkError = false">{{ t('editor.networkError') }}</Toast>
+                    <Toast v-if="generalErrors.length" variant="danger" @dismiss="generalErrors = []">
+                        <p v-for="(message, index) in generalErrors" :key="index">{{ message }}</p>
+                    </Toast>
+
+
+                    <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-1">
+                        <label for="common-content" class="text-sm font-medium text-text">{{ t('editor.commonContent') }}</label>
+                        <div class="flex flex-wrap items-center gap-1">
+                            <EmojiPicker @select="insertIntoCommon" />
+                        </div>
+                        <textarea
+                            id="common-content"
+                            ref="commonField"
+                            :value="commonContent"
+                            :placeholder="t('editor.commonContentPlaceholder')"
+                            rows="3"
+                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                            @input="onCommonContentInput(($event.target as HTMLTextAreaElement).value)"
+                        />
                     </div>
-                    <p v-if="loadedFromServer" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
 
-                    <PostSettingsFields
-                        v-if="activePostSettings.length > 0"
-                        :fields="activePostSettings"
-                        :integration-id="activeChannelId"
-                        :model-value="activeDraft.settings"
-                        @update:model-value="onPostSettingsUpdate(activeChannelId as string, $event)"
-                    />
+                    <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-3">
+                        <div class="flex flex-wrap gap-2">
+                            <ChannelTab
+                                v-for="id in selectedChannelIds"
+                                :key="id"
+                                :name="integrationName(id)"
+                                :provider-name="providerNameFor(id)"
+                                :active="id === activeChannelId"
+                                :has-error="channelHasError(id)"
+                                @click="activeChannelId = id"
+                            />
+                        </div>
 
-                    <ThreadEditor
-                        :model-value="activeDraft.segments"
-                        :capabilities="activeCapabilities"
-                        :signature-length="signatureLength(activeChannelId)"
-                        :label="integrationName(activeChannelId)"
-                        :errors="channelErrors[activeChannelId] ?? {}"
-                        @update:model-value="onSegmentsUpdate(activeChannelId as string, $event)"
-                    />
+                        <div v-if="activeChannelId && activeDraft && activeCapabilities" class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <label for="channel-signature" class="text-xs font-medium text-muted">{{ t('editor.signature') }}</label>
+                                <select
+                                    id="channel-signature"
+                                    v-model="activeDraft.signatureId"
+                                    class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                    <!--
+                                        Finding 4: editing an existing group can never
+                                        truthfully claim "no signature" — the API has
+                                        nowhere to record whether the stored text
+                                        already carries one (see loadGroup()'s
+                                        docblock), so a plain "No signature" default
+                                        reads as "none was applied", inviting the user
+                                        to "correct" it and append a second, invisible
+                                        copy. The relabelled option makes picking one
+                                        here a deliberate, informed act instead.
+                                    -->
+                                    <option :value="null">{{ loadedFromServer ? t('editor.signatureUnknown') : t('editor.noSignature') }}</option>
+                                    <option v-for="signature in signatures" :key="signature.id" :value="signature.id">
+                                        {{ signature.content.slice(0, 40) }}
+                                    </option>
+                                </select>
+                                <!--
+                                    Task 1.5: a new tab, not a router-link. The
+                                    signatures screen is a page rather than a
+                                    stacked modal (unlike TagManager), so
+                                    navigating to it from inside the editor would
+                                    unmount this modal and take the unsaved draft
+                                    with it. Opening it alongside costs the user
+                                    nothing and loses nothing.
+                                -->
+                                <a
+                                    href="/settings/signatures"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="text-xs text-primary underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                                >
+                                    {{ t('signatures.manage') }}
+                                </a>
+                            </div>
+                            <p v-if="loadedFromServer" class="text-xs text-muted">{{ t('editor.signatureEditHint') }}</p>
 
-                    <PreviewPane
-                        :provider-identifier="activeIntegration?.provider_identifier ?? ''"
-                        :channel-name="integrationName(activeChannelId)"
-                        :channel-picture="activeIntegration?.picture ?? null"
-                        :segments="activePreviewSegments"
-                    />
-                </div>
-            </div>
+                            <PostSettingsFields
+                                v-if="activePostSettings.length > 0"
+                                :fields="activePostSettings"
+                                :integration-id="activeChannelId"
+                                :model-value="activeDraft.settings"
+                                @update:model-value="onPostSettingsUpdate(activeChannelId as string, $event)"
+                            />
 
-            <!--
-                Deliberately not gated on `availableTags.length`: the block
-                used to disappear entirely when the organization had no
-                tags, which hid the "New tag" trigger in the one situation
-                where it is the only way forward.
-            -->
-            <div class="flex flex-col gap-1">
-                <div class="flex items-center gap-2">
-                    <span class="text-sm font-medium text-text">{{ t('editor.tags') }}</span>
-                    <!-- secondary, not primary: color.md §3.1 — the save button owns primary here. -->
-                    <Button variant="secondary" @click="tagManagerOpen = true">{{ t('tags.add') }}</Button>
-                </div>
-                <TagFilter v-model="selectedTags" :tags="availableTags" />
-            </div>
+                            <ThreadEditor
+                                :model-value="activeDraft.segments"
+                                :capabilities="activeCapabilities"
+                                :signature-length="signatureLength(activeChannelId)"
+                                :label="integrationName(activeChannelId)"
+                                :errors="channelErrors[activeChannelId] ?? {}"
+                                @update:model-value="onSegmentsUpdate(activeChannelId as string, $event)"
+                            />
 
-            <ScheduleControls
-                v-model="publishDate"
-                :integrations="selectedIntegrations"
-                :saving="saving"
-                :disabled="saveDisabled"
-                :timezone="timezone"
-                :notice="scheduleNotice"
-                :repeat="repeat"
-                @update:repeat="repeat = $event"
-                @save-draft="requestSave('draft')"
-                @save-schedule="requestSave('schedule')"
-                @save-now="requestSave('now')"
-            />
+                        </div>
+                    </div>
 
-            <!--
-                Task 1.6: keyed on `props.groupId`, not `effectiveGroupId`
-                — the latter is nulled when a 409 or a published lock
-                forces the editor into "this will be a new post" mode,
-                and the comments still belong to the group that was
-                opened. A brand-new post has no group to comment on at
-                all, so the thread is simply absent. Same reasoning as
-                `canShare` above.
-            -->
-            <CommentThread v-if="props.groupId" :group-id="props.groupId" />
-
-            <!--
-                Task 25 review, Finding 3: saving while `groupLocked` is
-                true would silently create a second, live copy of an
-                already-published post. requestSave() routes here
-                instead of saving directly whenever that's the case —
-                the primary action stops being one click away from a
-                duplicate publish.
-            -->
-            <Toast v-if="pendingSaveType" variant="muted">
-                <p>{{ t('editor.confirmNewPost') }}</p>
-                <div class="mt-2 flex gap-2">
                     <!--
-                        No :loading="saving" here (Task 25 review, round
-                        3, trivia 1): confirmPendingSave() sets
-                        pendingSaveType to null before executeSave() ever
-                        sets saving=true, so this Toast — and this button
-                        with it — always unmounts before `saving` could
-                        become true. The prop was dead code implying a
-                        loading state that can never actually render.
+                        Deliberately not gated on `availableTags.length`: the block
+                        used to disappear entirely when the organization had no
+                        tags, which hid the "New tag" trigger in the one situation
+                        where it is the only way forward.
                     -->
-                    <Button variant="primary" type="button" @click="confirmPendingSave">
-                        {{ t('editor.confirmNewPostYes') }}
-                    </Button>
-                    <Button variant="ghost" type="button" @click="cancelPendingSave">{{ t('ui.cancel') }}</Button>
-                </div>
-            </Toast>
+                    <div class="flex flex-col gap-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-medium text-text">{{ t('editor.tags') }}</span>
+                            <!-- secondary, not primary: color.md §3.1 — the save button owns primary here. -->
+                            <Button variant="secondary" @click="tagManagerOpen = true">{{ t('tags.add') }}</Button>
+                        </div>
+                        <TagFilter v-model="selectedTags" :tags="availableTags" />
+                    </div>
 
-            <!--
-                Deliberately NOT "Cancel" (Task 25 review, round 3,
-                trivia 2): with the confirmation Toast above, two
-                simultaneously visible buttons both saying "Cancel" would
-                carry different, easy-to-confuse consequences — one
-                dismisses the confirmation (composition intact), this one
-                closes the whole modal and discards everything typed.
-                The label itself must carry that difference, not just
-                position on screen.
-            -->
-            <Button variant="ghost" type="button" class="self-start" @click="emit('close')">{{ t('editor.closeWithoutSaving') }}</Button>
+
+                    <!--
+                        Task 1.6: keyed on `props.groupId`, not `effectiveGroupId`
+                        — the latter is nulled when a 409 or a published lock
+                        forces the editor into "this will be a new post" mode,
+                        and the comments still belong to the group that was
+                        opened. A brand-new post has no group to comment on at
+                        all, so the thread is simply absent. Same reasoning as
+                        `canShare` above.
+                    -->
+                    <CommentThread v-if="props.groupId" :group-id="props.groupId" />
+
+                    <!--
+                        Task 25 review, Finding 3: saving while `groupLocked` is
+                        true would silently create a second, live copy of an
+                        already-published post. requestSave() routes here
+                        instead of saving directly whenever that's the case —
+                        the primary action stops being one click away from a
+                        duplicate publish.
+                    -->
+                    <Toast v-if="pendingSaveType" variant="muted">
+                        <p>{{ t('editor.confirmNewPost') }}</p>
+                        <div class="mt-2 flex gap-2">
+                            <!--
+                                No :loading="saving" here (Task 25 review, round
+                                3, trivia 1): confirmPendingSave() sets
+                                pendingSaveType to null before executeSave() ever
+                                sets saving=true, so this Toast — and this button
+                                with it — always unmounts before `saving` could
+                                become true. The prop was dead code implying a
+                                loading state that can never actually render.
+                            -->
+                            <Button variant="primary" type="button" @click="confirmPendingSave">
+                                {{ t('editor.confirmNewPostYes') }}
+                            </Button>
+                            <Button variant="ghost" type="button" @click="cancelPendingSave">{{ t('ui.cancel') }}</Button>
+                        </div>
+                    </Toast>
+
+                    <!--
+                        Deliberately NOT "Cancel" (Task 25 review, round 3,
+                        trivia 2): with the confirmation Toast above, two
+                        simultaneously visible buttons both saying "Cancel" would
+                        carry different, easy-to-confuse consequences — one
+                        dismisses the confirmation (composition intact), this one
+                        closes the whole modal and discards everything typed.
+                        The label itself must carry that difference, not just
+                        position on screen.
+                    -->
+                </section>
+
+                <aside data-test="editor-preview" class="flex flex-col gap-3 border-t border-border bg-surface-2 p-5 lg:overflow-y-auto lg:border-l lg:border-t-0">
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-muted">
+                        {{ t('editor.preview') }}<template v-if="activeChannelId"> · {{ integrationName(activeChannelId) }}</template>
+                    </h3>
+                    <p v-if="!activeChannelId || !activeDraft" class="text-sm text-muted">{{ t('editor.previewEmpty') }}</p>
+                    <template v-else>
+                        <PreviewPane
+                            :provider-identifier="activeIntegration?.provider_identifier ?? ''"
+                            :channel-name="integrationName(activeChannelId)"
+                            :channel-picture="activeIntegration?.picture ?? null"
+                            :segments="activePreviewSegments"
+                        />
+                    </template>
+                </aside>
+            </div>
+
+            <footer data-test="editor-footer" class="flex shrink-0 flex-wrap items-end gap-3 border-t border-border bg-surface px-6 py-3">
+                <ScheduleControls
+                    v-model="publishDate"
+                    :integrations="selectedIntegrations"
+                    :saving="saving"
+                    :disabled="saveDisabled"
+                    :timezone="timezone"
+                    :notice="scheduleNotice"
+                    :repeat="repeat"
+                    @update:repeat="repeat = $event"
+                    @save-draft="requestSave('draft')"
+                    @save-schedule="requestSave('schedule')"
+                    @save-now="requestSave('now')"
+                />
+                <Button variant="ghost" type="button" class="order-first" @click="emit('close')">{{ t('editor.closeWithoutSaving') }}</Button>
+            </footer>
         </div>
-    
         <ShareLinkModal
             :open="shareOpen"
             :group-id="groupId"

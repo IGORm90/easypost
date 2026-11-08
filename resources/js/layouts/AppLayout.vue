@@ -59,6 +59,16 @@ function isActive(name: string): boolean {
 }
 
 const mobileNavOpen = ref(false);
+
+/** Initials for the avatar in the user block — two letters, from the name's first two words. */
+const initials = computed(() =>
+    (auth.user?.name ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0]?.toUpperCase() ?? '')
+        .join(''),
+);
 </script>
 
 <template>
@@ -77,10 +87,19 @@ const mobileNavOpen = ref(false);
         <ImpersonationBanner />
 
         <div class="flex flex-1">
-            <aside class="hidden w-60 shrink-0 bg-nav px-3.5 py-5 text-nav-text md:flex md:flex-col md:gap-0.5">
-                <div class="mb-5 flex items-center gap-2.5 px-2.5">
+            <!--
+                «Кобальт»: the sidebar carries everything a desktop needs —
+                brand, workspace switcher, destinations and the signed-in
+                user with theme and logout — so there is no top bar above
+                the page on md and up.
+            -->
+            <aside class="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto bg-nav px-3.5 py-5 text-nav-text md:flex md:flex-col md:gap-0.5">
+                <div class="mb-4 flex items-center gap-2.5 px-2.5">
                     <span class="flex h-7 w-7 items-center justify-center rounded bg-on-nav text-xs font-bold text-nav" aria-hidden="true">EP</span>
                     <span class="text-[15px] font-semibold text-on-nav">{{ t('app.name') }}</span>
+                </div>
+                <div v-if="auth.user" class="mb-4">
+                    <OrganizationSwitcher tone="nav" />
                 </div>
                 <router-link
                     v-for="item in MAIN_ITEMS"
@@ -117,14 +136,32 @@ const mobileNavOpen = ref(false);
                     </router-link>
                     <MonitoringLinks :link-class="NAV_LINK_CLASS" />
                 </div>
+                <div v-if="auth.user" class="mt-auto flex items-center gap-2.5 border-t border-nav-border px-2.5 pt-3">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-on-primary" aria-hidden="true">{{ initials }}</span>
+                    <span data-test="current-user" class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate text-[13px] text-on-nav">{{ auth.user.name }}</span>
+                        <span class="truncate text-xs text-nav-muted">{{ auth.user.email }}</span>
+                    </span>
+                    <ThemeToggle tone="nav" />
+                    <button
+                        data-test="logout"
+                        type="button"
+                        class="rounded-xl p-2 text-nav-muted hover:bg-nav-active hover:text-on-nav focus:outline-none focus-visible:ring-2 focus-visible:ring-nav-muted"
+                        :aria-label="t('nav.logout')"
+                        :title="t('nav.logout')"
+                        @click="auth.logout()"
+                    >
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" /></svg>
+                    </button>
+                </div>
             </aside>
 
             <div class="flex min-w-0 flex-1 flex-col">
-                <header class="flex items-center justify-between gap-4 border-b border-border bg-surface px-4 py-3 md:px-8">
+                <header class="flex items-center gap-3 bg-nav px-4 py-3 text-on-nav md:hidden">
                     <button
                         data-test="mobile-nav-toggle"
                         type="button"
-                        class="-ml-1 shrink-0 rounded-xl p-1 text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:hidden"
+                        class="-ml-1 shrink-0 rounded-xl p-1.5 text-on-nav hover:bg-nav-active focus:outline-none focus-visible:ring-2 focus-visible:ring-nav-muted md:hidden"
                         :aria-expanded="mobileNavOpen ? 'true' : 'false'"
                         aria-controls="app-mobile-nav"
                         :aria-label="t('nav.menu')"
@@ -134,25 +171,12 @@ const mobileNavOpen = ref(false);
                             <path d="M4 7h16M4 12h16M4 17h16" />
                         </svg>
                     </button>
-                    <OrganizationSwitcher v-if="auth.user" />
-                    <div class="ml-auto flex shrink-0 items-center gap-3">
-                        <ThemeToggle />
-                        <button
-                            v-if="auth.user"
-                            type="button"
-                            class="rounded-xl px-2 py-1 text-sm text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                            @click="auth.logout()"
-                        >
-                            {{ t('nav.logout') }}
-                        </button>
-                    </div>
+                    <span class="text-[15px] font-semibold">{{ t('app.name') }}</span>
                 </header>
 
                 <!--
                     `v-show`, not `v-if`: the toggle's `aria-controls` above
                     has to name an element that exists in both states.
-                    `display: none` keeps the links out of the a11y tree and
-                    the tab order just as removal did.
                 -->
                 <nav
                     v-show="mobileNavOpen"
@@ -161,13 +185,15 @@ const mobileNavOpen = ref(false);
                     class="flex flex-col gap-0.5 bg-nav p-4 text-nav-text md:hidden"
                     :aria-label="t('nav.menu')"
                 >
+                    <div v-if="auth.user" class="mb-3">
+                        <OrganizationSwitcher tone="nav" input-id="organization-switcher-mobile" />
+                    </div>
                     <router-link
                         v-for="item in MAIN_ITEMS"
                         :key="item.name"
                         :to="{ name: item.name }"
                         :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
-                        :active-class="NAV_ACTIVE_CLASS"
-                        @click="mobileNavOpen = false"
+                        :active-class="NAV_ACTIVE_CLASS" @click="mobileNavOpen = false"
                     >
                         <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path :d="item.icon" /></svg>
                         {{ t(item.label) }}
@@ -179,8 +205,7 @@ const mobileNavOpen = ref(false);
                             :key="item.name"
                             :to="{ name: item.name }"
                             :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
-                            :active-class="NAV_ACTIVE_CLASS"
-                            @click="mobileNavOpen = false"
+                            :active-class="NAV_ACTIVE_CLASS" @click="mobileNavOpen = false"
                         >
                             {{ t(item.label) }}
                         </router-link>
@@ -192,16 +217,33 @@ const mobileNavOpen = ref(false);
                             :key="item.name"
                             :to="{ name: item.name }"
                             :class="[NAV_LINK_CLASS, isActive(item.name) ? NAV_ACTIVE_CLASS : '']"
-                            :active-class="NAV_ACTIVE_CLASS"
-                            @click="mobileNavOpen = false"
+                            :active-class="NAV_ACTIVE_CLASS" @click="mobileNavOpen = false"
                         >
                             {{ t(item.label) }}
                         </router-link>
                         <MonitoringLinks :link-class="NAV_LINK_CLASS" />
                     </div>
+                    <div v-if="auth.user" class="mt-3 flex items-center gap-2.5 border-t border-nav-border px-2.5 pt-3">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-on-primary" aria-hidden="true">{{ initials }}</span>
+                    <span data-test="current-user" class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate text-[13px] text-on-nav">{{ auth.user.name }}</span>
+                        <span class="truncate text-xs text-nav-muted">{{ auth.user.email }}</span>
+                    </span>
+                    <ThemeToggle tone="nav" />
+                    <button
+                        data-test="logout"
+                        type="button"
+                        class="rounded-xl p-2 text-nav-muted hover:bg-nav-active hover:text-on-nav focus:outline-none focus-visible:ring-2 focus-visible:ring-nav-muted"
+                        :aria-label="t('nav.logout')"
+                        :title="t('nav.logout')"
+                        @click="auth.logout()"
+                    >
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10" /></svg>
+                    </button>
+                </div>
                 </nav>
 
-                <main class="flex-1 px-4 py-6 md:px-8">
+                <main class="flex-1 px-4 py-6 md:px-8 md:py-7">
                     <slot>
                         <p class="text-sm text-muted">{{ t('shell.comingSoon') }}</p>
                     </slot>

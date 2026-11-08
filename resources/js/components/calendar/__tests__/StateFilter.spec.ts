@@ -50,6 +50,6 @@ it('marks the active display mode without spending the primary budget', async ()
     expect(active?.text()).toBe('Grid');
     expect(restingPrimary(active?.classes() ?? [])).toEqual([]);
 
-    await w.findAll('button')[1].trigger('click');
+    await w.findAll('button')[2].trigger('click');
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['list']);
 });

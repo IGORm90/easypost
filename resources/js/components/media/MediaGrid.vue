@@ -41,7 +41,7 @@ function orderOf(id: string): number | null {
 <template>
     <div>
         <p v-if="items.length === 0" class="text-sm text-muted">{{ emptyMessage ?? t('media.empty') }}</p>
-        <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+        <div v-else class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(170px,1fr))]">
             <MediaTile
                 v-for="item in items"
                 :key="item.id"

@@ -734,8 +734,22 @@ it('asks the shared Modal for the full-screen size', async () => {
     const w = await mountReady();
     const modal = w.getComponent(Modal);
 
-    expect(modal.props('size')).toBe('full');
+    expect(modal.props('size')).toBe('page');
     // Still not dismissable by a stray click — a multi-minute
     // composition may only be closed deliberately.
     expect(modal.props('ignoreBackdropClick')).toBe(true);
+});
+
+// «Кобальт» composer layout: a page of its own with three columns —
+// channels, text, preview — and the schedule and save actions in a
+// footer bar that stays put while the text column scrolls.
+it('lays the composer out as channels | text | preview, with scheduling in the footer', async () => {
+    const w = await mountReady();
+    await selectChannelAndType(w, 'hello');
+
+    expect(w.findComponent(Modal).props('size')).toBe('page');
+    expect(w.get('[data-test="editor-channels"]').findComponent(ChannelPicker).exists()).toBe(true);
+    expect(w.get('[data-test="editor-text"]').find('#common-content').exists()).toBe(true);
+    expect(w.find('[data-test="editor-preview"]').exists()).toBe(true);
+    expect(w.get('[data-test="editor-footer"]').find('#publish-date').exists()).toBe(true);
 });

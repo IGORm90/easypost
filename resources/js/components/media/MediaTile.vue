@@ -77,7 +77,7 @@ function onClick(): void {
 </script>
 
 <template>
-    <div class="flex flex-col overflow-hidden rounded-xl border bg-surface" :class="selected ? 'border-primary' : 'border-border'">
+    <figure class="m-0 flex flex-col overflow-hidden rounded-lg border bg-surface" :class="selected ? 'border-primary' : 'border-border'">
         <button
             type="button"
             class="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
@@ -111,17 +111,17 @@ function onClick(): void {
             </span>
         </button>
 
-        <div class="flex items-center gap-1 px-2 py-1.5">
-            <span class="flex-1 truncate text-xs text-muted" :title="item.original_filename">{{ item.original_filename }}</span>
+        <figcaption class="flex items-center gap-1.5 px-2.5 py-2">
+            <span class="min-w-0 flex-1 truncate text-xs font-medium text-text" :title="item.original_filename">{{ item.original_filename }}</span>
             <button
                 v-if="canDelete"
                 type="button"
-                class="shrink-0 rounded-xl px-1 text-xs text-muted hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                class="shrink-0 rounded-xl p-1.5 text-muted hover:bg-danger-soft hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 :aria-label="t('media.delete')"
                 @click="emit('delete')"
             >
-                &times;
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
             </button>
-        </div>
-    </div>
+        </figcaption>
+    </figure>
 </template>

@@ -87,20 +87,28 @@ async function remove(id: string): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-5xl flex-col gap-4">
-            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('media.title') }}</h1>
+        <div class="flex flex-col gap-[18px]">
+            <!-- «Кобальт»: title left, search right, in one header row. -->
+            <div class="flex flex-wrap items-end gap-4">
+                <div class="flex flex-col gap-1">
+                    <span class="font-mono text-xs text-muted">{{ t('media.count', { count: store.items.length }) }}</span>
+                    <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('media.title') }}</h1>
+                </div>
+                <div class="ml-auto w-full sm:w-72">
+                    <Input
+                        :model-value="searchInput"
+                        type="search"
+                        :aria-label="t('media.search')"
+                        :placeholder="t('media.search')"
+                        @update:model-value="onSearchInput"
+                    />
+                </div>
+            </div>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
 
             <MediaUploader />
 
-            <Input
-                :model-value="searchInput"
-                type="search"
-                :aria-label="t('media.search')"
-                :placeholder="t('media.search')"
-                @update:model-value="onSearchInput"
-            />
 
             <p v-if="loading" class="text-sm text-muted">{{ t('ui.loading') }}</p>
             <MediaGrid v-else :items="store.items" deletable :empty-message="t('media.empty')" @delete="remove" />

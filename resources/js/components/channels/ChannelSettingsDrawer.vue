@@ -160,11 +160,15 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-    <Modal :open="open && Boolean(integration)" :title="integration ? t('channels.settings.title', { name: integration.name }) : ''" @close="emit('close')">
-        <form v-if="integration" class="flex flex-col gap-4" @submit.prevent="submit">
+    <Modal :open="open && Boolean(integration)" :title="integration ? t('channels.settings.title', { name: integration.name }) : ''" size="drawer" @close="emit('close')">
+        <!-- «Кобальт» side panel: the fields scroll, the save row stays at the bottom. -->
+        <form v-if="integration" class="flex min-h-0 flex-1 flex-col" @submit.prevent="submit">
+            <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5">
+            <div class="grid gap-3 sm:grid-cols-2">
             <Input id="channel-name" v-model="form.name" :label="t('channels.settings.name')" :error="errors.name?.[0]" required />
             <Input id="channel-group" v-model="form.group_name" :label="t('channels.settings.groupName')" :error="errors.group_name?.[0]" />
             <Input id="channel-customer" v-model="form.customer_name" :label="t('channels.settings.customerName')" :error="errors.customer_name?.[0]" />
+            </div>
 
             <div v-for="field in settingFields" :key="field.key" class="flex flex-col gap-1">
                 <label :for="`channel-setting-${field.key}`" class="text-sm font-medium text-text">{{ settingLabel(field.key) }}</label>
@@ -194,14 +198,18 @@ async function submit(): Promise<void> {
 
             <p v-if="optionsError" role="alert" class="text-sm text-danger">{{ optionsError }}</p>
 
-            <div class="flex flex-col gap-1">
-                <p class="text-sm font-medium text-text">{{ t('channels.settings.timeSlots') }}</p>
+            <div class="flex flex-col gap-2 border-t border-border pt-4">
+                <h3 class="text-[15px] font-semibold text-text">{{ t('channels.settings.timeSlots') }}</h3>
                 <TimeSlotEditor v-model="form.time_slots" :timezone="timezone" />
             </div>
-
-            <p v-if="saved" role="status" class="text-sm text-success">{{ t('channels.settings.saved') }}</p>
-
-            <Button type="submit" variant="primary" :loading="saving">{{ t('channels.settings.save') }}</Button>
+            </div>
+            <div class="flex shrink-0 items-center gap-2.5 border-t border-border px-6 py-3.5">
+                <p v-if="saved" role="status" class="text-[13px] text-success">{{ t('channels.settings.saved') }}</p>
+                <div class="ml-auto flex gap-2">
+                    <Button type="button" variant="secondary" @click="emit('close')">{{ t('ui.cancel') }}</Button>
+                    <Button type="submit" variant="primary" :loading="saving">{{ t('channels.settings.save') }}</Button>
+                </div>
+            </div>
         </form>
     </Modal>
 </template>

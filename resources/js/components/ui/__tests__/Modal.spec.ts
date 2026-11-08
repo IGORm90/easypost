@@ -216,6 +216,25 @@ it('is wide by default, and effectively full-screen at size="full"', () => {
     expect(full.classes()).toContain('flex-col');
 });
 
+// «Кобальт»: the composer is a page of its own — edge to edge, with the
+// dark title bar of the mockup — not a card floating over the calendar.
+it('takes the whole viewport at size="page", under a dark title bar', () => {
+    const w = mountModal({ size: 'page', title: 'New post' });
+    const page = w.get('[role="dialog"]');
+
+    expect(page.classes()).toEqual(expect.arrayContaining(['h-screen', 'max-w-none', 'rounded-none', 'p-0']));
+    expect(w.get('[data-test="modal-header"]').classes()).toContain('bg-nav');
+});
+
+// «Кобальт»: channel settings slide in from the right as a full-height
+// panel over the dimmed page, instead of floating in the middle.
+it('docks to the right edge at size="drawer"', () => {
+    const w = mountModal({ size: 'drawer', title: 'Settings' });
+
+    expect(w.get('.fixed').classes()).toContain('justify-end');
+    expect(w.get('[role="dialog"]').classes()).toEqual(expect.arrayContaining(['h-screen', 'max-w-[560px]', 'rounded-none']));
+});
+
 // `bg-text/40` produced NO css at all: tailwind.config.js maps every
 // token to a bare `var(--token)` with no <alpha-value> placeholder, and
 // Tailwind 3 drops an opacity modifier it cannot apply. The backdrop was

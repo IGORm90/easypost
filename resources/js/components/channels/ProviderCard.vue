@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Card from '../ui/Card.vue';
-import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import { resolveProviderIcon } from '../previews/registry';
 import type { Provider } from '../../stores/integrations';
@@ -35,27 +33,25 @@ const icon = computed(() => resolveProviderIcon(props.provider.identifier));
 </script>
 
 <template>
-    <Card>
-        <div class="flex items-center gap-3">
-            <!-- The brand mark's one non-token colour (color.md §6) always
+    <!-- «Кобальт» network tile: mark and name on top, the connected count
+         and the connect button on one line underneath. -->
+    <div class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3.5">
+        <div class="flex items-center gap-2.5">
+            <!-- The brand mark's one non-token colour (color.md §7) always
                  sits on --surface-2: the same neutral ground in both
-                 themes, so a logo's contrast is settled once rather than
-                 once per theme. -->
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-muted">
-                <component :is="icon" class="h-6 w-6" />
+                 themes, so a logo's contrast is settled once. -->
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-muted">
+                <component :is="icon" class="h-5 w-5" />
             </div>
-
-            <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-semibold text-text">{{ provider.name }}</p>
-                <Badge v-if="connectedCount > 0" status="neutral" class="mt-1">
-                    {{ t('channels.available.connectedCount', { count: connectedCount }) }}
-                </Badge>
-            </div>
-
+            <p class="truncate text-sm font-semibold text-text">{{ provider.name }}</p>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-muted">
+                <template v-if="connectedCount > 0">{{ t('channels.available.connectedCount', { count: connectedCount }) }}</template>
+            </span>
             <!-- Secondary, not primary: the connect modal's own submit is
                  this screen's single primary action once it opens
-                 (color.md §3.1), and a grid of primary buttons would make
-                 every network look like the recommended one. -->
+                 (color.md §3.1). -->
             <Button
                 variant="secondary"
                 :aria-label="t('channels.available.connectAria', { name: provider.name })"
@@ -64,5 +60,5 @@ const icon = computed(() => resolveProviderIcon(props.provider.identifier));
                 {{ t('channels.available.connect') }}
             </Button>
         </div>
-    </Card>
+    </div>
 </template>

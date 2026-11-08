@@ -157,16 +157,16 @@ function backToChannels(): void {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-md flex-col items-start gap-4">
-            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('integrations.callback.title') }}</h1>
+        <div class="mx-auto mt-10 flex max-w-md flex-col items-start gap-3.5 rounded-xl border border-border bg-surface p-7">
+            <h1 class="text-xl font-semibold tracking-tight text-text">{{ t('integrations.callback.title') }}</h1>
 
             <p v-if="status === 'pending'" class="text-sm text-muted">{{ t('integrations.callback.inProgress') }}</p>
 
-            <p v-else-if="status === 'success'" role="status" class="text-sm text-success">
+            <p v-else-if="status === 'success'" role="status" class="w-full rounded-xl border border-success-border bg-success-soft px-3 py-2 text-[13px] text-success">
                 {{ t('integrations.callback.success', { name: connectedName }) }}
             </p>
 
-            <p v-else-if="!limitExceeded" role="alert" class="text-sm text-danger">{{ errorMessage }}</p>
+            <p v-else-if="!limitExceeded" role="alert" class="w-full rounded-xl border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">{{ errorMessage }}</p>
 
             <Button v-if="status !== 'pending'" variant="secondary" @click="backToChannels">
                 {{ t('integrations.callback.backToChannels') }}

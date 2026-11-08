@@ -4,6 +4,7 @@ import Channels from '../Index.vue';
 import en from '../../../i18n/en.json';
 import { i18n } from '../../../i18n';
 import type { Integration, Provider } from '../../../stores/integrations';
+import ChannelLimitMeter from '../../../components/billing/ChannelLimitMeter.vue';
 
 /**
  * The screen was one flat list of connected channels, and the catalogue
@@ -121,6 +122,26 @@ it('names both blocks, so the catalogue is not mistaken for the channel list', a
 
     expect(w.text()).toContain(en.channels.connected.title);
     expect(w.text()).toContain(en.channels.available.title);
+});
+
+// «Кобальт»: the plan's channel allowance sits next to the list, and is
+// told to reload whenever the number of connected channels changes.
+it('shows the channel allowance and keys its refresh to the channel count', async () => {
+    respondWith([integration('i-1', 'fake', 'Release notes'), integration('i-2', 'fake', 'Support')]);
+    const w = await mountPage();
+
+    expect(w.findComponent(ChannelLimitMeter).props('refreshKey')).toBe(2);
+});
+
+// «Кобальт»: a channel that needs reconnecting is announced above the
+// list — its scheduled posts will not go out — and only that one.
+it('announces a channel that needs reconnecting above the list, and no other', async () => {
+    respondWith([integration('i-1', 'fake', 'Release notes'), { ...integration('i-2', 'fake', 'Old page'), refresh_needed: true }]);
+    const w = await mountPage();
+
+    const banners = w.findAll('[data-test="reconnect-banner"]');
+    expect(banners).toHaveLength(1);
+    expect(banners[0].text()).toContain('Old page');
 });
 
 it('offers every network the build ships, even with nothing connected', async () => {

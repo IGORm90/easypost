@@ -4,7 +4,6 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Button from '../../components/ui/Button.vue';
-import Card from '../../components/ui/Card.vue';
 import Toast from '../../components/ui/Toast.vue';
 import ContentTextarea from '../../components/editor/ContentTextarea.vue';
 import { api } from '../../api/client';
@@ -273,13 +272,13 @@ async function remove(signature: SignatureDto): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-3xl flex-col gap-4">
+        <div class="flex max-w-4xl flex-col gap-5">
             <div class="flex flex-col gap-1">
-                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('signatures.title') }}</h1>
-                <p class="text-sm text-muted">{{ t('signatures.intro') }}</p>
+                <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('signatures.title') }}</h1>
+                <p class="max-w-2xl text-sm leading-relaxed text-muted">{{ t('signatures.intro') }}</p>
             </div>
 
-            <Card>
+            <div>
                 <div class="flex flex-col gap-4">
                     <Toast v-if="error" variant="danger" @dismiss="error = null">{{ error }}</Toast>
 
@@ -293,7 +292,7 @@ async function remove(signature: SignatureDto): Promise<void> {
                             v-for="signature in list"
                             :key="signature.id"
                             data-test="signature-row"
-                            class="rounded-xl border border-border p-3"
+                            class="rounded-lg border border-border bg-surface p-4"
                         >
                             <div v-if="editingId === signature.id" data-test="signature-edit" class="flex flex-col gap-3">
                                 <ContentTextarea
@@ -304,11 +303,11 @@ async function remove(signature: SignatureDto): Promise<void> {
                                     :error="editErrors.content?.[0]"
                                 />
 
-                                <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+                                <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 text-[13px] text-text hover:bg-surface-2">
                                     <input
                                         v-model="editForm.isDefault"
                                         type="checkbox"
-                                        class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                        class="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                                     />
                                     <span>{{ t('signatures.isDefaultLabel') }}</span>
                                 </label>
@@ -358,7 +357,7 @@ async function remove(signature: SignatureDto): Promise<void> {
                                         {{ t('signatures.makeDefault') }}
                                     </Button>
                                     <Button variant="ghost" @click="startEdit(signature)">{{ t('signatures.edit') }}</Button>
-                                    <Button variant="danger" :loading="busy" @click="remove(signature)">
+                                    <Button variant="danger-text" :loading="busy" @click="remove(signature)">
                                         {{ t('signatures.remove') }}
                                     </Button>
                                 </span>
@@ -368,9 +367,10 @@ async function remove(signature: SignatureDto): Promise<void> {
 
                     <form
                         data-test="signature-create"
-                        class="flex flex-col gap-3 border-t border-border pt-4"
+                        class="flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-5"
                         @submit.prevent="create"
                     >
+                        <h2 class="text-[15px] font-semibold text-text">{{ t('signatures.create') }}</h2>
                         <ContentTextarea
                             v-model="createForm.content"
                             id="signature-create-content"
@@ -379,11 +379,11 @@ async function remove(signature: SignatureDto): Promise<void> {
                             :error="createErrors.content?.[0]"
                         />
 
-                        <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+                        <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 text-[13px] text-text hover:bg-surface-2">
                             <input
                                 v-model="createForm.isDefault"
                                 type="checkbox"
-                                class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                class="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                             />
                             <span>{{ t('signatures.isDefaultLabel') }}</span>
                         </label>
@@ -395,7 +395,7 @@ async function remove(signature: SignatureDto): Promise<void> {
                         </div>
                     </form>
                 </div>
-            </Card>
+            </div>
         </div>
     </AppLayout>
 </template>

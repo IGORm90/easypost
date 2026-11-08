@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Card from '../ui/Card.vue';
 import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import { resolveProviderIcon } from '../previews/registry';
@@ -32,75 +31,69 @@ const providerName = computed(() => props.provider?.name ?? props.integration.pr
 // says which network this is. Resolved through the registry, never by
 // branching on the identifier here (previews/registry.ts).
 const icon = computed(() => resolveProviderIcon(props.integration.provider_identifier));
+
+/** Posting slots per week — `time_slots` only arrives on the full Integration, so absent means "unknown", not zero. */
+const slotCount = computed(() => props.integration.time_slots?.length ?? null);
 </script>
 
 <template>
-    <Card>
-        <div class="flex items-start gap-3">
+    <!-- «Кобальт» channel card: mark, name and network on top with the
+         status badge pinned right, the client and slot count under it, and
+         the actions in a footer row with "Remove" set apart on the far
+         right. A broken channel gets a danger frame as well as its badge. -->
+    <article
+        class="flex flex-col gap-3 rounded-lg border bg-surface p-4"
+        :class="integration.refresh_needed ? 'border-danger-border' : 'border-border'"
+    >
+        <div class="flex items-center gap-3">
             <img
                 v-if="integration.picture"
                 :src="integration.picture"
                 :alt="providerName"
                 class="h-10 w-10 shrink-0 rounded-lg object-cover"
             />
-            <!-- --surface-2, not --accent-soft: the mark may carry a
-                 brand colour (color.md §6) and a neutral ground keeps that
+            <!-- --surface-2, not --accent-soft: the mark may carry a brand
+                 colour (color.md §7) and a neutral ground keeps that
                  contrast identical in both themes — the same tile
-                 ProviderCard uses, so a channel and its network read as
-                 the same thing. -->
-            <div
-                v-else
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted"
-                aria-hidden="true"
-            >
+                 ProviderCard uses. -->
+            <div v-else class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted" aria-hidden="true">
                 <component :is="icon" class="h-6 w-6" />
             </div>
-
-            <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2">
-                    <p class="truncate text-sm font-semibold text-text">{{ integration.name }}</p>
-                    <Badge status="neutral">{{ providerName }}</Badge>
-                </div>
-
-                <p v-if="integration.group_name || integration.customer_name" class="mt-0.5 truncate text-xs text-muted">
-                    <span v-if="integration.group_name">{{ integration.group_name }}</span>
-                    <span v-if="integration.group_name && integration.customer_name"> · </span>
-                    <span v-if="integration.customer_name">{{ integration.customer_name }}</span>
-                </p>
-
-                <div class="mt-2 flex flex-wrap items-center gap-2">
-                    <!-- refresh_needed always wins over the plain disabled
-                         badge: a broken channel must never read as merely
-                         switched off (Task 17 brief's explicit requirement,
-                         color.md §3 "status never conveyed by colour alone"
-                         — the word "reconnect" carries the meaning, not the
-                         red alone). -->
-                    <Badge v-if="integration.refresh_needed" status="danger">
-                        {{ t('channels.status.refreshNeeded') }}
-                    </Badge>
-                    <Badge v-else-if="integration.disabled" status="neutral">
-                        {{ t('channels.status.disabled') }}
-                    </Badge>
-                    <Badge v-else status="success">
-                        {{ t('channels.status.active') }}
-                    </Badge>
-                </div>
-
-                <div class="mt-3 flex flex-wrap gap-2">
-                    <Button v-if="integration.refresh_needed" variant="secondary" @click="emit('reconnect')">
-                        {{ t('channels.actions.reconnect') }}
-                    </Button>
-                    <Button variant="ghost" @click="emit('settings')">
-                        {{ t('channels.actions.settings') }}
-                    </Button>
-                    <Button v-if="!integration.refresh_needed" variant="ghost" @click="emit('toggle')">
-                        {{ integration.disabled ? t('channels.actions.enable') : t('channels.actions.disable') }}
-                    </Button>
-                    <Button variant="ghost" @click="emit('remove')">
-                        {{ t('channels.actions.remove') }}
-                    </Button>
-                </div>
+            <div class="flex min-w-0 flex-1 flex-col">
+                <p class="truncate text-sm font-semibold text-text">{{ integration.name }}</p>
+                <p class="truncate text-xs text-muted">{{ providerName }}</p>
             </div>
+            <!-- refresh_needed always wins over the plain disabled badge: a
+                 broken channel must never read as merely switched off — the
+                 word "reconnect" carries the meaning, not the red alone. -->
+            <Badge v-if="integration.refresh_needed" status="danger">{{ t('channels.status.refreshNeeded') }}</Badge>
+            <Badge v-else-if="integration.disabled" status="neutral">{{ t('channels.status.disabled') }}</Badge>
+            <Badge v-else status="success">{{ t('channels.status.active') }}</Badge>
         </div>
-    </Card>
+
+        <p v-if="integration.group_name || integration.customer_name || slotCount !== null" class="flex flex-wrap gap-x-3.5 gap-y-1 text-xs text-muted">
+            <span v-if="integration.customer_name">{{ t('channels.settings.customerName') }}: <span class="text-text">{{ integration.customer_name }}</span></span>
+            <span v-if="integration.group_name">{{ t('channels.settings.groupName') }}: <span class="text-text">{{ integration.group_name }}</span></span>
+            <span v-if="slotCount !== null">{{ t('channels.slotsPerWeek') }}: <span class="font-mono text-text">{{ slotCount }}</span></span>
+        </p>
+
+        <div class="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
+            <Button v-if="integration.refresh_needed" variant="secondary" @click="emit('reconnect')">
+                {{ t('channels.actions.reconnect') }}
+            </Button>
+            <Button variant="secondary" @click="emit('settings')">
+                {{ t('channels.actions.settings') }}
+            </Button>
+            <Button v-if="!integration.refresh_needed" variant="secondary" @click="emit('toggle')">
+                {{ integration.disabled ? t('channels.actions.enable') : t('channels.actions.disable') }}
+            </Button>
+            <button
+                type="button"
+                class="ml-auto rounded-xl px-2.5 py-2 text-sm font-medium text-danger hover:bg-danger-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+                @click="emit('remove')"
+            >
+                {{ t('channels.actions.remove') }}
+            </button>
+        </div>
+    </article>
 </template>

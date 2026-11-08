@@ -82,7 +82,7 @@ async function stop(): Promise<void> {
     <div
         v-if="impersonator"
         data-test="impersonation-banner"
-        class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning bg-warning-soft px-4 py-2 text-sm text-warning"
+        class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning-border bg-warning-soft px-6 py-2.5 text-[13px] text-warning"
         role="status"
     >
         <svg class="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -97,7 +97,7 @@ async function stop(): Promise<void> {
         <button
             data-test="impersonation-stop"
             type="button"
-            class="ml-auto rounded-xl px-2 py-1 font-medium underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-60"
+            class="ml-auto rounded-xl border border-warning px-3 py-1.5 font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-60"
             :disabled="stopping"
             @click="stop"
         >

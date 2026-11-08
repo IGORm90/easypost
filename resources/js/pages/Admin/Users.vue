@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Badge from '../../components/ui/Badge.vue';
 import Button from '../../components/ui/Button.vue';
-import Card from '../../components/ui/Card.vue';
 import Input from '../../components/ui/Input.vue';
 import Toast from '../../components/ui/Toast.vue';
 import { api } from '../../api/client';
@@ -155,17 +154,17 @@ async function impersonate(user: AdminUser): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-4xl flex-col gap-4">
+        <div class="flex max-w-6xl flex-col gap-5">
             <div class="flex flex-col gap-1">
-                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('admin.users.title') }}</h1>
-                <p class="text-sm text-muted">{{ t('admin.users.intro') }}</p>
+                <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('admin.users.title') }}</h1>
+                <p class="max-w-2xl text-sm text-muted">{{ t('admin.users.intro') }}</p>
             </div>
 
-            <Card>
+            <div>
                 <div class="flex flex-col gap-4">
                     <Toast v-if="error" variant="danger" @dismiss="error = null">{{ error }}</Toast>
 
-                    <div data-test="admin-user-search">
+                    <div data-test="admin-user-search" class="max-w-sm">
                         <Input v-model="search" type="search" :label="t('admin.users.search')" />
                     </div>
 
@@ -176,15 +175,15 @@ async function impersonate(user: AdminUser): Promise<void> {
                         <p class="text-sm text-muted">{{ t('admin.users.emptyHint') }}</p>
                     </div>
 
-                    <div v-else-if="users.length > 0" class="overflow-x-auto">
-                        <table class="w-full text-left text-sm">
-                            <thead class="border-b border-border bg-surface-2 text-muted">
+                    <div v-else-if="users.length > 0" class="overflow-x-auto rounded-lg border border-border bg-surface">
+                        <table class="w-full min-w-[760px] text-left text-[13px]">
+                            <thead class="bg-surface-2 text-xs text-muted">
                                 <tr>
-                                    <th class="px-3 py-2 font-medium">{{ t('admin.users.columnName') }}</th>
-                                    <th class="px-3 py-2 font-medium">{{ t('admin.users.columnEmail') }}</th>
-                                    <th class="px-3 py-2 font-medium">{{ t('admin.users.columnOrganizations') }}</th>
-                                    <th class="px-3 py-2 font-medium">{{ t('admin.users.columnCreated') }}</th>
-                                    <th class="px-3 py-2"><span class="sr-only">{{ t('admin.users.impersonate') }}</span></th>
+                                    <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('admin.users.columnName') }}</th>
+                                    <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('admin.users.columnEmail') }}</th>
+                                    <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('admin.users.columnOrganizations') }}</th>
+                                    <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('admin.users.columnCreated') }}</th>
+                                    <th scope="col" class="px-3.5 py-2.5"><span class="sr-only">{{ t('admin.users.impersonate') }}</span></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -192,11 +191,11 @@ async function impersonate(user: AdminUser): Promise<void> {
                                     v-for="user in users"
                                     :key="user.id"
                                     data-test="admin-user-row"
-                                    class="border-b border-border last:border-0"
+                                    class="border-t border-border"
                                 >
-                                    <td class="px-3 py-2">
+                                    <td class="px-3.5 py-3">
                                         <span class="flex flex-wrap items-center gap-2">
-                                            <span class="text-text">{{ user.name }}</span>
+                                            <span class="font-medium text-text">{{ user.name }}</span>
                                             <!--
                                                 Badge, not a tint on the name: the
                                                 other holders of the instance
@@ -210,16 +209,16 @@ async function impersonate(user: AdminUser): Promise<void> {
                                             </Badge>
                                         </span>
                                     </td>
-                                    <td class="px-3 py-2 text-muted">{{ user.email }}</td>
-                                    <td class="px-3 py-2 text-muted">
+                                    <td class="px-3.5 py-3 text-muted">{{ user.email }}</td>
+                                    <td class="px-3.5 py-3 text-muted">
                                         <span v-if="user.organizations.length > 0">{{ user.organizations.join(', ') }}</span>
                                         <span v-else>{{ t('admin.users.noOrganizations') }}</span>
                                     </td>
-                                    <td class="px-3 py-2 text-muted">{{ formatDate(user.created_at) }}</td>
-                                    <td class="px-3 py-2 text-right">
+                                    <td class="px-3.5 py-3 font-mono text-xs text-muted">{{ formatDate(user.created_at) }}</td>
+                                    <td class="px-3.5 py-3 text-right">
                                         <Button
                                             data-test="admin-user-impersonate"
-                                            variant="ghost"
+                                            variant="secondary"
                                             :loading="busyId === user.id"
                                             @click="impersonate(user)"
                                         >
@@ -242,7 +241,7 @@ async function impersonate(user: AdminUser): Promise<void> {
                         </Button>
                     </div>
                 </div>
-            </Card>
+            </div>
         </div>
     </AppLayout>
 </template>

@@ -130,15 +130,24 @@ async function submitUrl(): Promise<void> {
 </script>
 
 <template>
+    <!-- «Кобальт»: the drop zone and the URL import side by side, each a
+         card of its own; they stack on narrow screens. -->
     <div class="flex flex-col gap-3">
+        <div class="flex flex-wrap gap-3">
         <div
-            class="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center text-sm transition"
-            :class="dragging ? 'border-primary bg-primary-soft text-primary' : 'border-border text-muted'"
+            class="flex min-w-[280px] flex-[2_1_420px] flex-wrap items-center gap-4 rounded-lg border-2 border-dashed p-5 text-sm transition"
+            :class="dragging ? 'border-primary bg-primary-soft text-primary' : 'border-border-strong bg-surface text-muted'"
             @dragover.prevent="dragging = true"
             @dragleave.prevent="dragging = false"
             @drop.prevent="onDrop"
         >
-            <p>{{ t('media.uploader.dropHint') }}</p>
+            <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-hover" aria-hidden="true">
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg>
+            </span>
+            <span class="flex min-w-0 flex-1 flex-col gap-1">
+                <span class="text-text">{{ t('media.uploader.dropHint') }}</span>
+                <span class="text-xs text-muted">{{ t('media.uploader.constraints') }}</span>
+            </span>
             <Button variant="secondary" type="button" @click="openPicker">{{ t('media.uploader.browse') }}</Button>
             <input
                 ref="fileInput"
@@ -148,10 +157,9 @@ async function submitUrl(): Promise<void> {
                 class="hidden"
                 @change="onFileChange"
             />
-            <p class="text-xs text-muted">{{ t('media.uploader.constraints') }}</p>
         </div>
 
-        <form class="flex gap-2" @submit.prevent="submitUrl">
+        <form class="flex min-w-[280px] flex-[1_1_300px] items-end gap-2 rounded-lg border border-border bg-surface p-4" @submit.prevent="submitUrl">
             <!--
                 The `flex-1` sits on this wrapper, not on the field: Input sets
                 `inheritAttrs: false` and binds $attrs to the inner <input>,
@@ -171,6 +179,7 @@ async function submitUrl(): Promise<void> {
                 {{ t('media.uploader.importUrl') }}
             </Button>
         </form>
+        </div>
 
         <Toast v-if="errors.length" variant="danger" @dismiss="errors = []">
             <p v-for="(message, index) in errors" :key="index">{{ message }}</p>

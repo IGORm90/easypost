@@ -3,7 +3,6 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '../../layouts/AppLayout.vue';
-import Card from '../../components/ui/Card.vue';
 import Button from '../../components/ui/Button.vue';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/auth';
@@ -54,16 +53,18 @@ function goHome(): void {
 
 <template>
     <AppLayout>
-        <div class="mx-auto max-w-md">
-            <Card :title="t('invites.accept.title')">
-                <p class="mb-4 text-sm text-muted">{{ t('invites.accept.description') }}</p>
-
-                <p v-if="done" role="status" class="mb-4 text-sm text-success">{{ t('invites.accept.success') }}</p>
-                <p v-else-if="error" role="alert" class="mb-4 text-sm text-danger">{{ error }}</p>
-
-                <Button v-if="done" variant="primary" @click="goHome">{{ t('nav.menu') }}</Button>
-                <Button v-else variant="primary" :loading="loading" @click="accept">{{ t('invites.accept.submit') }}</Button>
-            </Card>
+        <!-- «Кобальт»: one centred card with the workspace mark, the
+             question and a full-width answer. -->
+        <div class="mx-auto mt-10 flex max-w-md flex-col items-center gap-3.5 rounded-xl border border-border bg-surface p-8 text-center">
+            <span class="flex h-14 w-14 items-center justify-center rounded-xl bg-primary-soft text-primary-hover" aria-hidden="true">
+                <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0113 0M19 8v6M16 11h6" /></svg>
+            </span>
+            <h1 class="text-[22px] font-semibold tracking-tight text-text">{{ t('invites.accept.title') }}</h1>
+            <p class="text-sm leading-relaxed text-muted">{{ t('invites.accept.description') }}</p>
+            <p v-if="done" role="status" class="w-full rounded-xl border border-success-border bg-success-soft px-3 py-2 text-[13px] text-success">{{ t('invites.accept.success') }}</p>
+            <p v-else-if="error" role="alert" class="w-full rounded-xl border border-danger-border bg-danger-soft px-3 py-2 text-[13px] text-danger">{{ error }}</p>
+            <Button v-if="done" variant="primary" class="w-full" @click="goHome">{{ t('calendar.title') }}</Button>
+            <Button v-else variant="primary" class="w-full py-3" :loading="loading" @click="accept">{{ t('invites.accept.submit') }}</Button>
         </div>
     </AppLayout>
 </template>

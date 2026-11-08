@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Toast from '../../components/ui/Toast.vue';
-import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
 import CalendarGrid from '../../components/calendar/CalendarGrid.vue';
 import ViewSwitcher, { type CalendarView } from '../../components/calendar/ViewSwitcher.vue';
@@ -15,19 +14,25 @@ import PostList from '../../components/calendar/PostList.vue';
 import TagFilter from '../../components/calendar/TagFilter.vue';
 import TagManager from '../../components/tags/TagManager.vue';
 import PublishErrorBanner from '../../components/calendar/PublishErrorBanner.vue';
+import ChannelLanes from '../../components/calendar/ChannelLanes.vue';
+import CalendarStats from '../../components/calendar/CalendarStats.vue';
 import PostEditorModal from '../../components/editor/PostEditorModal.vue';
 import ShareLinkModal from '../../components/posts/ShareLinkModal.vue';
 import { usePostsStore, type CalendarTag } from '../../stores/posts';
 import { useAuthStore } from '../../stores/auth';
 import { useOrganizationStore } from '../../stores/organization';
+import { useIntegrationsStore } from '../../stores/integrations';
+import { zonedDayKey } from '../../utils/zonedDateTime';
+import { addDays, weekDays, weekRange, weekStartKey } from '../../utils/week';
 import { api } from '../../api/client';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const postsStore = usePostsStore();
 const auth = useAuthStore();
 const organization = useOrganizationStore();
+const integrations = useIntegrationsStore();
 
 const view = ref<CalendarView>('month');
 
@@ -44,10 +49,12 @@ const view = ref<CalendarView>('month');
  * calendar, not nothing. The page NUMBER deliberately stays out of the
  * URL — see usePostsStore.fetchList().
  */
-const MODES: DisplayMode[] = ['grid', 'list'];
+const MODES: DisplayMode[] = ['channels', 'grid', 'list'];
 const STATES: PostStateFilter[] = ['all', 'DRAFT', 'SCHEDULED', 'QUEUE', 'PUBLISHED', 'ERROR'];
 
-const mode = ref<DisplayMode>(MODES.includes(route.query.mode as DisplayMode) ? (route.query.mode as DisplayMode) : 'grid');
+// «Кобальт»: the week-by-channel lanes are the calendar's home view; the
+// FullCalendar grid and the list stay one click (and one `?mode=`) away.
+const mode = ref<DisplayMode>(MODES.includes(route.query.mode as DisplayMode) ? (route.query.mode as DisplayMode) : 'channels');
 const stateFilter = ref<PostStateFilter>(
     STATES.includes(route.query.state as PostStateFilter) ? (route.query.state as PostStateFilter) : 'all',
 );
@@ -74,6 +81,51 @@ const notice = ref<{ text: string; variant: 'danger' | 'neutral' } | null>(null)
 // browser's — same source CalendarGrid.vue's timeZone option consumes,
 // same field ChannelSettingsDrawer/TimeSlotEditor already use.
 const timezone = computed(() => auth.user?.timezone ?? 'UTC');
+
+/*
+ * The lanes page through whole weeks on their own — FullCalendar is not
+ * mounted in that mode, so nothing else reports a range. Day keys, not
+ * Dates, so the week is the profile's week (utils/week.ts explains why).
+ */
+const todayKey = computed(() => zonedDayKey(new Date().toISOString(), timezone.value));
+const weekStart = ref(weekStartKey(todayKey.value));
+const laneDays = computed(() => weekDays(weekStart.value));
+const laneChannels = computed(() => integrations.list.filter((channel) => !channel.disabled));
+const weekLabel = computed(() =>
+    new Intl.DateTimeFormat(locale.value, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).formatRange(
+        new Date(`${weekStart.value}T00:00:00Z`),
+        new Date(`${addDays(weekStart.value, 6)}T00:00:00Z`),
+    ),
+);
+
+/** ISO week number of the Monday on screen — the mono line above the title says "Week 46". */
+const weekNumber = computed(() => {
+    const monday = new Date(`${weekStart.value}T00:00:00Z`);
+    const thursday = new Date(monday);
+    thursday.setUTCDate(monday.getUTCDate() + 3);
+    const yearStart = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
+
+    return Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+});
+
+/** The failure counter's "show" link: the list, filtered to failures, is where a failed post is acted on. */
+function showFailed(): void {
+    stateFilter.value = 'ERROR';
+    mode.value = 'list';
+}
+
+function showWeek(startKey: string): void {
+    weekStart.value = startKey;
+    range.value = weekRange(startKey, timezone.value);
+    void load();
+}
+
+function loadChannels(): void {
+    // The lanes are drawn from the channel list, so a failure here only
+    // costs the quiet channels their empty lanes — channels with posts in
+    // range still get one from the entries themselves.
+    integrations.fetch().catch(() => undefined);
+}
 
 async function loadTags(): Promise<void> {
     try {
@@ -183,7 +235,7 @@ function syncQuery(): void {
     void router.replace({
         query: {
             ...route.query,
-            mode: mode.value === 'grid' ? undefined : mode.value,
+            mode: mode.value === 'channels' ? undefined : mode.value,
             state: stateFilter.value === 'all' ? undefined : stateFilter.value,
         },
     });
@@ -198,6 +250,11 @@ watch(mode, (next) => {
         return;
     }
 
+    if (next === 'channels') {
+        loadChannels();
+        showWeek(weekStart.value);
+    }
+
     // Going back to the grid remounts CalendarGrid (v-if, not v-show),
     // which re-emits range-change and reloads `entries` on its own.
 });
@@ -210,6 +267,11 @@ watch(stateFilter, () => {
 onMounted(() => {
     if (mode.value === 'list') {
         void loadList();
+    }
+
+    if (mode.value === 'channels') {
+        loadChannels();
+        showWeek(weekStart.value);
     }
 });
 
@@ -373,39 +435,81 @@ function onEditorSaved(): void {
 
 <template>
     <AppLayout>
-        <div class="flex flex-col gap-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex items-baseline gap-2">
-                    <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('calendar.title') }}</h1>
-                    <span v-if="loading" class="text-xs text-muted">{{ t('ui.loading') }}</span>
+        <div class="flex flex-col gap-[18px]">
+            <div class="flex flex-wrap items-end gap-4">
+                <div class="flex flex-col gap-1">
+                    <span class="font-mono text-xs text-muted" aria-live="polite">
+                        <template v-if="mode === 'channels'">{{ t('calendar.lanes.weekNumber', { n: weekNumber }) }} · {{ weekLabel }}</template>
+                        <template v-else-if="mode === 'grid'">{{ t('calendar.postsInRange', { count: postsStore.entries.length }) }}</template>
+                        <template v-else>{{ t('calendar.list.subtitle') }}</template>
+                        <span v-if="loading"> · {{ t('ui.loading') }}</span>
+                    </span>
+                    <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('calendar.title') }}</h1>
                 </div>
-                <div class="flex items-center gap-3">
+                <div v-if="mode === 'channels'" class="inline-flex overflow-hidden rounded-xl border border-border-strong bg-surface">
+                    <button
+                        type="button"
+                        data-test="week-prev"
+                        class="px-2.5 py-2 text-text hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                        :aria-label="t('calendar.lanes.previousWeek')"
+                        @click="showWeek(addDays(weekStart, -7))"
+                    >
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+                    </button>
+                    <button
+                        type="button"
+                        data-test="week-today"
+                        class="border-x border-border-strong px-3.5 py-2 text-[13px] text-text hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                        @click="showWeek(weekStartKey(todayKey))"
+                    >
+                        {{ t('calendar.today') }}
+                    </button>
+                    <button
+                        type="button"
+                        data-test="week-next"
+                        class="px-2.5 py-2 text-text hover:bg-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                        :aria-label="t('calendar.lanes.nextWeek')"
+                        @click="showWeek(addDays(weekStart, 7))"
+                    >
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+                    </button>
+                </div>
+                <div class="ml-auto flex flex-wrap items-center gap-2">
                     <ViewSwitcher v-if="mode === 'grid'" v-model="view" />
                     <DisplayModeSwitcher v-model="mode" />
-                    <Button variant="primary" @click="onNewPost">{{ t('calendar.newPost') }}</Button>
+                    <Button variant="primary" @click="onNewPost">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                        {{ t('calendar.newPost') }}
+                    </Button>
                 </div>
             </div>
 
-            <div class="flex flex-wrap items-end gap-4">
-                <div class="w-56">
-                    <Input
+            <CalendarStats v-if="mode !== 'list'" :entries="postsStore.entries" @show-errors="showFailed" />
+
+            <div class="flex flex-wrap items-center gap-2.5">
+                <!-- A raw label + input rather than <Input>: the Cobalt filter
+                     bar puts the label inside the field's frame. It is still a
+                     real <label>, which is what a11y.spec.ts protects. -->
+                <label class="flex items-center gap-2 rounded-xl border border-border-strong bg-surface px-2.5 py-1.5 text-[13px] text-muted focus-within:ring-2 focus-within:ring-primary">
+                    {{ t('calendar.filters.customer') }}
+                    <input
                         v-model="customer"
-                        :label="t('calendar.filters.customer')"
-                        :placeholder="t('calendar.filters.customerPlaceholder')"
+                        type="search"
+                        :placeholder="t('calendar.filters.all')"
+                        class="w-32 border-0 bg-surface p-0 text-[13px] text-text placeholder:text-muted focus:outline-none focus:ring-0"
                     />
-                </div>
-                <div v-if="mode === 'list'" class="flex flex-col gap-1">
-                    <span class="text-sm font-medium text-text">{{ t('calendar.list.stateFilter') }}</span>
-                    <StateFilter v-model="stateFilter" />
-                </div>
-                <div class="flex flex-col gap-1">
-                    <div class="flex items-center gap-2">
-                        <span class="text-sm font-medium text-text">{{ t('calendar.filters.tags') }}</span>
-                        <Button variant="ghost" @click="tagManagerOpen = true">{{ t('tags.manage') }}</Button>
-                    </div>
-                    <TagFilter v-model="selectedTags" :tags="availableTags" />
-                </div>
+                </label>
+                <TagFilter v-model="selectedTags" :tags="availableTags" />
+                <button
+                    type="button"
+                    class="rounded-xl border border-dashed border-border-strong px-2.5 py-1.5 text-[13px] text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    @click="tagManagerOpen = true"
+                >
+                    {{ t('tags.manage') }}
+                </button>
             </div>
+
+            <StateFilter v-if="mode === 'list'" v-model="stateFilter" />
 
             <Toast v-if="notice" :variant="notice.variant" @dismiss="notice = null">{{ notice.text }}</Toast>
 
@@ -416,10 +520,22 @@ function onEditorSaved(): void {
                 range the grid is showing, so it never speaks about posts
                 that are not on screen.
             -->
-            <PublishErrorBanner v-if="mode === 'grid'" :range="range" @retried="load" />
+            <CalendarStats v-if="mode !== 'list'" :entries="postsStore.entries" />
+
+            <PublishErrorBanner v-if="mode !== 'list'" :range="range" @retried="load" />
+
+            <ChannelLanes
+                v-if="mode === 'channels'"
+                :entries="postsStore.entries"
+                :channels="laneChannels"
+                :days="laneDays"
+                :today-key="todayKey"
+                :timezone="timezone"
+                @edit="onEdit"
+            />
 
             <CalendarGrid
-                v-if="mode === 'grid'"
+                v-else-if="mode === 'grid'"
                 :entries="postsStore.entries"
                 :view="view"
                 :timezone="timezone"

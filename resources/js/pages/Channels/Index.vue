@@ -8,6 +8,7 @@ import ChannelCard from '../../components/channels/ChannelCard.vue';
 import ProviderCard from '../../components/channels/ProviderCard.vue';
 import ConnectProviderModal from '../../components/channels/ConnectProviderModal.vue';
 import ChannelSettingsDrawer from '../../components/channels/ChannelSettingsDrawer.vue';
+import ChannelLimitMeter from '../../components/billing/ChannelLimitMeter.vue';
 import { PopupBlockedError, useChannelConnect } from '../../composables/useChannelConnect';
 import { useIntegrationsStore, type Integration, type Provider } from '../../stores/integrations';
 import { useAuthStore } from '../../stores/auth';
@@ -144,6 +145,9 @@ function closeSettings(): void {
 
 // Keeps the drawer's props in sync with the store after a background
 // refresh (e.g. reconnect while the drawer happens to be open).
+/** Channels that need reconnecting — each gets a banner above the list. */
+const brokenChannels = computed(() => store.list.filter((integration) => integration.refresh_needed));
+
 const activeIntegration = computed(() => (settingsTarget.value ? (store.list.find((i) => i.id === settingsTarget.value?.id) ?? null) : null));
 
 async function toggle(integration: Integration): Promise<void> {
@@ -184,28 +188,60 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
              rail already eating the left edge, so nothing on the page
              shared a starting x. `max-w-3xl` stays — it caps the line
              length and the card grid, it does not centre anything. -->
-        <div class="flex max-w-3xl flex-col gap-8">
-            <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('channels.title') }}</h1>
+        <div class="flex max-w-6xl flex-col gap-6">
+            <div class="flex flex-wrap items-end justify-between gap-4">
+                <div class="flex flex-col gap-1">
+                    <span class="font-mono text-xs text-muted">{{ t('channels.connectedCount', { count: store.list.length }) }}</span>
+                    <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('channels.title') }}</h1>
+                </div>
+                <ChannelLimitMeter :refresh-key="store.list.length" />
+            </div>
+
+            <!-- «Кобальт»: a broken channel is announced above the list, not
+                 only on its card — scheduled posts into it will not go out
+                 until it is reconnected, which is worth a banner. -->
+            <div
+                v-for="broken in brokenChannels"
+                :key="broken.id"
+                role="alert"
+                data-test="reconnect-banner"
+                class="flex flex-wrap items-center gap-3 rounded-lg border border-danger-border bg-danger-soft px-4 py-3 text-sm"
+            >
+                <svg class="h-[18px] w-[18px] shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg>
+                <span class="min-w-0 flex-1 text-text">
+                    <strong class="font-semibold text-danger">{{ t('channels.reconnectBanner.title', { name: broken.name }) }}</strong>
+                    {{ t('channels.reconnectBanner.body') }}
+                </span>
+                <button
+                    type="button"
+                    class="rounded-xl bg-danger px-3.5 py-2 text-[13px] font-semibold text-on-danger hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+                    @click="openReconnect(broken)"
+                >
+                    {{ t('channels.actions.reconnect') }}
+                </button>
+            </div>
 
             <Toast v-if="errorMessage" variant="danger" @dismiss="errorMessage = null">{{ errorMessage }}</Toast>
             <Toast v-else-if="noticeMessage" variant="neutral" @dismiss="noticeMessage = null">{{ noticeMessage }}</Toast>
 
             <!-- What this organization already holds. -->
             <section class="flex flex-col gap-3">
-                <h2 class="text-sm font-semibold text-text">{{ t('channels.connected.title') }}</h2>
+                <h2 class="text-base font-semibold text-text">{{ t('channels.connected.title') }}</h2>
 
-                <p v-if="!loading && store.list.length === 0" class="text-sm text-muted">{{ t('channels.empty') }}</p>
+                <p v-if="!loading && store.list.length === 0" class="rounded-lg border border-border bg-surface px-4 py-6 text-sm text-muted">{{ t('channels.empty') }}</p>
 
-                <ChannelCard
-                    v-for="integration in store.list"
-                    :key="integration.id"
-                    :integration="integration"
-                    :provider="providerFor(integration.provider_identifier)"
-                    @settings="openSettings(integration)"
-                    @toggle="toggle(integration)"
-                    @remove="remove(integration)"
-                    @reconnect="openReconnect(integration)"
-                />
+                <div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
+                    <ChannelCard
+                        v-for="integration in store.list"
+                        :key="integration.id"
+                        :integration="integration"
+                        :provider="providerFor(integration.provider_identifier)"
+                        @settings="openSettings(integration)"
+                        @toggle="toggle(integration)"
+                        @remove="remove(integration)"
+                        @reconnect="openReconnect(integration)"
+                    />
+                </div>
             </section>
 
             <!-- What it could hold. Every network the build ships, whether
@@ -216,11 +252,11 @@ const timezone = computed(() => auth.user?.timezone ?? 'UTC');
                  does not need the same action twice. -->
             <section class="flex flex-col gap-3">
                 <div>
-                    <h2 class="text-sm font-semibold text-text">{{ t('channels.available.title') }}</h2>
-                    <p class="mt-0.5 text-sm text-muted">{{ t('channels.available.subtitle') }}</p>
+                    <h2 class="text-base font-semibold text-text">{{ t('channels.available.title') }}</h2>
+                    <p class="mt-0.5 text-[13px] text-muted">{{ t('channels.available.subtitle') }}</p>
                 </div>
 
-                <div class="grid gap-3 sm:grid-cols-2">
+                <div class="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
                     <ProviderCard
                         v-for="provider in store.providers"
                         :key="provider.identifier"

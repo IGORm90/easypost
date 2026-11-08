@@ -72,9 +72,36 @@ async function continueWithGoogle(): Promise<void> {
 
 <template>
     <AuthLayout>
-        <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.login.title') }}</h1>
+        <!-- «Кобальт» sign-in: title with the register link under it, the
+             Google button first, then "or with email" and the form. -->
+        <div class="mb-6 flex flex-col gap-1.5">
+            <h1 class="text-[28px] font-semibold leading-tight tracking-tight text-text">{{ t('auth.login.title') }}</h1>
+            <p class="text-sm text-muted">
+                {{ t('auth.login.noAccount') }}
+                <router-link :to="{ name: 'register' }" class="font-semibold text-primary hover:underline">
+                    {{ t('auth.login.registerLink') }}
+                </router-link>
+            </p>
+        </div>
 
-        <form class="flex flex-col gap-4" @submit.prevent="submit">
+        <!-- Final review, Critical 3: an expired session bounces the user
+             here from wherever they were. color.md reserves `--danger` for
+             "this failed and nothing was saved" — an expiry is a neutral
+             fact about the session, so it renders as a notice, never
+             alongside the login error below as a second red line. -->
+        <p v-if="auth.sessionExpired && !error" role="status" class="mb-4 rounded-xl border border-warning-border bg-warning-soft px-3 py-2.5 text-[13px] text-warning">
+            {{ t('auth.login.sessionExpired') }}
+        </p>
+
+        <Button data-test="google-login" type="button" variant="secondary" class="w-full" :loading="googleLoading" @click="continueWithGoogle">
+            {{ t('auth.login.google') }}
+        </Button>
+
+        <div class="my-5 flex items-center gap-3 text-xs text-muted" aria-hidden="true">
+            <span class="h-px flex-1 bg-border" />{{ t('auth.orEmail') }}<span class="h-px flex-1 bg-border" />
+        </div>
+
+        <form class="flex flex-col gap-3.5" @submit.prevent="submit">
             <Input
                 id="login-email"
                 v-model="form.email"
@@ -83,44 +110,21 @@ async function continueWithGoogle(): Promise<void> {
                 :label="t('auth.login.email')"
                 required
             />
-            <Input
-                id="login-password"
-                v-model="form.password"
-                type="password"
-                autocomplete="current-password"
-                :label="t('auth.login.password')"
-                required
-            />
-
-            <!-- Final review, Critical 3: an expired session bounces the
-                 user here from wherever they were. color.md reserves
-                 `--danger` for "this failed and nothing was saved" — an
-                 expiry is a neutral fact about the session, so it renders
-                 as a muted notice, never alongside the login error below
-                 as a second red line. -->
-            <p v-if="auth.sessionExpired && !error" role="status" class="rounded-md bg-surface-2 px-3 py-2 text-sm text-muted">
-                {{ t('auth.login.sessionExpired') }}
-            </p>
-
-            <p v-if="error" :data-test="oauthError ? 'oauth-error' : 'login-error'" role="alert" class="text-sm text-danger">{{ error }}</p>
-
-            <Button type="submit" variant="primary" :loading="loading">{{ t('auth.login.submit') }}</Button>
-        </form>
-
-        <Button data-test="google-login" type="button" variant="secondary" :loading="googleLoading" @click="continueWithGoogle">
-            {{ t('auth.login.google') }}
-        </Button>
-
-        <div class="mt-4 flex flex-col items-center gap-2 text-sm">
-            <router-link :to="{ name: 'forgot-password' }" class="text-primary hover:underline">
-                {{ t('auth.login.forgotLink') }}
-            </router-link>
-            <p class="text-muted">
-                {{ t('auth.login.noAccount') }}
-                <router-link :to="{ name: 'register' }" class="text-primary hover:underline">
-                    {{ t('auth.login.registerLink') }}
+            <div class="flex flex-col gap-1.5">
+                <Input
+                    id="login-password"
+                    v-model="form.password"
+                    type="password"
+                    autocomplete="current-password"
+                    :label="t('auth.login.password')"
+                    required
+                />
+                <router-link :to="{ name: 'forgot-password' }" class="self-end text-[13px] text-primary hover:underline">
+                    {{ t('auth.login.forgotLink') }}
                 </router-link>
-            </p>
-        </div>
+            </div>
+            <p v-if="error" :data-test="oauthError ? 'oauth-error' : 'login-error'" role="alert" class="text-sm text-danger">{{ error }}</p>
+            <Button type="submit" variant="primary" class="mt-1 w-full py-3 text-[15px]" :loading="loading">{{ t('auth.login.submit') }}</Button>
+        </form>
     </AuthLayout>
 </template>

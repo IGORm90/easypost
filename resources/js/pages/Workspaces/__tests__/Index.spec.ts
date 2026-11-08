@@ -68,6 +68,23 @@ it('updates the list from auth state without retaining removed workspaces', asyn
     await nextTick();
 
     expect(wrapper.findAll('li')).toHaveLength(1);
-    expect(wrapper.get('li').text()).toBe('Second workspace');
+    expect(wrapper.get('li').text()).toContain('Second workspace');
+    expect(wrapper.get('li').text()).not.toContain('First workspace');
     expect(wrapper.find('[aria-current="true"]').exists()).toBe(false);
+});
+
+// «Кобальт»: every workspace card that is not the current one offers to
+// switch to it right there — the sidebar switcher is not the only way.
+it('switches to a workspace from its card, and offers no switch on the current one', async () => {
+    const auth = useAuthStore();
+    auth.organizations = [first, second];
+    const organization = useOrganizationStore();
+    organization.current = first;
+    const switchTo = vi.spyOn(organization, 'switchTo').mockImplementation(() => undefined as never);
+    const wrapper = mountPage();
+
+    expect(wrapper.get('[aria-current="true"]').find('[data-test="workspace-switch"]').exists()).toBe(false);
+    await wrapper.get('[data-test="workspace-switch"]').trigger('click');
+
+    expect(switchTo).toHaveBeenCalledWith('second');
 });

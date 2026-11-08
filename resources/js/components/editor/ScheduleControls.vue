@@ -87,7 +87,9 @@ async function findSlot(): Promise<void> {
 </script>
 
 <template>
-    <div class="flex flex-col gap-3">
+    <!-- «Кобальт»: one footer row — date, slot finder, repeat — with the
+         save actions pinned to the right; it wraps on narrow screens. -->
+    <div class="flex flex-1 flex-wrap items-end gap-x-4 gap-y-3">
         <div v-if="integrations.length > 0" class="flex flex-wrap items-end gap-2">
             <div class="flex flex-col gap-1">
                 <label for="slot-integration" class="text-xs font-medium text-muted">{{ t('editor.schedule.findSlotFor') }}</label>
@@ -108,15 +110,15 @@ async function findSlot(): Promise<void> {
             <p v-if="slotError" class="text-sm text-danger">{{ t('editor.schedule.findSlotError') }}</p>
         </div>
 
-        <div class="flex flex-col gap-1">
-            <label for="publish-date" class="text-sm font-medium text-text">{{ t('editor.schedule.publishDate') }}</label>
+        <div class="order-first flex flex-col gap-1">
+            <label for="publish-date" class="text-xs font-medium text-muted">{{ t('editor.schedule.publishDate') }}</label>
             <input
                 id="publish-date"
                 v-model="localValue"
                 type="datetime-local"
-                class="w-full rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
+                class="w-full rounded-xl border border-border-strong bg-surface px-3 py-2 font-mono text-[13px] text-text focus:outline-none focus:ring-2 focus:ring-primary sm:w-auto"
             />
-            <p class="text-xs text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
+            <p class="text-[11px] text-muted">{{ t('editor.schedule.timezoneHint', { tz: timezone }) }}</p>
         </div>
 
         <RepeatControl :model-value="repeat" :timezone="timezone" @update:model-value="emit('update:repeat', $event)" />
@@ -128,15 +130,18 @@ async function findSlot(): Promise<void> {
              and --warning is reserved there for the plan-limit toast. -->
         <p v-if="notice" class="text-sm text-muted">{{ notice }}</p>
 
-        <div class="flex flex-wrap gap-2">
+        <!-- «Кобальт»: "Schedule" is the composer's one primary action —
+             it is what this screen exists for. "Publish now" is a secondary
+             alternative, not the default, so it no longer competes in blue. -->
+        <div class="ml-auto flex flex-wrap gap-2">
             <Button variant="secondary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-draft')">
                 {{ t('editor.actions.saveDraft') }}
             </Button>
-            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled || !modelValue || repeatIncomplete" @click="emit('save-schedule')">
-                {{ t('editor.actions.schedule') }}
-            </Button>
-            <Button variant="primary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-now')">
+            <Button variant="secondary" type="button" :loading="saving" :disabled="disabled" @click="emit('save-now')">
                 {{ t('editor.actions.publishNow') }}
+            </Button>
+            <Button variant="primary" type="button" :loading="saving" :disabled="disabled || !modelValue || repeatIncomplete" @click="emit('save-schedule')">
+                {{ t('editor.actions.schedule') }}
             </Button>
         </div>
     </div>

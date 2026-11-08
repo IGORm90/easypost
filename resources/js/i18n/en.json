@@ -8,7 +8,7 @@
     "channels": "Channels",
     "media": "Media",
     "workspaces": "Workspaces",
-    "settingsProfile": "Profile",
+    "settingsProfile": "Profile and plan",
     "settingsTeam": "Team",
     "settingsSets": "Channel sets",
     "settingsSignatures": "Signatures",
@@ -75,14 +75,16 @@
     "brand": {
       "title": "Every network on one week.",
       "subtitle": "Write once, adapt the text for each network, and schedule it."
-    }
+    },
+    "orEmail": "or with email"
   },
   "organization": {
     "list": {
       "title": "Workspaces",
       "description": "Your workspaces",
       "empty": "You have no workspaces yet.",
-      "current": "Current"
+      "current": "Current",
+      "switch": "Switch to it"
     },
     "create": {
       "entry": "Create workspace",
@@ -120,7 +122,9 @@
         "rotateConfirm": "The old key will stop working. Continue?",
         "generated": "New key generated. Copy it now — it will not be shown again.",
         "none": "No key generated yet."
-      }
+      },
+      "pageTitle": "Profile and plan",
+      "emailNotificationsHint": "Publishing failures and team invitations"
     },
     "team": {
       "title": "Team",
@@ -142,6 +146,11 @@
         "SUPERADMIN": "Superadmin",
         "ADMIN": "Admin",
         "USER": "Member"
+      },
+      "count": "Members: {count}",
+      "roleHints": {
+        "ADMIN": "connects channels, invites people, manages settings.",
+        "USER": "writes and schedules posts, works with the media library."
       }
     },
     "plan": {
@@ -245,12 +254,25 @@
       "4": "Fri",
       "5": "Sat",
       "6": "Sun"
-    }
+    },
+    "limit": {
+      "label": "Channels on your plan"
+    },
+    "slotsPerWeek": "Slots per week",
+    "reconnectBanner": {
+      "title": "“{name}” needs reconnecting.",
+      "body": "Posts scheduled to this channel will not go out until access is restored."
+    },
+    "connectedCount": "Channels connected: {count}"
   },
   "sharedPost": {
     "publishDate": "Publish date",
     "notFound": "This link is invalid or is no longer shared.",
-    "empty": "Nothing to preview yet."
+    "empty": "Nothing to preview yet.",
+    "readOnly": "Preview · read only",
+    "title": "Post preview",
+    "subtitle": "This is how the post will look once published.",
+    "footer": "Scheduled with EasyPost"
   },
   "calendar": {
     "title": "Calendar",
@@ -263,6 +285,7 @@
     },
     "mode": {
       "label": "Display mode",
+      "channels": "By channel",
       "grid": "Grid",
       "list": "List"
     },
@@ -270,7 +293,8 @@
       "customer": "Customer",
       "customerPlaceholder": "Filter by customer",
       "tags": "Tags",
-      "noTags": "No tags yet."
+      "noTags": "No tags yet.",
+      "all": "all"
     },
     "state": {
       "DRAFT": "Draft",
@@ -335,10 +359,34 @@
       "comments": "{count} comment(s)",
       "loadMore": "Show more",
       "loadError": "Could not load the list of posts.",
-      "noDate": "No date"
+      "noDate": "No date",
+      "subtitle": "All posts · soonest first",
+      "columns": {
+        "when": "When",
+        "channel": "Channel",
+        "post": "Post",
+        "tags": "Tags",
+        "status": "Status"
+      }
     },
     "repeatIndicator": "Repeating post",
-    "removeConfirmRepeating": "Delete this post? It is the next occurrence of a repeating post, so deleting it also stops the series."
+    "removeConfirmRepeating": "Delete this post? It is the next occurrence of a repeating post, so deleting it also stops the series.",
+    "lanes": {
+      "label": "Calendar by channel",
+      "channel": "Channel",
+      "empty": "No channels connected yet — connect one and it gets its own lane.",
+      "previousWeek": "Previous week",
+      "nextWeek": "Next week",
+      "weekNumber": "Week {n}"
+    },
+    "stats": {
+      "scheduled": "Scheduled",
+      "published": "Published",
+      "drafts": "Drafts",
+      "errors": "Failed to publish",
+      "show": "Show"
+    },
+    "postsInRange": "Posts in range: {count}"
   },
   "tags": {
     "manage": "Manage tags",
@@ -554,7 +602,9 @@
         "url": "Link",
         "reply_settings": "Who can reply"
       }
-    }
+    },
+    "preview": "Preview",
+    "previewEmpty": "Pick a channel on the left — the post shows up here as followers will see it."
   },
   "preview": {
     "title": "Preview",
@@ -625,6 +675,7 @@
       "title": "Choose media",
       "selectedCount": "{count} selected",
       "confirm": "Add to post"
-    }
+    },
+    "count": "Files: {count}"
   }
 }

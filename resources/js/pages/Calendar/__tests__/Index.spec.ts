@@ -8,6 +8,8 @@ import ViewSwitcher from '../../../components/calendar/ViewSwitcher.vue';
 import DisplayModeSwitcher from '../../../components/calendar/DisplayModeSwitcher.vue';
 import StateFilter from '../../../components/calendar/StateFilter.vue';
 import PostList from '../../../components/calendar/PostList.vue';
+import ChannelLanes from '../../../components/calendar/ChannelLanes.vue';
+import CalendarStats from '../../../components/calendar/CalendarStats.vue';
 
 const get = vi.fn();
 
@@ -121,8 +123,8 @@ it('drops a deleted tag from the active filter when the tag list comes back with
 /*
  * Block 2: the grid/list toggle.
  */
-it('starts on the grid, with no list and no state filter in sight', async () => {
-    const { w } = await mountPage();
+it('keeps the grid one click away, with no list and no state filter in sight', async () => {
+    const { w } = await mountPage({ mode: 'grid' });
 
     expect(w.findComponent(PostList).exists()).toBe(false);
     expect(w.findComponent(StateFilter).exists()).toBe(false);
@@ -177,7 +179,56 @@ it('falls back to sane defaults instead of an empty screen when the query is non
     const { w } = await mountPage({ mode: 'gallery', state: 'WHATEVER' });
 
     expect(w.findComponent(PostList).exists()).toBe(false);
-    expect(w.findComponent(ViewSwitcher).exists()).toBe(true);
+    expect(w.findComponent(ChannelLanes).exists()).toBe(true);
+});
+
+/*
+ * «Кобальт»: the week-by-channel lanes are the calendar's home view. The
+ * lanes page through whole weeks themselves (FullCalendar is not mounted),
+ * so the page owns the range — Monday 00:00 to the next Monday 00:00 in
+ * the profile's timezone. No user is signed in here, so that zone is UTC.
+ */
+describe('the channel lanes', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-11-11T10:00:00Z')); // a Wednesday
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function calendarCalls(): unknown[] {
+        return get.mock.calls.filter(([url]) => url === '/calendar').map(([, options]) => (options as { params: unknown }).params);
+    }
+
+    it('opens on the lanes for the current week, with every channel loaded', async () => {
+        const { w } = await mountPage();
+
+        expect(w.findComponent(ChannelLanes).exists()).toBe(true);
+        expect(w.findComponent(ChannelLanes).props('days')[0]).toBe('2026-11-09');
+        expect(w.findComponent(ViewSwitcher).exists()).toBe(false);
+        expect(calendarCalls()).toContainEqual(expect.objectContaining({ from: '2026-11-09T00:00:00.000Z', to: '2026-11-16T00:00:00.000Z' }));
+        expect(get).toHaveBeenCalledWith('/integrations');
+    });
+
+    it('pages to the next week and back to this one', async () => {
+        const { w } = await mountPage();
+
+        await w.get('[data-test="week-next"]').trigger('click');
+        await flushPromises();
+        expect(calendarCalls().at(-1)).toEqual(expect.objectContaining({ from: '2026-11-16T00:00:00.000Z' }));
+
+        await w.get('[data-test="week-today"]').trigger('click');
+        await flushPromises();
+        expect(calendarCalls().at(-1)).toEqual(expect.objectContaining({ from: '2026-11-09T00:00:00.000Z' }));
+    });
+
+    it('shows the counters over the lanes and the grid, but not over the list', async () => {
+        expect((await mountPage()).w.findComponent(CalendarStats).exists()).toBe(true);
+        expect((await mountPage({ mode: 'grid' })).w.findComponent(CalendarStats).exists()).toBe(true);
+        expect((await mountPage({ mode: 'list' })).w.findComponent(CalendarStats).exists()).toBe(false);
+    });
 });
 
 /*

@@ -47,7 +47,7 @@ function goToLogin(): void {
 
 <template>
     <AuthLayout>
-        <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.reset.title') }}</h1>
+        <h1 class="mb-6 text-[28px] font-semibold leading-tight tracking-tight text-text">{{ t('auth.reset.title') }}</h1>
 
         <div v-if="done" class="flex flex-col gap-4">
             <p role="status" class="text-sm text-success">{{ t('auth.reset.success') }}</p>
@@ -64,7 +64,7 @@ function goToLogin(): void {
                 required
             />
             <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
-            <Button type="submit" variant="primary" :loading="loading">{{ t('auth.reset.submit') }}</Button>
+            <Button type="submit" variant="primary" class="w-full py-3 text-[15px]" :loading="loading">{{ t('auth.reset.submit') }}</Button>
         </form>
     </AuthLayout>
 </template>

@@ -4,7 +4,6 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '../../layouts/AppLayout.vue';
 import Button from '../../components/ui/Button.vue';
-import Card from '../../components/ui/Card.vue';
 import Input from '../../components/ui/Input.vue';
 import Toast from '../../components/ui/Toast.vue';
 import { api } from '../../api/client';
@@ -196,13 +195,13 @@ async function remove(set: SetDto): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-3xl flex-col gap-4">
+        <div class="flex max-w-4xl flex-col gap-5">
             <div class="flex flex-col gap-1">
-                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('sets.title') }}</h1>
-                <p class="text-sm text-muted">{{ t('sets.intro') }}</p>
+                <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('sets.title') }}</h1>
+                <p class="max-w-2xl text-sm leading-relaxed text-muted">{{ t('sets.intro') }}</p>
             </div>
 
-            <Card>
+            <div>
                 <div class="flex flex-col gap-4">
                     <Toast v-if="error" variant="danger" @dismiss="error = null">{{ error }}</Toast>
 
@@ -215,7 +214,7 @@ async function remove(set: SetDto): Promise<void> {
                         </div>
 
                         <ul v-else class="flex flex-col gap-2">
-                            <li v-for="set in sets" :key="set.id" class="rounded-xl border border-border p-3">
+                            <li v-for="set in sets" :key="set.id" class="rounded-lg border border-border bg-surface p-4">
                                 <div v-if="editingId === set.id" class="flex flex-col gap-3">
                                     <div data-test="set-edit-name">
                                         <Input
@@ -225,18 +224,18 @@ async function remove(set: SetDto): Promise<void> {
                                         />
                                     </div>
 
-                                    <fieldset data-test="set-edit-channels" class="flex flex-col gap-1.5">
-                                        <legend class="text-sm font-medium text-text">{{ t('sets.channelsLabel') }}</legend>
+                                    <fieldset data-test="set-edit-channels" class="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
+                                        <legend class="mb-2 text-[13px] font-medium text-text">{{ t('sets.channelsLabel') }}</legend>
                                         <label
                                             v-for="integration in integrations.list"
                                             :key="integration.id"
-                                            class="flex cursor-pointer items-center gap-2 text-sm text-text"
+                                            class="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 text-[13px] text-text hover:bg-surface-2"
                                         >
                                             <input
                                                 v-model="editForm.integrationIds"
                                                 type="checkbox"
                                                 :value="integration.id"
-                                                class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                                class="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                                             />
                                             <span class="truncate">{{ integration.name }}</span>
                                         </label>
@@ -255,10 +254,12 @@ async function remove(set: SetDto): Promise<void> {
 
                                 <div v-else class="flex flex-wrap items-center justify-between gap-2">
                                     <div class="flex min-w-0 flex-col gap-0.5">
-                                        <span class="text-sm text-text">{{ set.name }}</span>
-                                        <span v-if="set.integration_ids.length > 0" class="truncate text-xs text-muted">
-                                            {{ set.integration_ids.map(channelName).join(', ') }}
-                                            ({{ t('sets.channelCount', { count: set.integration_ids.length }) }})
+                                        <span class="text-[15px] font-semibold text-text">{{ set.name }}</span>
+                                        <span v-if="set.integration_ids.length > 0" class="font-mono text-xs text-muted">
+                                            {{ t('sets.channelCount', { count: set.integration_ids.length }) }}
+                                        </span>
+                                        <span v-if="set.integration_ids.length > 0" class="mt-1.5 flex flex-wrap gap-1.5">
+                                            <span v-for="id in set.integration_ids" :key="id" class="rounded border border-border bg-surface-2 px-2 py-0.5 text-xs text-text">{{ channelName(id) }}</span>
                                         </span>
                                         <!--
                                             Not colour alone (color.md §4): the icon and
@@ -278,14 +279,15 @@ async function remove(set: SetDto): Promise<void> {
                                         </span>
                                     </div>
                                     <span class="flex gap-2">
-                                        <Button variant="ghost" @click="startEdit(set)">{{ t('sets.rename') }}</Button>
-                                        <Button variant="danger" :loading="busy" @click="remove(set)">{{ t('sets.remove') }}</Button>
+                                        <Button variant="secondary" @click="startEdit(set)">{{ t('sets.rename') }}</Button>
+                                        <Button variant="danger-text" :loading="busy" @click="remove(set)">{{ t('sets.remove') }}</Button>
                                     </span>
                                 </div>
                             </li>
                         </ul>
 
-                        <form data-test="set-create" class="flex flex-col gap-3 border-t border-border pt-4" @submit.prevent="create">
+                        <form data-test="set-create" class="flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-5" @submit.prevent="create">
+                            <h2 class="text-[15px] font-semibold text-text">{{ t('sets.create') }}</h2>
                             <div data-test="set-create-name">
                                 <Input
                                     v-model="createForm.name"
@@ -294,18 +296,18 @@ async function remove(set: SetDto): Promise<void> {
                                 />
                             </div>
 
-                            <fieldset data-test="set-create-channels" class="flex flex-col gap-1.5">
-                                <legend class="text-sm font-medium text-text">{{ t('sets.channelsLabel') }}</legend>
+                            <fieldset data-test="set-create-channels" class="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]">
+                                <legend class="mb-2 text-[13px] font-medium text-text">{{ t('sets.channelsLabel') }}</legend>
                                 <label
                                     v-for="integration in integrations.list"
                                     :key="integration.id"
-                                    class="flex cursor-pointer items-center gap-2 text-sm text-text"
+                                    class="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 text-[13px] text-text hover:bg-surface-2"
                                 >
                                     <input
                                         v-model="createForm.integrationIds"
                                         type="checkbox"
                                         :value="integration.id"
-                                        class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                                        class="h-4 w-4 rounded border-border-strong text-primary focus:ring-primary"
                                     />
                                     <span class="truncate">{{ integration.name }}</span>
                                 </label>
@@ -322,7 +324,7 @@ async function remove(set: SetDto): Promise<void> {
                         </form>
                     </template>
                 </div>
-            </Card>
+            </div>
         </div>
     </AppLayout>
 </template>

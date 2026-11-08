@@ -3,9 +3,9 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { isAxiosError } from 'axios';
 import AppLayout from '../../layouts/AppLayout.vue';
-import Card from '../../components/ui/Card.vue';
 import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
+import PlanUsagePanel from '../../components/billing/PlanUsagePanel.vue';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/auth';
 
@@ -16,6 +16,16 @@ const form = reactive({ name: '', timezone: 'UTC', locale: 'en', email_notificat
 const errors = ref<Record<string, string[]>>({});
 const saving = ref(false);
 const saved = ref(false);
+
+/** Initials for the avatar above the form. */
+const initials = computed(() =>
+    (auth.user?.name ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0]?.toUpperCase() ?? '')
+        .join(''),
+);
 
 onMounted(() => {
     if (auth.user) {
@@ -90,71 +100,101 @@ async function copyApiKey(): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-xl flex-col gap-6">
-            <Card :title="t('settings.profile.title')">
-                <form class="flex flex-col gap-4" @submit.prevent="submit">
-                    <Input
-                        id="profile-name"
-                        v-model="form.name"
-                        :label="t('settings.profile.name')"
-                        :error="errors.name?.[0]"
-                        required
-                    />
+        <!-- «Кобальт»: personal data on the left; the plan's usage and the
+             API key on the right. They stack below `lg`. -->
+        <div class="flex flex-col gap-5">
+            <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('settings.profile.pageTitle') }}</h1>
 
-                    <div class="flex flex-col gap-1">
-                        <label for="profile-timezone" class="text-sm font-medium text-text">
-                            {{ t('settings.profile.timezone') }}
-                        </label>
-                        <select
-                            id="profile-timezone"
-                            v-model="form.timezone"
-                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                        >
-                            <option v-for="zone in timezones" :key="zone" :value="zone">{{ zone }}</option>
-                        </select>
-                        <p v-if="errors.timezone?.[0]" class="text-sm text-danger">{{ errors.timezone[0] }}</p>
+            <div class="flex flex-wrap items-start gap-5">
+                <section data-test="profile-personal" class="flex min-w-[320px] flex-[3_1_420px] flex-col gap-4 rounded-lg border border-border bg-surface p-6">
+                    <div class="flex items-center gap-3.5">
+                        <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-on-primary" aria-hidden="true">{{ initials }}</span>
+                        <div class="flex min-w-0 flex-col">
+                            <h2 class="text-base font-semibold text-text">{{ t('settings.profile.title') }}</h2>
+                            <span class="truncate text-[13px] text-muted">{{ auth.user?.email }}</span>
+                        </div>
                     </div>
+                    <form class="flex flex-col gap-4" @submit.prevent="submit">
+                        <Input
+                            id="profile-name"
+                            v-model="form.name"
+                            :label="t('settings.profile.name')"
+                            :error="errors.name?.[0]"
+                            required
+                        />
 
-                    <div class="flex flex-col gap-1">
-                        <label for="profile-locale" class="text-sm font-medium text-text">
-                            {{ t('settings.profile.locale') }}
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <div class="flex flex-col gap-1">
+                                <label for="profile-timezone" class="text-[13px] font-medium text-text">
+                                    {{ t('settings.profile.timezone') }}
+                                </label>
+                                <select
+                                    id="profile-timezone"
+                                    v-model="form.timezone"
+                                    class="rounded-xl border border-border-strong bg-surface px-3 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                    <option v-for="zone in timezones" :key="zone" :value="zone">{{ zone }}</option>
+                                </select>
+                                <p v-if="errors.timezone?.[0]" class="text-xs text-danger">{{ errors.timezone[0] }}</p>
+                            </div>
+
+                            <div class="flex flex-col gap-1">
+                                <label for="profile-locale" class="text-[13px] font-medium text-text">
+                                    {{ t('settings.profile.locale') }}
+                                </label>
+                                <select
+                                    id="profile-locale"
+                                    v-model="form.locale"
+                                    class="rounded-xl border border-border-strong bg-surface px-3 py-2.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+                                >
+                                    <option v-for="l in availableLocales" :key="l" :value="l">{{ l }}</option>
+                                </select>
+                                <p v-if="errors.locale?.[0]" class="text-xs text-danger">{{ errors.locale[0] }}</p>
+                            </div>
+                        </div>
+
+                        <label for="profile-notifications" class="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3.5 py-3">
+                            <span class="flex flex-col">
+                                <span class="text-sm font-medium text-text">{{ t('settings.profile.emailNotifications') }}</span>
+                                <span class="text-xs text-muted">{{ t('settings.profile.emailNotificationsHint') }}</span>
+                            </span>
+                            <input id="profile-notifications" v-model="form.email_notifications" type="checkbox" role="switch" class="h-5 w-5 accent-primary" />
                         </label>
-                        <select
-                            id="profile-locale"
-                            v-model="form.locale"
-                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
+
+                        <div class="flex items-center gap-3">
+                            <Button type="submit" variant="primary" :loading="saving">{{ t('settings.profile.save') }}</Button>
+                            <p v-if="saved" role="status" class="text-[13px] text-success">{{ t('settings.profile.saved') }}</p>
+                        </div>
+                    </form>
+                </section>
+
+                <div data-test="profile-side" class="flex min-w-[300px] flex-[2_1_340px] flex-col gap-5">
+                    <PlanUsagePanel />
+
+                    <section class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-6">
+                        <h2 class="text-base font-semibold text-text">{{ t('settings.profile.apiKey.title') }}</h2>
+                        <p class="text-[13px] leading-relaxed text-muted">{{ t('settings.profile.apiKey.description') }}</p>
+                        <div v-if="newApiKey" class="flex flex-col gap-2">
+                            <p role="status" class="rounded-xl border border-success-border bg-success-soft px-3 py-2 text-[13px] text-success">{{ t('settings.profile.apiKey.generated') }}</p>
+                            <div class="flex gap-1.5">
+                                <code class="min-w-0 flex-1 break-all rounded-xl bg-nav px-2.5 py-2 font-mono text-xs text-nav-text">{{ newApiKey }}</code>
+                                <Button variant="secondary" @click="copyApiKey">
+                                    {{ copied ? t('ui.copied') : t('ui.copy') }}
+                                </Button>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            class="self-start rounded-xl border border-danger-border bg-surface px-3 py-2 text-[13px] text-danger hover:bg-danger-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-danger disabled:opacity-60"
+                            :disabled="rotating"
+                            :aria-busy="rotating"
+                            @click="rotateApiKey"
                         >
-                            <option v-for="l in availableLocales" :key="l" :value="l">{{ l }}</option>
-                        </select>
-                        <p v-if="errors.locale?.[0]" class="text-sm text-danger">{{ errors.locale[0] }}</p>
-                    </div>
-
-                    <label class="flex items-center gap-2 text-sm text-text">
-                        <input id="profile-notifications" v-model="form.email_notifications" type="checkbox" class="h-4 w-4 accent-primary" />
-                        {{ t('settings.profile.emailNotifications') }}
-                    </label>
-
-                    <p v-if="saved" role="status" class="text-sm text-success">{{ t('settings.profile.saved') }}</p>
-
-                    <Button type="submit" variant="primary" :loading="saving">{{ t('settings.profile.save') }}</Button>
-                </form>
-            </Card>
-
-            <Card :title="t('settings.profile.apiKey.title')">
-                <p class="mb-4 text-sm text-muted">{{ t('settings.profile.apiKey.description') }}</p>
-
-                <div v-if="newApiKey" class="mb-4 flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-3">
-                    <p class="text-sm text-success">{{ t('settings.profile.apiKey.generated') }}</p>
-                    <code class="break-all rounded-xl bg-surface p-2 text-xs text-text">{{ newApiKey }}</code>
-                    <Button variant="secondary" @click="copyApiKey">
-                        {{ copied ? t('ui.copied') : t('ui.copy') }}
-                    </Button>
+                            {{ t('settings.profile.apiKey.rotate') }}
+                        </button>
+                    </section>
                 </div>
-
-                <Button variant="secondary" :loading="rotating" @click="rotateApiKey">
-                    {{ t('settings.profile.apiKey.rotate') }}
-                </Button>
-            </Card>
+            </div>
         </div>
     </AppLayout>
 </template>

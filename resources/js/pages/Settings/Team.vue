@@ -3,8 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { isAxiosError } from 'axios';
 import AppLayout from '../../layouts/AppLayout.vue';
-import Card from '../../components/ui/Card.vue';
-import PlanUsagePanel from '../../components/billing/PlanUsagePanel.vue';
 import Badge from '../../components/ui/Badge.vue';
 import Button from '../../components/ui/Button.vue';
 import Modal from '../../components/ui/Modal.vue';
@@ -24,6 +22,16 @@ interface Member {
 }
 
 const { t } = useI18n();
+
+/** Two-letter initials for a member's avatar. */
+function initialsOf(name: string): string {
+    return name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0]?.toUpperCase() ?? '')
+        .join('');
+}
 const auth = useAuthStore();
 const organization = useOrganizationStore();
 
@@ -145,9 +153,12 @@ async function copyInviteUrl(): Promise<void> {
 
 <template>
     <AppLayout>
-        <div class="mx-auto flex max-w-3xl flex-col gap-4">
-            <div class="flex items-center justify-between">
-                <h1 class="text-2xl font-semibold tracking-tight text-text">{{ t('settings.team.title') }}</h1>
+        <div class="flex max-w-5xl flex-col gap-5">
+            <div class="flex flex-wrap items-end justify-between gap-4">
+                <div class="flex flex-col gap-1">
+                    <span class="font-mono text-xs text-muted">{{ t('settings.team.count', { count: members.length }) }}</span>
+                    <h1 class="text-[26px] font-semibold leading-tight tracking-tight text-text">{{ t('settings.team.title') }}</h1>
+                </div>
                 <!-- secondary, not primary: the modal's own submit button
                      below is this screen's one primary action (color.md
                      §3.1 — at most one primary element per screen, and
@@ -158,30 +169,28 @@ async function copyInviteUrl(): Promise<void> {
                 </Button>
             </div>
 
-            <!--
-                Sits above the member table: what the plan allows is
-                context for who you can add and how much they can post,
-                and LimitToast only ever appears once a limit has already
-                been hit. Final review, batch 4.
-            -->
-            <PlanUsagePanel />
 
-            <Card>
-                <table class="w-full text-left text-sm">
-                    <thead class="border-b border-border bg-surface-2 text-muted">
+            <div class="overflow-x-auto rounded-lg border border-border bg-surface">
+                <table class="w-full min-w-[560px] text-left text-[13px]">
+                    <thead class="bg-surface-2 text-xs text-muted">
                         <tr>
-                            <th class="px-3 py-2 font-medium">{{ t('settings.team.member') }}</th>
-                            <th class="px-3 py-2 font-medium">{{ t('settings.team.role') }}</th>
-                            <th v-if="canManage" class="px-3 py-2 font-medium">{{ t('settings.team.actions') }}</th>
+                            <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('settings.team.member') }}</th>
+                            <th scope="col" class="px-3.5 py-2.5 font-medium">{{ t('settings.team.role') }}</th>
+                            <th v-if="canManage" scope="col" class="px-3.5 py-2.5"><span class="sr-only">{{ t('settings.team.actions') }}</span></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="member in members" :key="member.id" class="border-b border-border last:border-0">
-                            <td class="px-3 py-2">
-                                <p class="text-text">{{ member.name }}</p>
-                                <p class="text-xs text-muted">{{ member.email }}</p>
+                        <tr v-for="member in members" :key="member.id" class="border-t border-border">
+                            <td class="px-3.5 py-3">
+                                <span class="flex items-center gap-2.5">
+                                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent" aria-hidden="true">{{ initialsOf(member.name) }}</span>
+                                    <span class="flex min-w-0 flex-col">
+                                        <span class="truncate font-medium text-text">{{ member.name }}</span>
+                                        <span class="truncate text-xs text-muted">{{ member.email }}</span>
+                                    </span>
+                                </span>
                             </td>
-                            <td class="px-3 py-2">
+                            <td class="px-3.5 py-3">
                                 <select
                                     v-if="assignableRoles(member).length"
                                     :value="member.role"
@@ -194,15 +203,25 @@ async function copyInviteUrl(): Promise<void> {
                                 </select>
                                 <Badge v-else status="neutral">{{ t(`settings.team.roles.${member.role}`) }}</Badge>
                             </td>
-                            <td v-if="canManage" class="px-3 py-2">
-                                <Button v-if="canRemove(member)" variant="danger" @click="removeMember(member)">
+                            <td v-if="canManage" class="px-3.5 py-3 text-right">
+                                <button
+                                    v-if="canRemove(member)"
+                                    type="button"
+                                    class="rounded-xl px-2.5 py-1.5 text-[13px] font-medium text-danger hover:bg-danger-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+                                    @click="removeMember(member)"
+                                >
                                     {{ t('settings.team.remove') }}
-                                </Button>
+                                </button>
                             </td>
                         </tr>
                     </tbody>
                 </table>
-            </Card>
+            </div>
+
+            <div class="flex flex-col gap-1 text-xs leading-relaxed text-muted">
+                <span><strong class="font-semibold text-text">{{ t('settings.team.roles.ADMIN') }}</strong> — {{ t('settings.team.roleHints.ADMIN') }}</span>
+                <span><strong class="font-semibold text-text">{{ t('settings.team.roles.USER') }}</strong> — {{ t('settings.team.roleHints.USER') }}</span>
+            </div>
         </div>
 
         <Modal :open="inviteOpen" :title="t('settings.team.invite.title')" @close="inviteOpen = false">

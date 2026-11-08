@@ -30,13 +30,13 @@ async function submit(): Promise<void> {
 
 <template>
     <AuthLayout>
-        <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.forgot.title') }}</h1>
+        <h1 class="mb-6 text-[28px] font-semibold leading-tight tracking-tight text-text">{{ t('auth.forgot.title') }}</h1>
 
         <p v-if="done" role="status" class="text-sm text-text">{{ t('auth.forgot.success') }}</p>
 
         <form v-else class="flex flex-col gap-4" @submit.prevent="submit">
             <Input id="forgot-email" v-model="email" type="email" autocomplete="email" :label="t('auth.forgot.email')" required />
-            <Button type="submit" variant="primary" :loading="loading">{{ t('auth.forgot.submit') }}</Button>
+            <Button type="submit" variant="primary" class="w-full py-3 text-[15px]" :loading="loading">{{ t('auth.forgot.submit') }}</Button>
         </form>
 
         <p class="mt-4 text-center text-sm">

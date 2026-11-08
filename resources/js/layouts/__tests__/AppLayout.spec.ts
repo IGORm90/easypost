@@ -72,6 +72,34 @@ it('keeps the sidebar hidden on small screens, as the layout intends', () => {
     expect(w.get('aside').classes()).toContain('md:flex');
 });
 
+it('puts the workspace switcher and the signed-in user in the sidebar, as the Cobalt layout does', () => {
+    setActivePinia(createPinia());
+    const auth = useAuthStore();
+    auth.user = { id: 'u-1', name: 'Igor', email: 'igor@example.test', timezone: 'UTC', locale: 'en', email_verified_at: null, created_at: '', updated_at: '' };
+    route.name = 'home';
+    route.meta = {};
+    const w = mount(AppLayout, {
+        global: {
+            stubs: {
+                RouterLink: { props: ['to'], template: '<a :data-route="to.name"><slot /></a>' },
+                OrganizationSwitcher: { template: '<div data-test="org-switcher" />' },
+                ThemeToggle: true,
+                LimitToast: true,
+                ImpersonationBanner: true,
+            },
+        },
+    });
+
+    const aside = w.get('aside');
+    expect(aside.find('[data-test="org-switcher"]').exists()).toBe(true);
+    expect(aside.get('[data-test="current-user"]').text()).toContain('Igor');
+    expect(aside.find('[data-test="logout"]').exists()).toBe(true);
+});
+
+it('keeps the top bar for phones only — on a desktop the sidebar carries everything', () => {
+    expect(mountLayout().get('header').classes()).toContain('md:hidden');
+});
+
 it('draws the sidebar on the dark navigation surface, as the Cobalt theme does', () => {
     const w = mountLayout();
 

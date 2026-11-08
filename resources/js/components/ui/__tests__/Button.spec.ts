@@ -59,3 +59,9 @@ it('gives the primary action the Cobalt weight, so it reads as the one thing to 
   const w = mount(Button, { props: { variant: 'primary' } })
   expect(w.classes()).toContain('font-semibold')
 })
+
+it('draws a row-level destructive action as red text, not a solid red block', () => {
+  const w = mount(Button, { props: { variant: 'danger-text' } })
+  expect(w.classes()).toContain('text-danger')
+  expect(w.classes()).not.toContain('bg-danger')
+})

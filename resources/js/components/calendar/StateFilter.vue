@@ -26,16 +26,17 @@ const states: PostStateFilter[] = ['all', 'DRAFT', 'SCHEDULED', 'QUEUE', 'PUBLIS
 </script>
 
 <template>
-    <!-- Same segmented-control styling as ViewSwitcher/DisplayModeSwitcher,
-     same reason: color.md §3.1 caps the screen at one primary element, and
-     the active nav link plus "New post" already hold both. -->
-    <div class="inline-flex flex-wrap rounded-xl border border-border-strong bg-surface p-0.5" role="group" :aria-label="t('calendar.list.stateFilter')">
+    <!-- «Кобальт» draws the state filter as tabs over the table. The active
+     tab is underlined in --text and set in semibold, not in primary:
+     color.md §3.1 keeps blue for the screen's one action, and a filter
+     reports state. `aria-pressed` carries it for assistive technology. -->
+    <div class="flex flex-wrap border-b border-border" role="group" :aria-label="t('calendar.list.stateFilter')">
         <button
             v-for="state in states"
             :key="state"
             type="button"
-            class="rounded-xl px-3 py-1 text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            :class="modelValue === state ? 'bg-surface-2 font-semibold text-text' : 'font-normal text-muted hover:text-text'"
+            class="-mb-px border-b-2 px-3 py-2 text-[13px] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+            :class="modelValue === state ? 'border-text font-semibold text-text' : 'border-bg font-normal text-muted hover:text-text'"
             :aria-pressed="modelValue === state"
             @click="emit('update:modelValue', state)"
         >
