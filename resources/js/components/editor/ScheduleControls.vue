@@ -39,11 +39,36 @@ const emit = defineEmits<{
     'save-now': [];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const slotIntegrationId = ref<string>('');
 const findingSlot = ref(false);
 const slotError = ref(false);
+
+/**
+ * «Кобальт»: "Find free slot" lists several upcoming free slots (the API's
+ * `count`) as buttons. The first is applied at once — what the button
+ * always did — and the others stay one click away.
+ */
+const SLOT_OPTIONS = 4;
+const slotOptions = ref<string[]>([]);
+
+const slotLabel = computed(() => {
+    const format = new Intl.DateTimeFormat(locale.value, {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: props.timezone,
+    });
+
+    return (iso: string) => format.format(new Date(iso));
+});
+
+function isChosen(iso: string): boolean {
+    return props.modelValue !== null && new Date(props.modelValue).getTime() === new Date(iso).getTime();
+}
 
 // datetime-local is always the BROWSER's own local wall clock — it has
 // no timezone concept of its own. Converting through `props.timezone`
@@ -74,9 +99,10 @@ async function findSlot(): Promise<void> {
     slotError.value = false;
 
     try {
-        const { data } = await api.get<{ publish_date: string }>('/posts/find-slot', {
-            params: { integration_id: slotIntegrationId.value },
+        const { data } = await api.get<{ publish_date: string; publish_dates?: string[] }>('/posts/find-slot', {
+            params: { integration_id: slotIntegrationId.value, count: SLOT_OPTIONS },
         });
+        slotOptions.value = data.publish_dates?.length ? data.publish_dates : [data.publish_date];
         emit('update:modelValue', data.publish_date);
     } catch {
         slotError.value = true;
@@ -108,6 +134,20 @@ async function findSlot(): Promise<void> {
                 {{ t('editor.schedule.findSlot') }}
             </Button>
             <p v-if="slotError" class="text-sm text-danger">{{ t('editor.schedule.findSlotError') }}</p>
+            <div v-if="slotOptions.length > 1" class="flex flex-wrap gap-1.5" role="group" :aria-label="t('editor.schedule.freeSlots')">
+                <button
+                    v-for="option in slotOptions"
+                    :key="option"
+                    type="button"
+                    data-test="slot-option"
+                    class="rounded-xl border px-2.5 py-1.5 font-mono text-xs transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    :class="isChosen(option) ? 'border-text bg-surface-2 font-semibold text-text' : 'border-border-strong bg-surface text-muted hover:text-text'"
+                    :aria-pressed="isChosen(option)"
+                    @click="emit('update:modelValue', option)"
+                >
+                    {{ slotLabel(option) }}
+                </button>
+            </div>
         </div>
 
         <div class="order-first flex flex-col gap-1">

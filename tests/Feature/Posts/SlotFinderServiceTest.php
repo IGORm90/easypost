@@ -100,3 +100,50 @@ it('falls back to now plus one hour when no slots are configured', function () {
     // now()+1h = 09:03, rounded up to the next 5-minute mark = 09:05.
     expect($slot->eq(Carbon::parse('2026-08-10 09:05:00', 'UTC')))->toBeTrue();
 });
+
+/*
+ * «Кобальт» editor: the composer offers several free slots as buttons,
+ * not just the single next one. Same search, same "occupied" rule — it
+ * simply keeps going until it has collected `$count` instants.
+ */
+it('lists the next free slots in order, skipping occupied ones and rolling into the next week', function () {
+    $org = Organization::factory()->create();
+    OrganizationContext::set($org);
+
+    Carbon::setTestNow(Carbon::parse('2026-08-10 08:00:00', 'UTC'));
+
+    $integration = Integration::factory()->for($org)->create();
+    IntegrationTimeSlot::factory()->for($integration)->create(['minutes_from_week_start' => 10 * 60]);
+    IntegrationTimeSlot::factory()->for($integration)->create(['minutes_from_week_start' => 14 * 60]);
+
+    $group = PostGroup::factory()->for($org)->create([
+        'state' => PostState::SCHEDULED,
+        'publish_date' => Carbon::parse('2026-08-10 10:00:00', 'UTC'),
+    ]);
+    Post::factory()->for($group, 'group')->create([
+        'organization_id' => $org->id,
+        'integration_id' => $integration->id,
+        'state' => PostState::SCHEDULED,
+    ]);
+
+    $slots = app(SlotFinderService::class)->findNextFreeSlots($integration->id, 3);
+
+    expect(array_map(fn (Carbon $slot) => $slot->utc()->toIso8601String(), $slots))->toBe([
+        '2026-08-10T14:00:00+00:00',
+        '2026-08-17T10:00:00+00:00',
+        '2026-08-17T14:00:00+00:00',
+    ]);
+});
+
+it('lists only the fallback instant when no slots are configured, however many were asked for', function () {
+    $org = Organization::factory()->create();
+    OrganizationContext::set($org);
+    Carbon::setTestNow(Carbon::parse('2026-08-10 08:02:00', 'UTC'));
+
+    $integration = Integration::factory()->for($org)->create();
+
+    $slots = app(SlotFinderService::class)->findNextFreeSlots($integration->id, 4);
+
+    expect($slots)->toHaveCount(1);
+    expect($slots[0]->eq(Carbon::parse('2026-08-10 09:05:00', 'UTC')))->toBeTrue();
+});

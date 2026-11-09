@@ -718,24 +718,29 @@ const modalTitle = computed(() => (effectiveGroupId.value ? t('editor.titleEdit'
                     </Toast>
 
 
-                    <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-1">
-                        <label for="common-content" class="text-sm font-medium text-text">{{ t('editor.commonContent') }}</label>
-                        <div class="flex flex-wrap items-center gap-1">
-                            <EmojiPicker @select="insertIntoCommon" />
+                    <!-- «Кобальт»: the shared text is a card — a toolbar row on top,
+                         a borderless writing area under it. -->
+                    <div v-if="selectedChannelIds.length > 0" class="rounded-lg border border-border-strong bg-surface focus-within:ring-2 focus-within:ring-primary">
+                        <div class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
+                            <label for="common-content" class="text-[13px] font-medium text-text">{{ t('editor.commonContent') }}</label>
+                            <div class="ml-auto flex items-center gap-1">
+                                <EmojiPicker @select="insertIntoCommon" />
+                                <span class="font-mono text-xs text-muted">{{ commonContent.length }}</span>
+                            </div>
                         </div>
                         <textarea
                             id="common-content"
                             ref="commonField"
                             :value="commonContent"
                             :placeholder="t('editor.commonContentPlaceholder')"
-                            rows="3"
-                            class="rounded-xl border border-border-strong bg-surface px-3 py-2 text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                            rows="6"
+                            class="block w-full resize-y rounded-b-lg border-0 bg-surface px-4 py-3 text-[15px] leading-relaxed text-text placeholder:text-muted focus:outline-none focus:ring-0"
                             @input="onCommonContentInput(($event.target as HTMLTextAreaElement).value)"
                         />
                     </div>
 
                     <div v-if="selectedChannelIds.length > 0" class="flex flex-col gap-3">
-                        <div class="flex flex-wrap gap-2">
+                        <div class="flex flex-wrap self-start overflow-hidden rounded-xl border border-border-strong bg-surface" role="group" :aria-label="t('editor.picker.channels')">
                             <ChannelTab
                                 v-for="id in selectedChannelIds"
                                 :key="id"

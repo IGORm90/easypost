@@ -23,8 +23,8 @@ const { t } = useI18n();
 <template>
     <button
         type="button"
-        class="flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        :class="active ? 'border-primary text-text' : 'border-border text-muted hover:text-text'"
+        class="flex shrink-0 items-center gap-1.5 border-l border-border-strong px-3 py-2 text-[13px] transition first:border-l-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        :class="active ? 'bg-surface-2 font-semibold text-text' : 'text-muted hover:text-text'"
         :aria-pressed="active"
         @click="$emit('click')"
     >

@@ -52,9 +52,17 @@ class PostController extends Controller
      */
     public function findSlot(FindSlotRequest $request): JsonResponse
     {
-        $publishDate = $this->slotFinder->findNextFreeSlot($request->string('integration_id')->toString());
+        $publishDates = $this->slotFinder->findNextFreeSlots(
+            $request->string('integration_id')->toString(),
+            $request->integer('count', 1),
+        );
 
-        return response()->json(['publish_date' => $publishDate]);
+        // `publish_date` stays the first slot, so callers written before
+        // `publish_dates` existed keep working unchanged.
+        return response()->json([
+            'publish_date' => $publishDates[0],
+            'publish_dates' => $publishDates,
+        ]);
     }
 
     /**

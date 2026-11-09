@@ -753,3 +753,41 @@ it('lays the composer out as channels | text | preview, with scheduling in the f
     expect(w.find('[data-test="editor-preview"]').exists()).toBe(true);
     expect(w.get('[data-test="editor-footer"]').find('#publish-date').exists()).toBe(true);
 });
+
+// «Кобальт»: "Find free slot" offers several upcoming free slots as
+// buttons. The first is applied straight away (the old behaviour); any
+// other is one click away. Times are shown in the profile's zone.
+it('offers several free slots as buttons and applies the one clicked', async () => {
+    const auth = useAuthStore();
+    auth.user = { id: 'user-1', name: 'Test', email: 'test@example.com', timezone: 'UTC', locale: 'en', email_verified_at: null, created_at: '', updated_at: '' };
+
+    const w = await mountReady();
+    await w.find('input[type="checkbox"]').setValue(true);
+
+    const fallback = get.getMockImplementation();
+    get.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+        if (url === '/posts/find-slot') {
+            return Promise.resolve({
+                data: {
+                    publish_date: '2026-08-20T09:00:00.000Z',
+                    publish_dates: ['2026-08-20T09:00:00.000Z', '2026-08-20T14:00:00.000Z', '2026-08-21T09:00:00.000Z'],
+                },
+            });
+        }
+        return fallback ? fallback(url, config) : Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+
+    await w.get('#slot-integration').setValue('int-1');
+    await w.findAll('button').find((b) => b.text() === 'Find free slot')!.trigger('click');
+    await flushPromises();
+
+    expect(get).toHaveBeenCalledWith('/posts/find-slot', { params: { integration_id: 'int-1', count: 4 } });
+    const options = w.findAll('[data-test="slot-option"]');
+    expect(options).toHaveLength(3);
+    expect(options[0].attributes('aria-pressed')).toBe('true');
+    expect((w.get('#publish-date').element as HTMLInputElement).value).toBe('2026-08-20T09:00');
+
+    await options[1].trigger('click');
+    expect((w.get('#publish-date').element as HTMLInputElement).value).toBe('2026-08-20T14:00');
+    expect(w.findAll('[data-test="slot-option"]')[1].attributes('aria-pressed')).toBe('true');
+});

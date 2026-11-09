@@ -48,6 +48,25 @@ class SlotFinderService
 
     public function findNextFreeSlot(string $integrationId): Carbon
     {
+        return $this->findNextFreeSlots($integrationId, 1)[0];
+    }
+
+    /**
+     * The next `$count` free instants for one channel, earliest first —
+     * the «Кобальт» composer offers several as buttons rather than only
+     * the single next one. Same search and the same "occupied" rule as
+     * before; it just keeps collecting instead of returning the first.
+     *
+     * A channel with no configured slots has no schedule to enumerate, so
+     * it answers the single fallback instant (now + 1h, rounded) however
+     * many were asked for — inventing several "free slots" there would
+     * present arbitrary times as if the channel's schedule had produced
+     * them.
+     *
+     * @return list<Carbon>
+     */
+    public function findNextFreeSlots(string $integrationId, int $count): array
+    {
         // Org-scoped via BelongsToOrganization's global scope, same
         // pattern as PostGroupService::resolveIntegrations(): a
         // cross-tenant id resolves to null here even though it exists. FindSlotRequest
@@ -64,11 +83,12 @@ class SlotFinderService
             ->pluck('minutes_from_week_start');
 
         if ($slots->isEmpty()) {
-            return $this->roundUpToFiveMinutes(Carbon::now()->addHour());
+            return [$this->roundUpToFiveMinutes(Carbon::now()->addHour())];
         }
 
         $now = Carbon::now();
         $weekStart = $this->weekStartUtc($now);
+        $found = [];
 
         for ($week = 0; $week < self::MAX_WEEKS_TO_SEARCH; $week++) {
             $candidateWeekStart = $weekStart->copy()->addWeeks($week);
@@ -81,9 +101,20 @@ class SlotFinderService
                 }
 
                 if (! $this->isOccupied($integration, $candidate)) {
-                    return $candidate;
+                    $found[] = $candidate;
+
+                    if (count($found) >= $count) {
+                        return $found;
+                    }
                 }
             }
+        }
+
+        // Fewer than asked for within the search window: what was found
+        // is still useful. Only finding nothing at all is the loud,
+        // diagnosable failure MAX_WEEKS_TO_SEARCH exists for.
+        if ($found !== []) {
+            return $found;
         }
 
         throw new RuntimeException(

@@ -27,6 +27,9 @@ class FindSlotRequest extends FormRequest
     {
         return [
             'integration_id' => ['required', 'string', Rule::exists('integrations', 'id')->where('organization_id', OrganizationContext::id())->whereNull('deleted_at')],
+            // How many free slots to list (the «Кобальт» composer shows a
+            // row of them). Capped: each one is a query per candidate.
+            'count' => ['sometimes', 'integer', 'min:1', 'max:8'],
         ];
     }
 }

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Button from '../ui/Button.vue';
 import { localToUtcMinutes, utcMinutesToLocal, WEEKDAY_COUNT } from '../../utils/timeSlots';
 
 /**
@@ -35,11 +34,21 @@ function updateRow(index: number, weekday: number, hour: number, minute: number)
     emit('update:modelValue', dedupe(next));
 }
 
-function onWeekdayChange(index: number, event: Event): void {
-    const row = rows.value[index];
-    const weekday = Number((event.target as HTMLSelectElement).value);
-    updateRow(index, weekday, row.hour, row.minute);
-}
+/**
+ * «Кобальт» groups the slots by local weekday — the same rows as before,
+ * just bucketed — keeping each slot's index into `modelValue` so an edit
+ * or a removal still addresses exactly one stored value.
+ */
+const days = computed(() =>
+    weekdayLabels.value.map((label, weekday) => ({
+        weekday,
+        label,
+        slots: rows.value
+            .map((row, index) => ({ ...row, index }))
+            .filter((row) => row.weekday === weekday)
+            .sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute)),
+    })),
+);
 
 function onTimeChange(index: number, event: Event): void {
     const row = rows.value[index];
@@ -47,10 +56,20 @@ function onTimeChange(index: number, event: Event): void {
     updateRow(index, row.weekday, hour ?? 0, minute ?? 0);
 }
 
-function addSlot(): void {
-    // A sensible, always-valid default: Monday 09:00 local — converted
-    // to its UTC minute value immediately, same as any other row.
-    const next = [...props.modelValue, localToUtcMinutes(0, 9, 0, props.timezone)];
+/**
+ * Adds a slot to one weekday: 09:00 local, or the next whole hour that
+ * day does not already hold — so pressing "+" twice gives two slots
+ * instead of one silently deduplicated one.
+ */
+function addSlot(weekday: number): void {
+    const taken = new Set(rows.value.filter((row) => row.weekday === weekday).map((row) => row.hour * 60 + row.minute));
+    let hour = 9;
+
+    while (taken.has(hour * 60) && hour < 23) {
+        hour += 1;
+    }
+
+    const next = [...props.modelValue, localToUtcMinutes(weekday, hour, 0, props.timezone)];
     emit('update:modelValue', dedupe(next));
 }
 
@@ -69,36 +88,56 @@ function dedupe(values: number[]): number[] {
 </script>
 
 <template>
-    <div class="flex flex-col gap-3">
-        <p class="text-xs text-muted">{{ t('channels.settings.timeSlotsHint', { tz: timezone }) }}</p>
-
-        <div v-for="(row, index) in rows" :key="`${row.minutes}-${index}`" class="flex items-center gap-2">
-            <label :for="`slot-weekday-${index}`" class="sr-only">{{ t('channels.settings.weekday') }}</label>
-            <select
-                :id="`slot-weekday-${index}`"
-                :value="row.weekday"
-                class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                @change="onWeekdayChange(index, $event)"
-            >
-                <option v-for="(label, weekday) in weekdayLabels" :key="weekday" :value="weekday">{{ label }}</option>
-            </select>
-
-            <label :for="`slot-time-${index}`" class="sr-only">{{ t('channels.settings.time') }}</label>
-            <input
-                :id="`slot-time-${index}`"
-                type="time"
-                :value="timeString(row.hour, row.minute)"
-                class="rounded-xl border border-border-strong bg-surface px-2 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                @change="onTimeChange(index, $event)"
-            />
-
-            <Button variant="ghost" type="button" @click="removeSlot(index)">
-                {{ t('channels.settings.removeSlot') }}
-            </Button>
+    <div class="flex flex-col gap-2.5">
+        <div class="flex items-baseline justify-between gap-2">
+            <p class="text-xs text-muted">{{ t('channels.settings.timeSlotsHint', { tz: timezone }) }}</p>
+            <span data-test="slot-total" class="shrink-0 font-mono text-xs text-muted">{{ t('channels.settings.slotCount', { count: modelValue.length }) }}</span>
         </div>
 
-        <Button variant="secondary" type="button" class="self-start" @click="addSlot">
-            {{ t('channels.settings.addSlot') }}
-        </Button>
+        <div class="overflow-hidden rounded-lg border border-border">
+            <div
+                v-for="day in days"
+                :key="day.weekday"
+                data-test="slot-day"
+                class="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
+            >
+                <span class="w-8 shrink-0 text-[13px] font-medium text-text">{{ day.label }}</span>
+                <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    <span
+                        v-for="slot in day.slots"
+                        :key="slot.minutes"
+                        data-test="slot-chip"
+                        class="inline-flex items-center gap-0.5 rounded border border-primary-soft bg-primary-soft py-0.5 pl-1.5 pr-0.5 text-primary-hover"
+                    >
+                        <label :for="`slot-time-${slot.index}`" class="sr-only">{{ t('channels.settings.time') }}, {{ day.label }}</label>
+                        <input
+                            :id="`slot-time-${slot.index}`"
+                            type="time"
+                            :value="timeString(slot.hour, slot.minute)"
+                            class="w-[4.5rem] border-0 bg-primary-soft p-0 font-mono text-xs text-primary-hover focus:outline-none focus:ring-0"
+                            @change="onTimeChange(slot.index, $event)"
+                        />
+                        <button
+                            type="button"
+                            class="flex h-5 w-5 items-center justify-center rounded text-primary-hover hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            :aria-label="`${t('channels.settings.removeSlot')} ${day.label} ${timeString(slot.hour, slot.minute)}`"
+                            @click="removeSlot(slot.index)"
+                        >
+                            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                        </button>
+                    </span>
+                    <span v-if="day.slots.length === 0" class="text-xs text-muted">{{ t('channels.settings.noSlots') }}</span>
+                </div>
+                <button
+                    type="button"
+                    data-test="slot-add"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-dashed border-border-strong text-muted hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    :aria-label="`${t('channels.settings.addSlot')}: ${day.label}`"
+                    @click="addSlot(day.weekday)"
+                >
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+            </div>
+        </div>
     </div>
 </template>

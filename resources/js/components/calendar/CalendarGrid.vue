@@ -288,6 +288,70 @@ function goToday(): void {
     cursor: grab;
 }
 
+/*
+ * «Кобальт» month/week grid: the toolbar title in the page's type, quiet
+ * uppercase weekday headers on --surface-2, day numbers in the corner,
+ * and event cards left to CalendarEvent (FullCalendar's own event chrome
+ * is flattened so the card's status tint is what shows).
+ */
+.calendar-shell :deep(.fc .fc-toolbar-title) {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.calendar-shell :deep(.fc .fc-button) {
+    border-radius: 6px;
+    font-size: 13px;
+    padding: 6px 12px;
+    box-shadow: none;
+    border-color: var(--border-strong);
+}
+
+.calendar-shell :deep(.fc .fc-col-header-cell) {
+    background: var(--surface-2);
+}
+
+.calendar-shell :deep(.fc .fc-col-header-cell-cushion) {
+    padding: 9px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-day-number) {
+    padding: 8px 10px 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.calendar-shell :deep(.fc .fc-day-other .fc-daygrid-day-number) {
+    font-weight: 400;
+    color: var(--muted);
+}
+
+.calendar-shell :deep(.fc .fc-day-today .fc-daygrid-day-number) {
+    margin: 6px 8px 2px;
+    padding: 1px 7px;
+    border-radius: 4px;
+    background: var(--primary);
+    color: var(--on-primary);
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-day-frame) {
+    min-height: 104px;
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-event),
+.calendar-shell :deep(.fc .fc-timegrid-event) {
+    margin: 2px 6px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
 .calendar-shell :deep(.fc-event-dragging) {
     cursor: grabbing;
 }

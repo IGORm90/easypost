@@ -244,7 +244,9 @@
       "optionsError": "This channel's list of destinations could not be loaded. Try again later — everything else here can still be saved.",
       "fields": {
         "channel_id": "Destination channel"
-      }
+      },
+      "noSlots": "no slots",
+      "slotCount": "Slots: {count}"
     },
     "weekdays": {
       "0": "Mon",
@@ -520,7 +522,8 @@
       "findSlot": "Find free slot",
       "findSlotError": "Could not find a free slot. Please try again.",
       "publishDate": "Publish date",
-      "timezoneHint": "Times are shown in your timezone ({tz})."
+      "timezoneHint": "Times are shown in your timezone ({tz}).",
+      "freeSlots": "Free slots"
     },
     "actions": {
       "saveDraft": "Save draft",
