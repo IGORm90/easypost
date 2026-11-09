@@ -104,11 +104,11 @@ const preview = computed(() => props.entry.posts[0]?.content ?? '');
 
 <template>
     <div
-        class="flex w-full flex-col gap-1 rounded-xl border px-2 py-1.5 text-left text-xs"
+        class="flex w-full min-w-0 max-w-full cursor-pointer flex-col gap-1 overflow-hidden rounded-xl border px-2 py-1.5 text-left text-xs transition-shadow hover:shadow-md"
         :class="[cardTone, { 'border-dashed': isDraft }]"
     >
-        <div class="flex items-center justify-between gap-1">
-            <span class="flex items-center gap-1 truncate font-medium text-text">
+        <div class="flex min-w-0 items-center justify-between gap-1">
+            <span class="flex min-w-0 items-center gap-1 truncate font-medium text-text">
                 <!-- Accent is used here per color.md §1: "аватары соцсетей" is
                      an explicit accent use-case, not a primary action. -->
                 <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent" aria-hidden="true">
@@ -186,12 +186,15 @@ const preview = computed(() => props.entry.posts[0]?.content ?? '');
 
         <p class="truncate text-muted">{{ preview }}</p>
 
-        <div class="flex flex-wrap items-center gap-1">
+        <!-- One line only: the card must keep its height in the day cell.
+             Tags that do not fit are clipped here and shown in full in
+             CalendarEventDetails. -->
+        <div class="flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden">
             <Badge :status="badgeStatus">{{ t(`calendar.state.${entry.state}`) }}</Badge>
             <span
                 v-for="tag in entry.tags"
                 :key="tag.id"
-                class="inline-flex items-center gap-1 rounded-xl border border-border px-1.5 py-0.5 text-[10px] text-text"
+                class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-xl border border-border px-1.5 py-0.5 text-[10px] text-text"
             >
                 <!-- Tag colours are user input, validated server-side as
                      ^#[0-9a-fA-F]{6}$ (Task 21's StoreTagRequest) — binding

@@ -27,7 +27,7 @@ const stack: symbol[] = [];
  * runs once per instance, and a per-instance count is a count of one.
  */
 let locks = 0;
-let restoreBodyStyle: { overflow: string; paddingRight: string; rootOverflow: string } | null = null;
+let restoreBodyStyle: { paddingRight: string; rootOverflow: string } | null = null;
 
 function lockBodyScroll(): void {
     if (locks++ > 0) {
@@ -35,12 +35,7 @@ function lockBodyScroll(): void {
     }
 
     restoreBodyStyle = {
-        overflow: document.body.style.overflow,
         paddingRight: document.body.style.paddingRight,
-        // <html> as well as <body>: this app scrolls the document
-        // element (`document.scrollingElement` is HTML), and body's
-        // overflow only propagates to the viewport under conditions that
-        // are easy to lose. Setting both is what actually holds the page.
         rootOverflow: document.documentElement.style.overflow,
     };
 
@@ -49,8 +44,13 @@ function lockBodyScroll(): void {
     // the width the scrollbar occupied keeps it still.
     const gutter = window.innerWidth - document.documentElement.clientWidth;
 
+    // Only <html>: it is what scrolls in this app (`document.scrollingElement`
+    // is HTML). <body> must NOT get `overflow: hidden` as well — with both
+    // set, <body> stops propagating its overflow to the viewport and
+    // becomes a scroll container of its own, so every `position: sticky`
+    // element (AppLayout's sidebar) sticks to that unscrolled <body>
+    // instead of the viewport and jumps up by the page's scroll offset.
     document.documentElement.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
 
     if (gutter > 0) {
         document.body.style.paddingRight = `${gutter}px`;
@@ -65,7 +65,6 @@ function unlockBodyScroll(): void {
     // Restored to whatever the page had, not blindly cleared to '' —
     // the app may legitimately be styling the body itself.
     document.documentElement.style.overflow = restoreBodyStyle?.rootOverflow ?? '';
-    document.body.style.overflow = restoreBodyStyle?.overflow ?? '';
     document.body.style.paddingRight = restoreBodyStyle?.paddingRight ?? '';
     restoreBodyStyle = null;
 }
@@ -92,12 +91,27 @@ import { useI18n } from 'vue-i18n';
  * keyboard equivalent of the close button. Every one of those is fixed
  * below, and none of it changes what a mouse user sees.
  */
-const props = withDefaults(defineProps<{ open?: boolean; title?: string; ignoreBackdropClick?: boolean; size?: 'md' | 'full' | 'page' | 'drawer' }>(), {
-    open: false,
-    title: undefined,
-    ignoreBackdropClick: false,
-    size: 'md',
-});
+const props = withDefaults(
+    defineProps<{
+        open?: boolean;
+        title?: string;
+        ignoreBackdropClick?: boolean;
+        size?: 'md' | 'full' | 'page' | 'drawer';
+        /**
+         * Where the dialog should appear to grow out of — e.g. the rect of
+         * the calendar card that was clicked. When set, the panel opens by
+         * scaling up from that box instead of the default "quiet lift".
+         */
+        origin?: DOMRect | null;
+    }>(),
+    {
+        open: false,
+        title: undefined,
+        ignoreBackdropClick: false,
+        size: 'md',
+        origin: null,
+    },
+);
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -217,6 +231,7 @@ watch(
             lockBodyScroll();
             document.addEventListener('keydown', onKeydown);
             await nextTick();
+            growFromOrigin();
             (focusables()[0] ?? dialog.value)?.focus();
 
             return;
@@ -230,6 +245,44 @@ watch(
     },
     { immediate: true },
 );
+
+/**
+ * FLIP-style "the card grows into the dialog": measure the panel at its
+ * final place, then animate from the origin box to it. Web Animations sit
+ * above the CSS enter transition in the cascade, so this simply wins over
+ * the default lift for `transform`. Reduced motion keeps the plain fade.
+ */
+function growFromOrigin(): void {
+    const panel = dialog.value;
+    const origin = props.origin;
+
+    if (!panel || !origin || typeof panel.animate !== 'function') {
+        return;
+    }
+
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        return;
+    }
+
+    const target = panel.getBoundingClientRect();
+
+    if (target.width === 0 || target.height === 0) {
+        return;
+    }
+
+    const dx = origin.left + origin.width / 2 - (target.left + target.width / 2);
+    const dy = origin.top + origin.height / 2 - (target.top + target.height / 2);
+    const sx = origin.width / target.width;
+    const sy = origin.height / target.height;
+
+    panel.animate(
+        [
+            { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0.4 },
+            { transform: 'none', opacity: 1 },
+        ],
+        { duration: 220, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+    );
+}
 
 function releaseLock(): void {
     if (holdsLock) {

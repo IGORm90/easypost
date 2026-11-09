@@ -388,7 +388,14 @@
       "errors": "Failed to publish",
       "show": "Show"
     },
-    "postsInRange": "Posts in range: {count}"
+    "postsInRange": "Posts in range: {count}",
+    "details": {
+      "title": "Post",
+      "edit": "Open in editor",
+      "channels": "Channels",
+      "empty": "This post has no text."
+    },
+    "moreLink": "+{n} more"
   },
   "tags": {
     "manage": "Manage tags",

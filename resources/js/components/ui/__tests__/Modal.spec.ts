@@ -257,12 +257,16 @@ it('freezes the page behind it while open, and hands scrolling back on close', a
     expect(document.body.style.overflow).toBe('auto');
 
     await w.setProps({ open: true });
-    expect(document.body.style.overflow).toBe('hidden');
-    // <html> too: it is the element that actually scrolls in this app.
+    // <html> is the element that actually scrolls in this app, so it is
+    // the one frozen. <body> is left alone: `overflow: hidden` on both
+    // turns <body> into its own scroll container, and the layout's
+    // `sticky top-0` sidebar then sticks to an unscrolled <body> instead
+    // of the viewport — it jumped up by the page's scroll offset.
     expect(document.documentElement.style.overflow).toBe('hidden');
+    expect(document.body.style.overflow).toBe('auto');
 
     await w.setProps({ open: false });
-    // Restored to what it was, not blindly cleared to ''.
+    expect(document.documentElement.style.overflow).toBe('');
     expect(document.body.style.overflow).toBe('auto');
 
     document.body.style.overflow = '';
@@ -275,22 +279,21 @@ it('keeps the page frozen until the last of a stack of modals closes', async () 
     const bottom = mountModal();
     const top = mountModal();
 
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
 
     await top.setProps({ open: false });
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
 
     await bottom.setProps({ open: false });
-    expect(document.body.style.overflow).toBe('');
     expect(document.documentElement.style.overflow).toBe('');
 });
 
 it('releases the lock when an open modal is torn down with its page', () => {
     const w = mountModal();
 
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
 
     w.unmount();
 
-    expect(document.body.style.overflow).toBe('');
+    expect(document.documentElement.style.overflow).toBe('');
 });

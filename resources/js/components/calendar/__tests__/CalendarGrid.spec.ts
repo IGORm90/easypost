@@ -194,3 +194,43 @@ it('relays a card duplicate request upward instead of acting on it', async () =>
   expect(w.emitted('duplicate')).toEqual([['group-1']])
   expect(del).not.toHaveBeenCalled()
 })
+
+// A card in the grid is truncated to its day cell; clicking it opens the
+// enlarged details dialog rather than the editor directly.
+it('a card click opens the details dialog instead of the editor; Edit there emits edit', async () => {
+  const w = await mountGrid([entry({ id: 'group-7' })])
+  const el = document.createElement('div')
+
+  optionsOf(w).eventClick({ event: { id: 'group-7' }, el, jsEvent: new MouseEvent('click') })
+  await w.vm.$nextTick()
+
+  expect(w.emitted('edit')).toBeUndefined()
+
+  const details = w.findComponent({ name: 'CalendarEventDetails' })
+  expect(details.props('entry')?.id).toBe('group-7')
+
+  details.vm.$emit('edit', 'group-7')
+  await w.vm.$nextTick()
+
+  expect(w.emitted('edit')).toEqual([['group-7']])
+  expect(w.findComponent({ name: 'CalendarEventDetails' }).props('entry')).toBeNull()
+})
+
+it('keeps every card to a single day cell', async () => {
+  const w = await mountGrid([entry()])
+
+  expect(optionsOf(w).eventDisplay).toBe('block')
+  expect(optionsOf(w).nextDayThreshold).toBe('23:59:59')
+})
+
+// A busy day must not stretch its whole week row: a cell shows two cards,
+// and the rest sit behind a "+N" link that opens FullCalendar's popover —
+// floating over the grid, with no backdrop, unlike the details dialog.
+it('caps a day cell at two cards and opens the rest in a popover', async () => {
+  const w = await mountGrid([entry()])
+  const options = optionsOf(w)
+
+  expect(options.dayMaxEvents).toBe(2)
+  expect(options.moreLinkClick).toBe('popover')
+  expect(options.moreLinkContent({ num: 5 })).toBe('+5 more')
+})

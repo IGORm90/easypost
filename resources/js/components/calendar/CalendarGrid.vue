@@ -9,6 +9,7 @@ import { isAxiosError } from 'axios';
 import { useI18n } from 'vue-i18n';
 import Button from '../ui/Button.vue';
 import CalendarEvent from './CalendarEvent.vue';
+import CalendarEventDetails from './CalendarEventDetails.vue';
 import { usePostsStore, type CalendarEntry } from '../../stores/posts';
 import type { CalendarView } from './ViewSwitcher.vue';
 
@@ -97,11 +98,42 @@ function onDatesSet(arg: DatesSetArg): void {
     emit('range-change', { from: arg.start.toISOString(), to: arg.end.toISOString() });
 }
 
+/**
+ * A click no longer jumps straight into the editor: the card in the grid
+ * is deliberately truncated to fit its day cell, so the first click
+ * "opens it up" — CalendarEventDetails grows out of the card's own rect
+ * over the calendar and shows the whole post. The editor is one button
+ * away from there.
+ *
+ * Only the id is kept, not the entry: the dialog reads the live entry
+ * from `props.entries`, so a share/duplicate made from it shows up at
+ * once, and a removed post simply closes it.
+ */
+const detailsId = ref<string | null>(null);
+const detailsOrigin = ref<DOMRect | null>(null);
+
+const detailsEntry = computed(() => (detailsId.value ? (props.entries.find((entry) => entry.id === detailsId.value) ?? null) : null));
+
 function onEventClick(arg: EventClickArg): void {
-    // Seam for Task 25: clicking a card should open the post editor
-    // modal for this group. That modal doesn't exist yet — Index.vue's
-    // `onEdit` handler is a documented no-op until then.
-    emit('edit', arg.event.id);
+    arg.jsEvent.preventDefault();
+    detailsOrigin.value = arg.el.getBoundingClientRect();
+    detailsId.value = arg.event.id;
+}
+
+function closeDetails(): void {
+    detailsId.value = null;
+}
+
+function fromDetails(kind: 'edit' | 'share' | 'duplicate', groupId: string): void {
+    closeDetails();
+
+    if (kind === 'edit') {
+        emit('edit', groupId);
+    } else if (kind === 'share') {
+        emit('share', groupId);
+    } else {
+        emit('duplicate', groupId);
+    }
 }
 
 async function onEventDrop(info: EventDropArg): Promise<void> {
@@ -180,7 +212,19 @@ const calendarOptions = computed(() => ({
     editable: true,
     eventStartEditable: true,
     eventDurationEditable: false,
-    dayMaxEvents: true,
+    // A cell holds two cards; the rest hide behind "+N" so one busy day
+    // never stretches its whole week row. The link opens FullCalendar's
+    // own popover — it floats over the grid with no backdrop (styled
+    // below), and a card clicked inside it still opens the details dialog.
+    dayMaxEvents: 2,
+    moreLinkClick: 'popover' as const,
+    moreLinkContent: (arg: { num: number }) => t('calendar.moreLink', { n: arg.num }),
+    // Every card renders as the same block, one per day cell. Without
+    // these, a timed post FullCalendar gave its default 1h duration would
+    // straddle midnight when scheduled late in the evening and be drawn
+    // as a two-day bar, spilling the card across the next day's column.
+    eventDisplay: 'block',
+    nextDayThreshold: '23:59:59',
     events: fcEvents.value,
     eventAllow,
     eventContent: (arg: { event: EventApi }) => {
@@ -234,6 +278,18 @@ function goToday(): void {
         <div class="calendar-shell rounded-lg border border-border bg-surface p-2">
             <FullCalendar ref="calendarRef" :options="calendarOptions" />
         </div>
+
+        <CalendarEventDetails
+            :entry="detailsEntry"
+            :locked="detailsEntry ? isLocked(detailsEntry) : false"
+            :timezone="timezone"
+            :origin="detailsOrigin"
+            @close="closeDetails"
+            @edit="fromDetails('edit', $event)"
+            @share="fromDetails('share', $event)"
+            @duplicate="fromDetails('duplicate', $event)"
+            @remove="onRemove"
+        />
     </div>
 </template>
 
@@ -285,7 +341,17 @@ function goToday(): void {
 }
 
 .calendar-shell :deep(.fc-event) {
-    cursor: grab;
+    cursor: pointer;
+}
+
+/* A card never grows past its day cell: the content is truncated inside
+   (CalendarEvent.vue) and the full post opens in CalendarEventDetails. */
+.calendar-shell :deep(.fc-daygrid-event-harness),
+.calendar-shell :deep(.fc-daygrid-event),
+.calendar-shell :deep(.fc-event-main) {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
 }
 
 /*
@@ -350,6 +416,124 @@ function goToday(): void {
     border: 0;
     background: transparent;
     box-shadow: none;
+}
+
+/* "+N" link and the popover it opens: a floating card on the surface,
+   no overlay — the calendar behind stays visible and interactive. */
+.calendar-shell :deep(.fc .fc-daygrid-day-bottom) {
+    display: flex;
+    justify-content: center;
+    margin: 4px 6px 6px;
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-more-link) {
+    float: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 88px;
+    margin: 0;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    transition:
+        background-color 120ms ease,
+        box-shadow 120ms ease;
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-more-link:hover) {
+    background: var(--primary);
+    color: var(--on-primary);
+    box-shadow: 0 2px 6px -3px var(--overlay);
+}
+
+.calendar-shell :deep(.fc .fc-daygrid-more-link:focus-visible) {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.calendar-shell :deep(.fc .fc-more-popover) {
+    z-index: 40;
+    width: 300px;
+    max-width: calc(100vw - 32px);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 12px 32px -12px var(--overlay);
+    transform-origin: top center;
+    /* FullCalendar positions the popover with top/left, never transform,
+       so animating transform cannot fight its placement. */
+    animation: more-popover-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The cards inside follow the panel in a short stagger. */
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness) {
+    animation: more-popover-item-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness:nth-child(2)) { animation-delay: 30ms; }
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness:nth-child(3)) { animation-delay: 60ms; }
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness:nth-child(4)) { animation-delay: 90ms; }
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness:nth-child(5)) { animation-delay: 120ms; }
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness:nth-child(n + 6)) { animation-delay: 150ms; }
+
+@keyframes more-popover-in {
+    from {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes more-popover-item-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* Same rule as Modal.vue: reduced motion keeps the fade, drops the movement. */
+@media (prefers-reduced-motion: reduce) {
+    .calendar-shell :deep(.fc .fc-more-popover),
+    .calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness) {
+        animation-name: more-popover-fade;
+        animation-duration: 80ms;
+        animation-delay: 0ms;
+    }
+
+    @keyframes more-popover-fade {
+        from {
+            opacity: 0;
+        }
+    }
+}
+
+.calendar-shell :deep(.fc .fc-more-popover .fc-popover-header) {
+    padding: 8px 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.calendar-shell :deep(.fc .fc-more-popover .fc-popover-body) {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 6px 0;
+}
+
+.calendar-shell :deep(.fc .fc-more-popover .fc-daygrid-event-harness) {
+    margin-bottom: 4px;
 }
 
 .calendar-shell :deep(.fc-event-dragging) {
