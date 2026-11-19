@@ -84,7 +84,7 @@ class SocialAuthController extends Controller
         $user = $this->socialAccounts->findOrCreateUser($driver->value, $socialiteUser);
         $this->auth->login($request, $user);
 
-        return redirect()->away((string) config('services.oauth_spa_redirect_url'));
+        return redirect()->away($this->spaUrl('/calendar'));
     }
 
     private function errorRedirectUrl(): string
@@ -93,6 +93,18 @@ class SocialAuthController extends Controller
         // OAuth callback has none, so redirecting there makes the router
         // bounce to /login and discard the error marker before it can be
         // shown. Send it straight to the guest route instead.
-        return rtrim((string) config('services.oauth_spa_redirect_url'), '/').'/login?oauth_error=1';
+        return $this->spaUrl('/login?oauth_error=1');
+    }
+
+    /**
+     * A path inside the SPA, built on the configured origin only. The
+     * success target is the calendar's own path rather than the bare
+     * origin: `/` is the public landing page, so landing there would drop
+     * a user who has just signed in onto the marketing page instead of
+     * their workspace.
+     */
+    private function spaUrl(string $path): string
+    {
+        return rtrim((string) config('services.oauth_spa_redirect_url'), '/').$path;
     }
 }

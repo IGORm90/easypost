@@ -6,7 +6,13 @@
  * «Кобальт». Every value below is a row in color.md — palette.spec.ts
  * rejects any literal that file does not list, and theme.spec.ts fails
  * if :root and .dark stop defining the same set of tokens.
+ *
+ * `.theme-light` shares the light block so a subtree can opt back into
+ * it under a dark <html> — the landing page, which is designed in the
+ * light palette only. Custom properties resolve from the nearest
+ * ancestor that sets them, so the class wins over `.dark` on <html>.
  */
+.theme-light,
 :root {
     --bg: #F4F6FA;
     --surface: #FFFFFF;

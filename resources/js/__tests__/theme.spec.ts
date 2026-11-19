@@ -82,3 +82,14 @@ it('puts no opacity modifier on a token class, which Tailwind would drop silentl
 
   expect(offenders).toEqual([])
 })
+
+it('lets a subtree opt back into the light palette under a dark <html>', () => {
+  // The landing page is drawn in the light «Кобальт» palette only, but
+  // useTheme() puts `.dark` on <html> app-wide (the router imports the
+  // app layout, and with it the theme, on every page). `.theme-light`
+  // re-declares the :root tokens on the element that carries it, and
+  // custom properties resolve from the nearest ancestor, so everything
+  // inside stays light. Sharing the :root block, rather than copying it,
+  // keeps the two from drifting.
+  expect(css).toMatch(/\.theme-light,\s*\n:root \{/)
+})

@@ -142,7 +142,7 @@ unrelated to the publishing providers below.
 
 | Variable | Purpose |
 |---|---|
-| `OAUTH_SPA_REDIRECT_URL` | The SPA's own base URL, used as the default login-callback destination. |
+| `OAUTH_SPA_REDIRECT_URL` | The SPA's own base URL (origin only, no path). A successful social login lands on `<this>/calendar` — `/` itself is the public landing page — and a failed one on `<this>/login?oauth_error=1`. |
 | `INTEGRATIONS_REDIRECT_URL` | The SPA page (`/integrations/callback` by default) that receives an OAuth provider's redirect and forwards `code`/`state` to the backend. |
 
 The two shipped networks — Telegram and Bluesky — need no app-level

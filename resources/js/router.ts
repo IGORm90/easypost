@@ -12,6 +12,7 @@ import AcceptInvite from './pages/Invites/Accept.vue';
 import Channels from './pages/Channels/Index.vue';
 import Media from './pages/Media/Index.vue';
 import Calendar from './pages/Calendar/Index.vue';
+import Landing from './pages/Landing/Index.vue';
 import AdminUsers from './pages/Admin/Users.vue';
 import IntegrationsCallback from './pages/Integrations/Callback.vue';
 import SharedPost from './pages/Public/SharedPost.vue';
@@ -34,10 +35,19 @@ const router = createRouter({
         // it only redirects away routes with `guestOnly`, which this
         // route deliberately does not set.
         { path: '/share/:token', name: 'shared-post', component: SharedPost, meta: { requiresAuth: false } },
-        // Task 24: the calendar is the app's day-to-day home screen, not
-        // the placeholder AppLayout shell the root path rendered before
-        // it existed.
-        { path: '/', name: 'home', component: Calendar, meta: { requiresAuth: true } },
+        // The public landing page owns the root. Neither `requiresAuth`
+        // nor `guestOnly`: a signed-out visitor must not be bounced to
+        // /login from the front door, and a signed-in member opening the
+        // site's address is not bounced either — the page swaps its own
+        // calls to action for a link to the calendar instead.
+        { path: '/', name: 'landing', component: Landing, meta: { requiresAuth: false } },
+        // Task 24: the calendar is the app's day-to-day home screen. It
+        // moved off `/` when the landing page arrived, but kept the name
+        // `home` on purpose: login, invite acceptance, workspace creation
+        // and the guard below all navigate by that name, so none of them
+        // needed to learn the new path. The server-side post-login
+        // redirect (SocialAuthController::callback) does use the path.
+        { path: '/calendar', name: 'home', component: Calendar, meta: { requiresAuth: true } },
         { path: '/workspaces', name: 'workspaces', component: Workspaces, meta: { requiresAuth: true, navSection: 'workspaces' } },
         { path: '/workspaces/create', name: 'workspace-create', component: CreateWorkspace, meta: { requiresAuth: true, navSection: 'workspaces' } },
         { path: '/channels', name: 'channels', component: Channels, meta: { requiresAuth: true } },

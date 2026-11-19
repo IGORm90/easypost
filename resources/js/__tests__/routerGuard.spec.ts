@@ -115,3 +115,50 @@ it('requires a session to view workspaces', async () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('login');
 });
+
+/*
+ * The public landing page took over `/`. The calendar — the app's home
+ * screen — moved to `/calendar` and kept its route name, so every
+ * `{ name: 'home' }` in the app (login, invites, workspace creation, the
+ * guard above) follows it without being touched.
+ */
+it('shows the landing page at the root to a signed-out visitor instead of bouncing them to login', async () => {
+    get.mockRejectedValue(new Error('unauthenticated'));
+    const { default: router } = await import('../router');
+
+    await router.push('/');
+    await router.isReady();
+
+    expect(router.currentRoute.value.name).toBe('landing');
+});
+
+it('shows the landing page at the root to a signed-in user too', async () => {
+    meResponds({ superadmin: false });
+    const { default: router } = await import('../router');
+
+    await router.push('/');
+    await router.isReady();
+
+    expect(router.currentRoute.value.name).toBe('landing');
+});
+
+it('serves the calendar home screen at /calendar', async () => {
+    meResponds({ superadmin: false });
+    const { default: router } = await import('../router');
+
+    await router.push('/calendar');
+    await router.isReady();
+
+    expect(router.currentRoute.value.name).toBe('home');
+    expect(router.resolve({ name: 'home' }).path).toBe('/calendar');
+});
+
+it('still requires a session for the calendar', async () => {
+    get.mockRejectedValue(new Error('unauthenticated'));
+    const { default: router } = await import('../router');
+
+    await router.push('/calendar');
+    await router.isReady();
+
+    expect(router.currentRoute.value.name).toBe('login');
+});

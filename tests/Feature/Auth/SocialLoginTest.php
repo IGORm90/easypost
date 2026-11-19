@@ -30,6 +30,15 @@ afterEach(function () {
     SocialAccount::flushEventListeners();
 });
 
+// Where a successful social login lands: the calendar, which moved from
+// `/` to `/calendar` when the public landing page took over the root. A
+// redirect to the bare SPA origin would now drop a freshly signed-in user
+// onto the marketing page instead of their workspace.
+function signedInHome(): string
+{
+    return rtrim((string) config('services.oauth_spa_redirect_url'), '/').'/calendar';
+}
+
 it('returns the provider authorize url for a whitelisted driver, with no Referer header', function () {
     Socialite::fake('github', SocialiteUser::fake());
 
@@ -60,7 +69,7 @@ it('creates a new user and their first organization for a brand-new email', func
 
     $response = $this->get('/api/auth/oauth/github/callback');
 
-    $response->assertRedirect(config('services.oauth_spa_redirect_url'));
+    $response->assertRedirect(signedInHome());
 
     $user = User::firstWhere('email', 'ann@example.com');
     expect($user)->not->toBeNull()
@@ -116,7 +125,7 @@ it('establishes an authenticated session after a successful callback carrying no
     ]));
 
     $login = $this->get('/api/auth/oauth/github/callback');
-    $login->assertRedirect(config('services.oauth_spa_redirect_url'));
+    $login->assertRedirect(signedInHome());
 
     $cookieName = config('session.cookie');
     $sessionId = $login->getCookie($cookieName)?->getValue();
@@ -188,7 +197,7 @@ it('links a returning provider identity to its existing user without creating a 
         'id' => 'gh-123', 'email' => 'ann@example.com', 'name' => 'Ann',
     ]));
 
-    $this->get('/api/auth/oauth/github/callback')->assertRedirect(config('services.oauth_spa_redirect_url'));
+    $this->get('/api/auth/oauth/github/callback')->assertRedirect(signedInHome());
 
     expect(User::where('email', 'ann@example.com')->count())->toBe(1)
         ->and(SocialAccount::where('provider', 'github')->where('provider_user_id', 'gh-123')->count())->toBe(1);
@@ -203,7 +212,7 @@ it('links a new provider to an existing user when the provider verified the emai
         'id' => 'go-999', 'email' => 'ann@example.com', 'name' => 'Ann', 'email_verified' => true,
     ]));
 
-    $this->get('/api/auth/oauth/google/callback')->assertRedirect(config('services.oauth_spa_redirect_url'));
+    $this->get('/api/auth/oauth/google/callback')->assertRedirect(signedInHome());
 
     expect(User::where('email', 'ann@example.com')->count())->toBe(1);
     $account = SocialAccount::firstWhere('provider_user_id', 'go-999');

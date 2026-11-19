@@ -687,5 +687,145 @@
       "confirm": "Add to post"
     },
     "count": "Files: {count}"
+  },
+  "landing": {
+    "nav": {
+      "label": "Sections",
+      "features": "Features",
+      "how": "How it works",
+      "statuses": "Statuses",
+      "teams": "For teams",
+      "login": "Sign in",
+      "signup": "Create account",
+      "openApp": "Open calendar"
+    },
+    "hero": {
+      "networks": [
+        "Telegram",
+        "Bluesky"
+      ],
+      "eyebrow": "· a post scheduler for teams",
+      "title": "Write a post once — it goes out on every channel on time",
+      "lead": "EasyPost puts your Telegram and Bluesky channels into a single week: write the text, adjust a version for each network, pick a free slot — and watch the post publish.",
+      "cta": "Create account",
+      "ctaApp": "Open calendar",
+      "secondary": "How it works"
+    },
+    "mockup": {
+      "label": "The EasyPost calendar: a row per channel across the days of the week, with posts in different states",
+      "week": "Week 47 · Nov 16–22, 2026",
+      "days": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ],
+      "channels": {
+        "news": "Studio news",
+        "social": "studio.bsky.social",
+        "announcements": "Announcements"
+      },
+      "networkShort": {
+        "tg": "TG",
+        "bs": "BS"
+      },
+      "states": {
+        "DRAFT": "Draft",
+        "SCHEDULED": "Scheduled",
+        "QUEUE": "Publishing",
+        "PUBLISHED": "Published",
+        "ERROR": "Failed"
+      },
+      "sidebar": {
+        "calendar": "Calendar",
+        "channels": "Channels",
+        "media": "Media library",
+        "team": "Team",
+        "settings": "Settings",
+        "sets": "Sets",
+        "signatures": "Signatures"
+      }
+    },
+    "features": {
+      "eyebrow": "Features",
+      "title": "Everything you need to run several channels without spreadsheets and reminders",
+      "calendar": {
+        "title": "Calendar by channel",
+        "body": "A row for every channel, seven days across. Gaps in the schedule show up at a glance, no filters needed."
+      },
+      "variants": {
+        "title": "A version for each network",
+        "body": "One shared text — shorten it for Bluesky, extend it for Telegram. Edits don't scatter across copies."
+      },
+      "threads": {
+        "title": "Threads",
+        "body": "Split a long thought into a chain of posts — EasyPost publishes them in order, each replying to the last."
+      },
+      "slots": {
+        "title": "Free slots",
+        "body": "Set a channel's posting times for each weekday — the editor suggests the nearest free ones."
+      },
+      "media": {
+        "title": "Media library",
+        "body": "Images are uploaded once and kept in the organization. You can also import them by link."
+      },
+      "presets": {
+        "title": "Sets and signatures",
+        "body": "Save frequent channel combinations and a closing signature — and stop rebuilding them every time."
+      }
+    },
+    "how": {
+      "eyebrow": "How it works",
+      "title": "Three steps to your first post",
+      "connect": {
+        "title": "Connect your channels",
+        "body": "A bot for a Telegram channel, a sign-in for Bluesky. If access expires, the channel says “Reconnection required” instead of quietly going silent."
+      },
+      "write": {
+        "title": "Write the post",
+        "body": "Tick the channels, write the shared text and, if needed, adjust the version for a particular network. The preview is right beside it."
+      },
+      "schedule": {
+        "title": "Schedule it",
+        "body": "Pick a free slot or your own time. Repeat the post — or publish it right now."
+      }
+    },
+    "statuses": {
+      "eyebrow": "Statuses",
+      "title": "See what is happening to every post",
+      "body": "If a publication fails, you learn it from the calendar, not from your followers. Failures are gathered in one list you can open with a single click."
+    },
+    "teams": {
+      "eyebrow": "For teams and agencies",
+      "title": "Every client is its own organization",
+      "organizations": {
+        "title": "Organizations",
+        "body": "One organization's channels, posts and media are never visible in another. Switch between them from the menu."
+      },
+      "invites": {
+        "title": "Invitations",
+        "body": "Invite an editor by email — they only see your organization."
+      },
+      "filters": {
+        "title": "Clients and tags",
+        "body": "Filter the calendar by client or tag to see only what matters."
+      },
+      "share": {
+        "title": "Public link",
+        "body": "Send a post for approval to someone without an account."
+      }
+    },
+    "cta": {
+      "title": "Schedule your first week today",
+      "body": "Sign up with Google or by email. Channels connect in a couple of minutes.",
+      "button": "Create account",
+      "buttonApp": "Open calendar"
+    },
+    "footer": {
+      "copyright": "© {year} EasyPost"
+    }
   }
 }

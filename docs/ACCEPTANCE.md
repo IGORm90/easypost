@@ -314,6 +314,27 @@ Tailwind classes — see above):
   also be present, so the status is legible to a colorblind user or in a
   screenshot printed in grayscale.
 
+### 11a. The landing page at `/`, and the calendar at `/calendar`
+
+1. Signed out, open `/`. Then sign in (password and Google/GitHub) and open
+   `/` again.
+2. Narrow the window to phone width and scroll the page.
+
+Expected:
+- Signed out, `/` is the landing page, not a redirect to `/login`; the
+  header offers "Войти" / "Создать аккаунт", and both calls to action go to
+  `/register`.
+- Signed in, `/` still shows the landing page, but the header and both
+  calls to action say "Открыть календарь" and go to `/calendar`.
+- A password login and a social login both land on `/calendar`, never on
+  `/`. `SocialLoginTest` covers the redirect URL; the browser hop itself is
+  not covered.
+- The header's section links scroll to their sections. At phone width the
+  header wraps, the mock-up's sidebar is hidden and its week grid scrolls
+  sideways inside its own box instead of widening the page.
+- The landing page is checked visually only here: `Landing/Index.spec.ts`
+  covers its links, wording and primary budget, not how it looks.
+
 ### Workspace creation
 
 1. Sign in, open **Workspaces** in the sidebar (or the mobile menu), then
