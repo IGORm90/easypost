@@ -138,6 +138,26 @@ it('bind-mounts no application source, only the config files it names', function
     }
 });
 
+it('mounts directories, never single files, from the tree that deploys replace', function () {
+    // Found by the first rehearsal. A single-file bind mount follows the inode,
+    // not the path: when rsync (or `mv`, or any editor) replaces the file, the
+    // container keeps reading the OLD one. After a deploy Caddy would carry on
+    // with yesterday's Caddyfile and `caddy reload` would reload that. A mounted
+    // directory resolves the name on every read, so a replaced file is seen.
+    foreach (productionServices() as $name => $service) {
+        foreach ($service['volumes'] ?? [] as $volume) {
+            $source = explode(':', (string) $volume)[0];
+
+            if (! str_starts_with($source, './')) {
+                continue; // a named volume
+            }
+
+            expect(is_dir(productionRoot().'/docker/'.substr($source, 2)))
+                ->toBeTrue("{$name} bind-mounts the single file {$source}; mount its directory instead");
+        }
+    }
+});
+
 it('builds nothing on the server: every service runs a pinned image', function () {
     foreach (productionServices() as $name => $service) {
         expect($service)->not->toHaveKey('build');
@@ -200,7 +220,10 @@ it('sizes horizon for its workers and gives a running publish time to finish on 
 });
 
 it('takes the app configuration from the server-side .env, not from the image', function (string $name) {
-    expect(productionServices()[$name]['env_file'] ?? null)->toBe('../.env');
+    // `../.env` is the default so the repository layout works untouched; the
+    // variable is how scripts/lib.sh points a rehearsal at ITS file. Without it
+    // a rehearsal would load the developer's own .env into the containers.
+    expect(productionServices()[$name]['env_file'] ?? null)->toBe('${EASYPOST_ENV_FILE:-../.env}');
 })->with(PRODUCTION_APP_SERVICES);
 
 it('starts the app services only once postgres and redis answer, and the bucket exists', function (string $name) {
@@ -256,6 +279,23 @@ it('gives Caddy a fixed address, so TRUSTED_PROXIES can name exactly it', functi
     expect(ip2long((string) $address) & $mask)->toBe(ip2long($network) & $mask);
 });
 
+it('keeps Caddy\'s address out of the pool Docker hands to everything else', function () {
+    // Found by the first rehearsal: Docker gave 172.30.77.2 to MinIO, which
+    // starts before Caddy, and Caddy then failed with "Address already in use".
+    // A static address inside the dynamic range is a race the loser of which
+    // does not start. `ip_range` confines dynamic assignment to a sub-range, and
+    // the static address must lie outside it.
+    $config = productionCompose()['networks']['default']['ipam']['config'][0];
+    $address = ip2long((string) productionServices()['caddy']['networks']['default']['ipv4_address']);
+
+    expect($config['ip_range'] ?? null)->not->toBeNull('no ip_range: static and dynamic addresses can collide');
+
+    [$network, $bits] = explode('/', (string) $config['ip_range']);
+    $mask = ~((1 << (32 - (int) $bits)) - 1);
+
+    expect(($address & $mask) === (ip2long($network) & $mask))->toBeFalse("Caddy's address is inside the dynamic ip_range");
+});
+
 it('declares a named volume for everything that must survive a recreate', function () {
     expect(array_keys(productionCompose()['volumes']))->toEqualCanonicalizing([
         'pgdata', 'redisdata', 'minio', 'easypost-logs', 'caddy-data', 'caddy-config',
@@ -287,6 +327,22 @@ it('launches closed, with debug off and no secret filled in', function () {
         ->and($template)->toMatch('/^APP_KEY=$/m')
         ->and($template)->toMatch('/^DB_PASSWORD=$/m')
         ->and($template)->toMatch('/^MINIO_ROOT_PASSWORD=$/m');
+});
+
+it('names the registry images in lower case, which is all GHCR accepts, matching what release.yml pushes', function () {
+    // release.yml pushes ghcr.io/<owner lower-cased>/easypost[-web]. The owner has upper-case
+    // letters on GitHub, and a template that kept them would send the server pulling an
+    // image that does not exist.
+    preg_match_all('/^EASYPOST(?:_WEB)?_IMAGE=(\S+)$/m', productionFile('.env.production.example'), $matches);
+
+    expect($matches[1])->toHaveCount(2);
+
+    foreach ($matches[1] as $image) {
+        expect($image)->toBe(strtolower($image))
+            ->and($image)->toStartWith('ghcr.io/');
+    }
+
+    expect($matches[1][0].'-web')->toBe($matches[1][1]);
 });
 
 it('trusts exactly the address Caddy is given', function () {
@@ -389,16 +445,51 @@ it('keeps nginx accepting the whole 100 MB multipart body, and reading the clien
         ->and($conf)->not->toContain('set_real_ip_from');
 });
 
-it('lets Caddy pass the same 108 MB body nginx and php accept, so validation answers first', function () {
-    $caddy = productionFile('docker/production/Caddyfile');
+it('streams an upload to php-fpm instead of buffering it in a 64 MB nginx container', function () {
+    // Found by the first rehearsal: with request buffering on, nginx piled the
+    // body up in its own container and was OOM-killed (exit 137) at ~64 MiB, the
+    // size of its mem_limit. A legal 99 MiB upload took the whole web tier down
+    // and every other user's request with it. The body must pass through.
+    $conf = withoutComments(productionFile('docker/nginx/production.conf'));
 
-    preg_match('/max_size\s+(\d+)\s*MB/i', $caddy, $matches);
+    expect($conf)->toMatch('/^\s*fastcgi_request_buffering\s+off;/m');
+});
 
-    expect((int) ($matches[1] ?? 0))->toBeGreaterThanOrEqual(108);
+it('lets Caddy pass the same 108 MiB body nginx and php accept, so validation answers first', function () {
+    $caddy = productionFile('docker/caddy/Caddyfile');
+
+    preg_match('/max_size\s+(\d+)\s*([A-Za-z]+)/', $caddy, $matches);
+    $unit = $matches[2] ?? '';
+
+    // Caddy parses sizes with go-humanize: `MB` is 10^6 bytes and `MiB` is 2^20.
+    // nginx's `108M` and php's `108M` are both MiB. `108MB` here is 108,000,000
+    // bytes, ~5 MB UNDER the other two, so a 105 MiB upload (a legal one, the
+    // cap is 100 MiB per file plus multipart framing) was refused by Caddy with
+    // an opaque 413 before Laravel's own validation could answer. Found by the
+    // first rehearsal; the number alone looked right.
+    $bytes = (int) ($matches[1] ?? 0) * match ($unit) {
+        'MiB' => 1024 * 1024,
+        'MB' => 1000 * 1000,
+        default => 0,
+    };
+
+    expect($unit)->toBe('MiB')
+        ->and($bytes)->toBeGreaterThanOrEqual(108 * 1024 * 1024);
+});
+
+it('lets a rehearsal switch Caddy to its own local CA from the environment, without editing the Caddyfile', function () {
+    $caddy = productionFile('docker/caddy/Caddyfile');
+
+    // The file that is rehearsed must be the file that is deployed, so the only
+    // difference between a rehearsal and production is an environment variable
+    // (`CADDY_GLOBAL_OPTIONS=local_certs`), never a second Caddyfile.
+    expect($caddy)->toContain('{$CADDY_GLOBAL_OPTIONS}')
+        ->and(productionServices()['caddy']['environment']['CADDY_GLOBAL_OPTIONS'])->toStartWith('${CADDY_GLOBAL_OPTIONS:-')
+        ->and(productionFile('.env.production.example'))->not->toContain('local_certs');
 });
 
 it('proxies the app host to nginx and the media host to MinIO objects only', function () {
-    $caddy = productionFile('docker/production/Caddyfile');
+    $caddy = productionFile('docker/caddy/Caddyfile');
 
     expect($caddy)->toContain('{$APP_HOST}')
         ->and($caddy)->toContain('{$MEDIA_HOST}')

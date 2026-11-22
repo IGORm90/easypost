@@ -29,3 +29,9 @@ Thumbs.db
 /docs
 data.txt
 .agents
+# Local rehearsal files (DEPLOY.md, stage 2): hold generated credentials
+/.env.rehearsal
+/backup-stage
+/.current-tag
+/.previous-tag
+/.env.restore

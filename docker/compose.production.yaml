@@ -11,6 +11,9 @@
 #
 # Relative paths are relative to THIS file (docker/), so the server keeps the
 # repository's layout: /opt/easypost/.env is `../.env`, /opt/easypost/docker/...
+# The app containers' env_file defaults to that `../.env` but follows
+# EASYPOST_ENV_FILE, which scripts/lib.sh exports: a rehearsal on a developer's
+# machine would otherwise hand the developer's own .env to the containers.
 name: easypost
 
 # Capped, not switched to another driver, so `docker logs` keeps working.
@@ -24,11 +27,17 @@ x-logging: &default-logging
 # thing php ever sees as its peer (Caddy -> nginx -> php-fpm, and nginx passes
 # the peer address through), so TRUSTED_PROXIES in .env names exactly this
 # address and nothing else; a pinned address is what makes that possible.
+#
+# `ip_range` confines the addresses Docker hands out on its own to the upper
+# half, so Caddy's static .2 can never be taken by whichever container starts
+# first. Without it MinIO (up before Caddy) was given .2 and Caddy failed to
+# start with "Address already in use" (found by the first rehearsal).
 networks:
   default:
     ipam:
       config:
         - subnet: 172.30.77.0/24
+          ip_range: 172.30.77.128/25
 
 services:
   caddy:
@@ -39,8 +48,14 @@ services:
     environment:
       APP_HOST: ${APP_HOST:?set APP_HOST in .env}
       MEDIA_HOST: ${MEDIA_HOST:?set MEDIA_HOST in .env}
+      # Empty in production. A rehearsal sets `local_certs` (see the Caddyfile).
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
     volumes:
-      - ./production/Caddyfile:/etc/caddy/Caddyfile:ro
+      # A DIRECTORY, not the Caddyfile alone: a single-file bind mount follows
+      # the inode, so after a deploy replaced the file Caddy would keep reading
+      # (and `caddy reload` would keep reloading) the old one. Same for the
+      # MinIO init files below.
+      - ./caddy:/etc/caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -85,7 +100,7 @@ services:
   php:
     image: ${EASYPOST_IMAGE:?set EASYPOST_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
     volumes: ["easypost-logs:/var/www/html/storage/logs"]
-    env_file: ../.env
+    env_file: ${EASYPOST_ENV_FILE:-../.env}
     # php-fpm has no HTTP port to probe, so this checks the master process.
     # `-x` matches the process name exactly; `-f` would also match this
     # healthcheck's own shell.
@@ -116,7 +131,7 @@ services:
     command: php artisan horizon
     user: www-data
     volumes: ["easypost-logs:/var/www/html/storage/logs"]
-    env_file: ../.env
+    env_file: ${EASYPOST_ENV_FILE:-../.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,7 +167,7 @@ services:
     command: sh -c "while true; do php artisan schedule:run && touch /tmp/scheduler-heartbeat; sleep 60; done"
     user: www-data
     volumes: ["easypost-logs:/var/www/html/storage/logs"]
-    env_file: ../.env
+    env_file: ${EASYPOST_ENV_FILE:-../.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,7 +196,7 @@ services:
     user: www-data
     environment:
       PULSE_SERVER_NAME: ${PULSE_SERVER_NAME:-easypost}
-    env_file: ../.env
+    env_file: ${EASYPOST_ENV_FILE:-../.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -277,9 +292,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
     volumes:
-      - ./minio/init.sh:/init.sh:ro
-      - ./minio/media-policy.json:/minio-policy/media-policy.json:ro
-    entrypoint: ["/bin/sh", "/init.sh"]
+      - ./minio:/minio-policy:ro
+    entrypoint: ["/bin/sh", "/minio-policy/init.sh"]
     logging: *default-logging
 
 volumes: { pgdata: {}, redisdata: {}, minio: {}, easypost-logs: {}, caddy-data: {}, caddy-config: {} }

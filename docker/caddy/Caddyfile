@@ -7,17 +7,22 @@
 # (docker/compose.production.yaml). Plain HTTP is redirected to HTTPS
 # automatically for every site below.
 #
-# For a rehearsal on a machine with no public DNS, add `tls internal` to both
-# site blocks: Caddy then signs with its own local CA instead of asking
-# Let's Encrypt.
+# A rehearsal on a machine with no public DNS cannot pass Let's Encrypt's
+# challenge. It sets CADDY_GLOBAL_OPTIONS=local_certs in its .env, and Caddy
+# then signs with its own local CA. Production leaves the variable empty. This
+# keeps the rehearsed file and the deployed file one and the same.
+{
+	{$CADDY_GLOBAL_OPTIONS}
+}
 
 {$APP_HOST} {
-	# The same 108 MB that nginx (client_max_body_size) and php.ini
+	# The same 108 MiB that nginx (client_max_body_size) and php.ini
 	# (post_max_size) accept: a 100 MB file plus multipart framing. If Caddy's
 	# ceiling were lower the user would get a bare 413 from the proxy before
-	# Laravel's own validation ever answered.
+	# Laravel's own validation ever answered. MiB, not MB: Caddy reads MB as
+	# 10^6 bytes, which would be ~5 MB under nginx's and php's 108M.
 	request_body {
-		max_size 108MB
+		max_size 108MiB
 	}
 
 	encode zstd gzip

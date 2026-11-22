@@ -40,3 +40,7 @@ docs
 data.txt
 skills-lock.json
 *.md
+backup-stage
+restic.env
+.current-tag
+.previous-tag
