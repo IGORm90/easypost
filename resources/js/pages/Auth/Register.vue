@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { isAxiosError } from 'axios';
@@ -7,9 +7,13 @@ import AuthLayout from '../../layouts/AuthLayout.vue';
 import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
 import { api } from '../../api/client';
+import { useRegistration } from '../../composables/useRegistration';
 
 const { t } = useI18n();
 const router = useRouter();
+const registration = useRegistration();
+
+onMounted(registration.load);
 
 const form = reactive({ name: '', email: '', password: '' });
 const loading = ref(false);
@@ -26,6 +30,10 @@ async function submit(): Promise<void> {
     } catch (e) {
         if (isAxiosError(e) && e.response?.status === 422) {
             errors.value = e.response.data?.errors ?? {};
+        } else if (isAxiosError(e) && e.response?.status === 403) {
+            // The status request said "open" (or failed) but the server has
+            // closed registration: show the same notice instead of a form error.
+            registration.markClosed();
         } else {
             errors.value = { name: [t('validation.generic')] };
         }
@@ -43,7 +51,12 @@ function goToLogin(): void {
     <AuthLayout>
         <h1 class="mb-6 text-2xl font-semibold tracking-tight text-text">{{ t('auth.register.title') }}</h1>
 
-        <div v-if="done" class="flex flex-col gap-4">
+        <div v-if="!registration.open.value" class="flex flex-col gap-4">
+            <p class="text-sm text-muted" role="status" data-test="registration-closed">{{ t('auth.register.closed') }}</p>
+            <Button variant="primary" @click="goToLogin">{{ t('auth.register.loginLink') }}</Button>
+        </div>
+
+        <div v-else-if="done" class="flex flex-col gap-4">
             <p class="text-sm text-success" role="status">{{ t('auth.register.success') }}</p>
             <Button variant="primary" @click="goToLogin">{{ t('auth.register.loginLink') }}</Button>
         </div>

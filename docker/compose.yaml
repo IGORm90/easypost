@@ -89,11 +89,12 @@ services:
     # a post gets published twice. Must exceed the slowest supervisor timeout
     # (90s in config/horizon.php); ComposeServicesTest checks it.
     stop_grace_period: 180s
-    # Sized for the workers, not copied from a plan: 15 workers idle at about
-    # 730 MiB and each may grow to horizon.memory_limit (64 MB) before it is
-    # restarted. Raising a supervisor's process count means raising this;
+    # Sized for the workers, not copied from a plan: 4 workers (2 publish,
+    # 1 default, 1 mail, see HorizonWorkersTest) plus the master, each worker
+    # allowed to grow to horizon.memory_limit (64 MB) before it is restarted.
+    # Raising a supervisor's process count means raising this;
     # ComposeServicesTest fails if it no longer covers every worker.
-    mem_limit: 1280m
+    mem_limit: 512m
     restart: unless-stopped
   scheduler:
     build: ./php

@@ -98,6 +98,11 @@ class SocialAccountService
             return $existingUser;
         }
 
+        // A first-time social login is a registration like any other, so the
+        // same switch closes it. Existing users were handled above, and a
+        // returning provider identity never reaches resolveUser() at all.
+        abort_unless(config('auth.registration_enabled'), 403, 'Registration is closed.');
+
         // Already running inside findOrCreateUser()'s outer transaction
         // (which also covers the social_accounts insert), so this doesn't
         // open one of its own.

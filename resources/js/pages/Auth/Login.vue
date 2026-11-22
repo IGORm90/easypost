@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { isAxiosError } from 'axios';
@@ -8,11 +8,15 @@ import Input from '../../components/ui/Input.vue';
 import Button from '../../components/ui/Button.vue';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/auth';
+import { useRegistration } from '../../composables/useRegistration';
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
+const registration = useRegistration();
+
+onMounted(registration.load);
 
 const form = reactive({ email: '', password: '' });
 const loading = ref(false);
@@ -76,7 +80,7 @@ async function continueWithGoogle(): Promise<void> {
              Google button first, then "or with email" and the form. -->
         <div class="mb-6 flex flex-col gap-1.5">
             <h1 class="text-[28px] font-semibold leading-tight tracking-tight text-text">{{ t('auth.login.title') }}</h1>
-            <p class="text-sm text-muted">
+            <p v-if="registration.open.value" data-test="register-prompt" class="text-sm text-muted">
                 {{ t('auth.login.noAccount') }}
                 <router-link :to="{ name: 'register' }" class="font-semibold text-primary hover:underline">
                     {{ t('auth.login.registerLink') }}

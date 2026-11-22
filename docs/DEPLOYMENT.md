@@ -62,7 +62,7 @@ rotation (`10m` x 3). `ComposeServicesTest` asserts all of it from
 | --- | --- | --- |
 | nginx | `GET /up` through nginx, FastCGI and a booted Laravel | 64m |
 | php | the `php-fpm` master process exists | 512m |
-| horizon | `horizon:status` exits 0 (1 = paused, 2 = no master) | 1280m |
+| horizon | `horizon:status` exits 0 (1 = paused, 2 = no master) | 512m |
 | scheduler | `/tmp/scheduler-heartbeat` touched in the last 3 min | 128m |
 | pulse | a `pulse:check` process exists | 128m |
 | postgres | `pg_isready` | 512m |
@@ -70,12 +70,16 @@ rotation (`10m` x 3). `ComposeServicesTest` asserts all of it from
 | minio | `/minio/health/live` | 384m |
 | mailpit | `/mailpit readyz` | 64m |
 
-The limits add up to about **3.3 GB**, not the ~2.7 GB an earlier plan
-assumed, because that plan sized Horizon for 6-7 workers and this stack runs 15
-(10 publish, 3 default, 2 mail; ~730 MiB idle). On a 4 GB host that leaves
-little for the OS. The lever is `config/horizon.php`'s process counts; when you
+The limits add up to about **2.4 GB** for the dev stack. Horizon runs 4
+workers (2 publish, 1 default, 1 mail), sized for the 4 GB production VPS
+(DEPLOY.md, "Бюджет памяти"); an earlier revision ran 15 (10/3/2, ~730 MiB idle)
+and its limits summed to about 3.3 GB, which leaves a 4 GB host nothing for the
+OS and invites an OOM kill of a worker mid-publish. The lever is
+`config/horizon.php`'s process counts, pinned by `HorizonWorkersTest`; when you
 change them, change `horizon`'s `mem_limit` too (workers x
-`horizon.memory_limit`, and `ComposeServicesTest` fails if you forget).
+`horizon.memory_limit`, and `ComposeServicesTest` fails if you forget). With
+only two publish workers a burst of simultaneously-due posts is published two at
+a time: late, never lost (Postgres is the durable record).
 `php` at 512m is enough for web workers, but two simultaneous large media
 uploads can reach it, and then Docker kills the whole container, not one
 request.

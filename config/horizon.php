@@ -17,8 +17,9 @@ use Illuminate\Support\Str;
  *  - `publish`  — PublishPostJob only (config/... routed via the job's
  *    own `public $queue`, not `->onQueue()` at any dispatch call site —
  *    see that class). The single highest-value queue in the product: a
- *    post going out late is a customer-visible miss. Ten dedicated
- *    worker processes, ALWAYS running — `balance: off` below, not
+ *    post going out late is a customer-visible miss. Two dedicated
+ *    worker processes (sized for the 4 GB production host, see
+ *    DEPLOY.md and HorizonWorkersTest), ALWAYS running — `balance: off` below, not
  *    `auto` — never shared with `default`/`mail` — that dedicated,
  *    standing capacity IS how "prioritised" is implemented here, not a
  *    blocking queue-list order on a shared supervisor. A shared list
@@ -30,7 +31,7 @@ use Illuminate\Support\Str;
  *    Post-review correction: an earlier revision used `balance: 'auto'`
  *    here while the prose still claimed "always running" — a reviewer
  *    counted live processes in the running container and found exactly
- *    one per queue, not 10/3/2. `auto` starts every supervisor at
+ *    one per queue, not the configured count. `auto` starts every supervisor at
  *    `minProcesses` (unset, so 1) and shifts at most one process every
  *    `balanceCooldown` seconds (default 3) toward `maxProcesses` under
  *    load — `maxProcesses` is a ceiling `auto` grows toward, not a
@@ -56,7 +57,7 @@ use Illuminate\Support\Str;
  *    size can only push it up to the same ceiling, never down), so
  *    `min($maxProcesses, $maxProcesses)` is the standing count
  *    regardless of load. Re-verified against the restarted container
- *    after adding `minProcesses`: exactly 10/3/2 processes, immediately,
+ *    after adding `minProcesses`: exactly the configured counts, immediately,
  *    not after any warm-up window and not dropping at idle.
  *  - `default`  — everything else that has no reason to be elsewhere:
  *    RefreshIntegrationTokenJob (enumeration, not the failure path),
@@ -68,7 +69,7 @@ use Illuminate\Support\Str;
  *    `public $queue = 'mail'`). NOT `WeeklyDigestMail`: that Mailable
  *    deliberately does not implement ShouldQueue at all (see its own
  *    docblock) — it sends synchronously from inside SendDigestEmailJob,
- *    which is already the queue boundary. Two workers is deliberately
+ *    which is already the queue boundary. One worker is deliberately
  *    modest: mail volume in this product is per-user-event (a broken
  *    integration, a failed post, a signup, a password reset), not a
  *    bulk broadcast list.
@@ -101,16 +102,16 @@ return [
     'middleware' => ['web'],
 
     /*
-    | `publish` gets the tightest threshold: ten dedicated workers,
+    | `publish` gets the tightest threshold: its dedicated workers,
     | standing (`balance: off` below — see that supervisor's docblock),
     | with nothing else competing for them, means a wait past 30s
     | already signals real trouble (a stuck job, an under-provisioned
     | host), not ordinary queueing behind other work — and not ramp-up
-    | either, since there is none: all ten are running before the first
+    | either, since there is none: all of them are running before the first
     | job of a burst is even picked up. This threshold would be WRONG
     | under `balance: auto` (it would fire on every burst above one
     | job while workers were still scaling up) — it is only correct
-    | because `off` makes "ten workers" a standing fact, not a ceiling.
+    | because `off` makes the worker count a standing fact, not a ceiling.
     | `default`/`mail` keep the package's own defaults' order of
     | magnitude.
     */
@@ -202,8 +203,8 @@ return [
                 // required for a genuinely standing count, not `off`
                 // alone.
                 'balance' => 'off',
-                'minProcesses' => 10,
-                'maxProcesses' => 10,
+                'minProcesses' => 2,
+                'maxProcesses' => 2,
                 'tries' => 1,
                 'timeout' => 90,
             ],
@@ -212,8 +213,8 @@ return [
                 'connection' => 'redis',
                 'queue' => ['default'],
                 'balance' => 'off',
-                'minProcesses' => 3,
-                'maxProcesses' => 3,
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
                 'tries' => 1,
                 'timeout' => 60,
             ],
@@ -222,8 +223,8 @@ return [
                 'connection' => 'redis',
                 'queue' => ['mail'],
                 'balance' => 'off',
-                'minProcesses' => 2,
-                'maxProcesses' => 2,
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
                 'tries' => 1,
                 'timeout' => 60,
             ],

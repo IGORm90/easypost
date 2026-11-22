@@ -55,7 +55,8 @@
       "submit": "Create account",
       "haveAccount": "Already have an account?",
       "loginLink": "Sign in",
-      "success": "Account created. Check your inbox to verify your email."
+      "success": "Account created. Check your inbox to verify your email.",
+      "closed": "Registration is closed right now. Sign in if you already have an account."
     },
     "forgot": {
       "title": "Reset your password",

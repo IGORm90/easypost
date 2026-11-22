@@ -15,7 +15,8 @@
         "laravel/tinker": "^3.0",
         "league/flysystem-aws-s3-v3": "^3.35",
         "opcodesio/log-viewer": "^3.24",
-        "predis/predis": "^3.5"
+        "predis/predis": "^3.5",
+        "resend/resend-php": "^1.19"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

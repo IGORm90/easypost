@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "38859468cbb5bbfb89530096e291bf8c",
+    "content-hash": "d70a4b302ab9f20cec9e93130d737d1c",
     "packages": [
         {
             "name": "aws/aws-crt-php",
@@ -580,8 +580,7 @@
                 "issues": "https://github.com/doctrine/sql-formatter/issues",
                 "source": "https://github.com/doctrine/sql-formatter/tree/1.5.4"
             },
-            "time": "2026-02-08T16:21:46+00:00",
-            "published-time": "2026-02-08T16:22:50+00:00"
+            "time": "2026-02-08T16:21:46+00:00"
         },
         {
             "name": "dragonmantank/cron-expression",
@@ -1783,8 +1782,7 @@
                 "issues": "https://github.com/laravel/pulse/issues",
                 "source": "https://github.com/laravel/pulse"
             },
-            "time": "2026-08-20T10:00:14+00:00",
-            "published-time": "2026-08-25T14:39:53+00:00"
+            "time": "2026-08-20T10:00:14+00:00"
         },
         {
             "name": "laravel/sanctum",
@@ -2871,8 +2869,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-10-21T12:53:46+00:00",
-            "published-time": "2026-10-21T14:02:22+00:00"
+            "time": "2026-10-21T12:53:46+00:00"
         },
         {
             "name": "monolog/monolog",
@@ -3536,8 +3533,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-06-11T13:41:17+00:00",
-            "published-time": "2026-06-11T13:44:08+00:00"
+            "time": "2026-06-11T13:41:17+00:00"
         },
         {
             "name": "opcodesio/mail-parser",
@@ -3590,8 +3586,7 @@
                 "issues": "https://github.com/opcodesio/mail-parser/issues",
                 "source": "https://github.com/opcodesio/mail-parser/tree/v0.2.4"
             },
-            "time": "2026-06-11T08:50:37+00:00",
-            "published-time": "2026-06-11T08:52:21+00:00"
+            "time": "2026-06-11T08:50:37+00:00"
         },
         {
             "name": "paragonie/constant_time_encoding",
@@ -4648,6 +4643,65 @@
                 "source": "https://github.com/ramsey/uuid/tree/4.9.3"
             },
             "time": "2026-06-18T03:57:49+00:00"
+        },
+        {
+            "name": "resend/resend-php",
+            "version": "v1.19.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/resend/resend-php.git",
+                "reference": "dcdb98f3dca2f2adb084924d3e9515edf7bff106"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/resend/resend-php/zipball/dcdb98f3dca2f2adb084924d3e9515edf7bff106",
+                "reference": "dcdb98f3dca2f2adb084924d3e9515edf7bff106",
+                "shasum": ""
+            },
+            "require": {
+                "guzzlehttp/guzzle": "^7.8.2 || ^8.0",
+                "guzzlehttp/psr7": "^2.6.3 || ^3.0",
+                "php": "^8.1.0",
+                "psr/http-client": "^1.0"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "^3.13",
+                "mockery/mockery": "^1.6",
+                "pestphp/pest": "^1.0|^2.0|^3.0|^4.0|^5.0"
+            },
+            "type": "library",
+            "autoload": {
+                "files": [
+                    "src/Resend.php"
+                ],
+                "psr-4": {
+                    "Resend\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Resend and contributors",
+                    "homepage": "https://github.com/resend/resend-php/contributors"
+                }
+            ],
+            "description": "Resend PHP library.",
+            "homepage": "https://resend.com/",
+            "keywords": [
+                "api",
+                "client",
+                "php",
+                "resend",
+                "sdk"
+            ],
+            "support": {
+                "issues": "https://github.com/resend/resend-php/issues",
+                "source": "https://github.com/resend/resend-php/tree/v1.19.0"
+            },
+            "time": "2026-11-20T01:37:05+00:00"
         },
         {
             "name": "symfony/clock",
@@ -11118,8 +11172,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-10-18T14:39:27+00:00",
-            "published-time": "2026-10-28T18:20:33+00:00"
+            "time": "2026-10-18T14:39:27+00:00"
         },
         {
             "name": "ta-tikoma/phpunit-architecture-test",
@@ -11309,5 +11362,5 @@
     "platform-overrides": {
         "php": "8.3.0"
     },
-    "plugin-api-version": "2.11.0"
+    "plugin-api-version": "2.9.0"
 }

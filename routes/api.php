@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\Route;
 // regardless of the caller's Referer/Origin, which this file's
 // statefulApi()-gated 'api' group cannot guarantee.
 Route::prefix('auth')->group(function () {
+    Route::get('registration', [AuthController::class, 'registration']);
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
 

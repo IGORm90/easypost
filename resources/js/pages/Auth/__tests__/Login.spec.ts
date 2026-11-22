@@ -84,8 +84,36 @@ it('prevents duplicate Google authorization requests while the redirect URL is l
 
     expect((button.element as HTMLButtonElement).disabled).toBe(true);
     await button.trigger('click');
-    expect(get).toHaveBeenCalledTimes(1);
+    // Counted by URL: mounting the page also asks /auth/registration once.
+    expect(get.mock.calls.filter(([url]) => url === '/auth/oauth/google/redirect')).toHaveLength(1);
 
     rejectRequest(new Error('network unavailable'));
     await flushPromises();
+});
+
+// Registration can be closed on the server (REGISTRATION_ENABLED=false). The
+// login screen then must not advertise a door that answers 403.
+it('offers the register link while registration is open', async () => {
+    get.mockResolvedValue({ data: { enabled: true } });
+    const wrapper = mountLogin();
+    await flushPromises();
+
+    expect(get).toHaveBeenCalledWith('/auth/registration');
+    expect(wrapper.find('[data-test="register-prompt"]').exists()).toBe(true);
+});
+
+it('hides the register link once the API says registration is closed', async () => {
+    get.mockResolvedValue({ data: { enabled: false } });
+    const wrapper = mountLogin();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="register-prompt"]').exists()).toBe(false);
+});
+
+it('keeps the register link when the status cannot be loaded; the server still refuses', async () => {
+    get.mockRejectedValue(new Error('network'));
+    const wrapper = mountLogin();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="register-prompt"]').exists()).toBe(true);
 });

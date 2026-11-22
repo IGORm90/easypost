@@ -16,9 +16,15 @@ use Illuminate\Validation\Rules\Password;
  */
 class RegisterRequest extends FormRequest
 {
+    /**
+     * Registration can be switched off (REGISTRATION_ENABLED=false). It lives in
+     * authorize(), which FormRequest runs before validation, so a closed door
+     * answers the same 403 whether or not the email is already taken instead of
+     * leaking that through a 422.
+     */
     public function authorize(): bool
     {
-        return true;
+        return (bool) config('auth.registration_enabled');
     }
 
     /**

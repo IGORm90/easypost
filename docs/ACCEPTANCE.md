@@ -457,6 +457,25 @@ pass should exercise them by hand.
   one thing that proves the whole loop closes — an occurrence publishing
   and creating the next one, twice in a row, unattended — is §10a.
 
+- **Closed registration, behind the real proxy.** `RegistrationClosedTest`
+  proves `REGISTRATION_ENABLED=false` refuses the password form and a
+  first-time social login, and that existing users still sign in. It cannot
+  prove the production `.env` actually sets it, nor that the SPA screens show
+  the notice in a browser. Backend-built, minimal UI: with it closed an
+  `Invite` cannot bring in a NEW person, because accepting one needs an
+  existing account (`InviteService::accept`); do not count invite-only
+  onboarding as a feature until registration-with-an-invite exists.
+- **`TRUSTED_PROXIES` behind Caddy.** `TrustedProxiesTest` runs the framework
+  middleware over hand-built requests. Whether production's Caddy subnet is
+  the one in `.env`, and so whether `request()->ip()` and `isSecure()` are
+  right behind the real Caddy -> nginx -> php-fpm chain, is a smoke check on
+  the server (DEPLOY.md, stage 7), not a CI fact.
+- **Real mail through Resend.** `ResendMailerTest` proves the mailer builds
+  (the package is installed). It never sends: a deliverable verification mail
+  needs a real key, a verified sending domain and SPF/DKIM (DEPLOY.md, stage 5).
+- **`user:superadmin`.** Covered by `GrantSuperadminCommandTest`; the first
+  operator on a real install still has to run it by hand once.
+
 - **`MvpFlowTest` is not end to end**, and its own docblock says so: it
   runs against the `fake` provider with `Queue::fake()`, so it proves the
   application's own wiring, never a real provider call or a real worker.

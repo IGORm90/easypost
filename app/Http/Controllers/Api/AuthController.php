@@ -48,6 +48,16 @@ class AuthController extends Controller
         ], Response::HTTP_CREATED);
     }
 
+    /**
+     * Public, so the guest-only login/register screens know whether to offer
+     * "Create an account" before the visitor fills in a form that would be
+     * refused.
+     */
+    public function registration(): JsonResponse
+    {
+        return response()->json(['enabled' => (bool) config('auth.registration_enabled')]);
+    }
+
     public function login(LoginRequest $request): JsonResponse
     {
         $user = $this->auth->attemptLogin(

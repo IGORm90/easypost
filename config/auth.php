@@ -114,4 +114,22 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Registration
+    |--------------------------------------------------------------------------
+    |
+    | Whether anyone may create a NEW account: the password form and a first-time
+    | social login both honour it. Open by default so local development works;
+    | production sets REGISTRATION_ENABLED=false (DEPLOY.md) so the operator
+    | makes the first account and nobody else can until it is opened on purpose.
+    | Existing accounts are unaffected. Pinned by RegistrationClosedTest.
+    |
+    | Note an Invite cannot be accepted without an existing account, so closing
+    | registration also closes the invite path for new people.
+    |
+    */
+
+    'registration_enabled' => (bool) env('REGISTRATION_ENABLED', true),
+
 ];
