@@ -51,6 +51,27 @@ This logs in as `demo@easypost.test` / `demo12345`. It's safe to re-run — it
 rebuilds the same organization's content from scratch each time rather than
 accumulating duplicates.
 
+## Monitoring
+
+Three dashboards ship inside the app. They are for platform admins only
+(`user:superadmin`): anonymous visitors and ordinary users get a 403. The demo
+user is not a superadmin, so create one with `php artisan user:superadmin`.
+
+| Dashboard | Local URL | Shows |
+| --- | --- | --- |
+| Horizon | `http://localhost:8080/horizon` | queues, workers, failed jobs (4 workers: publish ×2, default, mail) |
+| Pulse | `http://localhost:8080/pulse` | servers, publishing per provider, slow requests and jobs, exceptions |
+| Log Viewer | `http://localhost:8080/log-viewer` | Laravel logs |
+
+In production the same paths live under `https://app.<domain>/`. The Horizon
+and Pulse paths can be changed with `HORIZON_PATH` and `PULSE_PATH`.
+
+Dev-only tools: Mailpit at `http://localhost:8025` (outbound mail) and the
+MinIO console at `http://localhost:9001` (media storage).
+
+`/up` is the health-check endpoint, meant for an external uptime monitor.
+Grafana/Loki/Sentry are not part of the stack.
+
 ## Environment variables
 
 All variables live in `.env` (copied from `.env.example`). Grouped by
