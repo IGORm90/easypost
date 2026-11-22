@@ -1,0 +1,49 @@
+# TLS terminator and the only thing that listens on the host (80/443).
+# Caddy gets and renews the certificates itself (Let's Encrypt, HTTP-01), which
+# is why it must be reachable on 80 as well as 443 and why caddy-data is a
+# named volume: losing it means re-issuing, and Let's Encrypt rate-limits that.
+#
+# APP_HOST and MEDIA_HOST come from the container environment
+# (docker/compose.production.yaml). Plain HTTP is redirected to HTTPS
+# automatically for every site below.
+#
+# For a rehearsal on a machine with no public DNS, add `tls internal` to both
+# site blocks: Caddy then signs with its own local CA instead of asking
+# Let's Encrypt.
+
+{$APP_HOST} {
+	# The same 108 MB that nginx (client_max_body_size) and php.ini
+	# (post_max_size) accept: a 100 MB file plus multipart framing. If Caddy's
+	# ceiling were lower the user would get a bare 413 from the proxy before
+	# Laravel's own validation ever answered.
+	request_body {
+		max_size 108MB
+	}
+
+	encode zstd gzip
+
+	# nginx sits on the Compose network only; this is the sole way in.
+	reverse_proxy nginx:80
+}
+
+{$MEDIA_HOST} {
+	# Uploaded media is public by URL (docs/DEPLOYMENT.md), and that is ALL this
+	# host serves: a read of a single object of the `media` bucket. A path
+	# ending in `/` is a bucket or prefix listing, which MinIO's anonymous
+	# policy (docker/minio/media-policy.json) already refuses; it is excluded
+	# here too, so the refusal does not depend on a policy file staying intact.
+	# The MinIO console (9001), the admin API and every write method never get
+	# past this matcher.
+	@object {
+		method GET HEAD
+		path_regexp ^/media/.+[^/]$
+	}
+
+	handle @object {
+		reverse_proxy minio:9000
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}

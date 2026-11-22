@@ -1,0 +1,285 @@
+# Production stack for ONE host (DEPLOY.md). Not a variation of compose.yaml:
+# that file is the development stack (Vite dev server, Mailpit, the repository
+# bind-mounted, every port published, literal passwords), and layering one over
+# the other would let a dev default leak into production through an
+# un-overridden key. This file shares nothing with it.
+#
+# Run it only through scripts/lib.sh's `dc`, which fixes the project name,
+# points --env-file at the server's .env and exports EASYPOST_TAG from
+# .current-tag. Required variables use `${VAR:?...}` so a missing one stops
+# `compose up` with a message instead of starting a service with a blank value.
+#
+# Relative paths are relative to THIS file (docker/), so the server keeps the
+# repository's layout: /opt/easypost/.env is `../.env`, /opt/easypost/docker/...
+name: easypost
+
+# Capped, not switched to another driver, so `docker logs` keeps working.
+# Without a cap the json-file driver grows without limit once all application
+# logs go to stdout. ProductionArtifactsTest asserts every service uses it.
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# One fixed network, and a fixed address for Caddy on it. Caddy is the only
+# thing php ever sees as its peer (Caddy -> nginx -> php-fpm, and nginx passes
+# the peer address through), so TRUSTED_PROXIES in .env names exactly this
+# address and nothing else; a pinned address is what makes that possible.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    # The only published ports on the host. 80 stays open for the HTTP-01
+    # challenge and the redirect to HTTPS.
+    ports: ["80:80", "443:443"]
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST in .env}
+      MEDIA_HOST: ${MEDIA_HOST:?set MEDIA_HOST in .env}
+    volumes:
+      - ./production/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default:
+        ipv4_address: 172.30.77.2
+    depends_on:
+      nginx:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Caddy's admin endpoint answers on loopback while the configuration is
+    # loaded; it is not reachable from outside the container.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 64m
+    restart: unless-stopped
+    logging: *default-logging
+
+  nginx:
+    # Carries the same public/ tree as the app image: same ${EASYPOST_TAG}.
+    image: ${EASYPOST_WEB_IMAGE:?set EASYPOST_WEB_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
+    depends_on:
+      php:
+        condition: service_healthy
+    # `/up` goes through nginx, FastCGI and a booted Laravel, so it proves the
+    # whole web path, not only that nginx is listening. docker/nginx keeps it
+    # out of the access log, so probing it every 30s costs nothing.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1/up || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 64m
+    restart: unless-stopped
+    logging: *default-logging
+
+  php:
+    image: ${EASYPOST_IMAGE:?set EASYPOST_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
+    volumes: ["easypost-logs:/var/www/html/storage/logs"]
+    env_file: ../.env
+    # php-fpm has no HTTP port to probe, so this checks the master process.
+    # `-x` matches the process name exactly; `-f` would also match this
+    # healthcheck's own shell.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x php-fpm > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Four fpm workers (docker/production/php-fpm.conf) fit in 512m. Past it
+    # Docker kills the whole container, not one request.
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+    # `minio-init` is a "service_completed_successfully" dependency, not merely
+    # a start-order one: an app that starts before the `media` bucket exists
+    # fails every upload from the very first request.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  horizon:
+    image: ${EASYPOST_IMAGE:?set EASYPOST_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
+    command: php artisan horizon
+    user: www-data
+    volumes: ["easypost-logs:/var/www/html/storage/logs"]
+    env_file: ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # Exit 0 only while Horizon runs: 1 when it is paused, 2 when no master
+    # supervisor exists. A hung or crashed horizon otherwise stays "Up" while
+    # nothing publishes.
+    healthcheck:
+      test: ["CMD-SHELL", "php artisan horizon:status > /dev/null"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    # Horizon finishes the jobs it is running before it exits. Docker's default
+    # of 10s would cut a publish mid-flight, and an interrupted publish is how a
+    # post gets published twice. Must exceed the slowest supervisor timeout
+    # (90s in config/horizon.php); ProductionArtifactsTest checks it.
+    stop_grace_period: 180s
+    # 4 workers (2 publish, 1 default, 1 mail) plus the master, each worker
+    # allowed to grow to horizon.memory_limit (64 MB) before it is restarted.
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+  scheduler:
+    image: ${EASYPOST_IMAGE:?set EASYPOST_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
+    # The heartbeat file is touched only after a run that exited 0, so it goes
+    # stale both when the loop dies and when schedule:run keeps failing or hangs
+    # (which a plain "is the process alive" check would call healthy).
+    command: sh -c "while true; do php artisan schedule:run && touch /tmp/scheduler-heartbeat; sleep 60; done"
+    user: www-data
+    volumes: ["easypost-logs:/var/www/html/storage/logs"]
+    env_file: ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    # Three minutes is three missed ticks. start_period covers the first run.
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$$(find /tmp/scheduler-heartbeat -mmin -3 2>/dev/null)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Samples this host's CPU, memory and disk for Pulse's Servers card. It is the
+  # only process that does. PULSE_SERVER_NAME is pinned because the default is
+  # the container hostname, which changes on every recreate and would leave a
+  # stale server on the card each time.
+  pulse:
+    image: ${EASYPOST_IMAGE:?set EASYPOST_IMAGE in .env}:${EASYPOST_TAG:?run through scripts/lib.sh}
+    command: php artisan pulse:check
+    user: www-data
+    environment:
+      PULSE_SERVER_NAME: ${PULSE_SERVER_NAME:-easypost}
+    env_file: ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # `pulse[:]check`, not `pulse:check`: pgrep -f matches full command lines,
+    # and this healthcheck runs as `sh -c "<this line>"`, whose own command line
+    # would match an unescaped pattern and report healthy forever.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'pulse[:]check' > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *default-logging
+
+  postgres:
+    image: postgres:17-alpine
+    # No `ports`: only containers on this network can reach the database.
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:?set DB_DATABASE in .env}
+      POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    # `noeviction`: when memory runs out Redis refuses writes instead of
+    # silently dropping queued jobs (allkeys-lru would evict them), and a
+    # refused write is a loud error, a dropped job is not. `--appendonly yes`
+    # plus the volume is what lets the queue survive a container recreate.
+    # 200mb sits under the 256m container cap so Redis refuses writes before
+    # Docker kills it.
+    command: ["redis-server", "--maxmemory", "200mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    restart: unless-stopped
+    logging: *default-logging
+
+  minio:
+    # The frozen Bitnami legacy build, same as development: minio/minio and
+    # minio/mc are gone from Docker Hub. Its entrypoint runs `minio server` on
+    # 9000 (API) and 9001 (console), reads MINIO_ROOT_USER/PASSWORD, and keeps
+    # data in /bitnami/minio/data. Neither port is published: the API is reached
+    # through Caddy on the media host and the console is not reachable at all.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r3
+    # A fresh named volume is root-owned but the image runs as uid 1001, which
+    # fails with "Permission denied". Root lets the Bitnami scripts chown the
+    # data directory themselves.
+    user: "0"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes: ["minio:/bitnami/minio/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 384m
+    restart: unless-stopped
+    logging: *default-logging
+
+  # One-shot: creates the `media` bucket and applies the GET-only anonymous
+  # policy (docker/minio/media-policy.json), then exits 0. php, horizon and
+  # scheduler wait for it. `--ignore-existing` makes it idempotent across
+  # restarts with an already-populated volume. The policy grants ONLY
+  # s3:GetObject on media/*, never the coarser `mc anonymous set download`,
+  # which also grants an unauthenticated listing of every organization's media.
+  minio-init:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r3
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - ./minio/init.sh:/init.sh:ro
+      - ./minio/media-policy.json:/minio-policy/media-policy.json:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+    logging: *default-logging
+
+volumes: { pgdata: {}, redisdata: {}, minio: {}, easypost-logs: {}, caddy-data: {}, caddy-config: {} }

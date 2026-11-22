@@ -1,0 +1,42 @@
+# Build context for docker/production/Dockerfile. Anything listed here can never
+# end up in an image layer, which is the point: a layer is forever, and a
+# credential or a Vite hot file baked into one cannot be taken back.
+
+# Environment and credentials: the server's .env is mounted at runtime, never copied
+.env
+.env.*
+auth.json
+
+# VCS history and CI
+.git
+.github
+
+# Rebuilt inside the image (vendor and public/build come from their own stages)
+node_modules
+vendor
+public/build
+
+# Vite dev-server marker: with it present Laravel points @vite at localhost:5173
+public/hot
+
+# Runtime state and local artefacts
+storage/logs
+storage/framework
+storage/pail
+bootstrap/cache/*.php
+*.log
+.phpunit.cache
+.phpunit.result.cache
+
+# Not part of a running application
+tests
+docs
+.claude
+.codex
+.cursor
+.idea
+.vscode
+.superpowers
+data.txt
+skills-lock.json
+*.md
