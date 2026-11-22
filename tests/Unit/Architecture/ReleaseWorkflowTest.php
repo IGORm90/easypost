@@ -41,6 +41,20 @@ function releaseWorkflow(): array
     return $workflow;
 }
 
+/**
+ * What may start a workflow file. `on` is read as the string key it is: the YAML
+ * parser here follows YAML 1.2, where only true/false are booleans.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function workflowTriggers(string $file): array
+{
+    /** @var array<string, array<string, array<string, mixed>>> $workflow */
+    $workflow = Yaml::parseFile(workflowPath($file));
+
+    return $workflow['on'];
+}
+
 /** @return array<string, mixed> */
 function releaseJob(string $name): array
 {
@@ -68,9 +82,7 @@ function releaseStepNames(string $job): array
 // ---------------------------------------------------------------- triggers
 
 it('runs on a push to main and on a manual dispatch, and never on a pull request', function () {
-    $workflow = releaseWorkflow();
-    // `on` is a YAML 1.1 boolean to some parsers.
-    $triggers = $workflow['on'] ?? $workflow[true];
+    $triggers = workflowTriggers('release.yml');
 
     expect(array_keys($triggers))->toEqualCanonicalizing(['push', 'workflow_dispatch'])
         ->and($triggers['push']['branches'])->toBe(['main'])
@@ -187,10 +199,7 @@ it('deploys only a commit that is on main and that the CI workflow passed', func
         ->and($text)->toContain('--status success');
 
     // ...and that workflow exists and runs for pushes to main, otherwise the check would wait for ever.
-    $ci = Yaml::parseFile(workflowPath('ci.yml'));
-    $triggers = $ci['on'] ?? $ci[true];
-
-    expect($triggers['push']['branches'])->toBe(['main']);
+    expect(workflowTriggers('ci.yml')['push']['branches'])->toBe(['main']);
 });
 
 it('never puts a secret or user input into a shell script, only into the environment', function () {
@@ -246,17 +255,11 @@ it('ships exactly the host-mounted files the production stack reads, taken from 
 
     foreach (array_unique([...$mounted, 'docker/compose.production.yaml', 'scripts']) as $path) {
         expect($script)->toContain($path)
-            ->and(dirname(__DIR__, 3).'/'.$path)->toBeReadableAny();
+            ->and(file_exists(dirname(__DIR__, 3).'/'.$path))->toBeTrue("{$path} is shipped to the server but is not in the repository");
     }
 
     // The checkout is of the commit being deployed, not of whatever main is now.
     $checkout = collect(releaseSteps('deploy'))->first(fn (array $step) => str_starts_with((string) ($step['uses'] ?? ''), 'actions/checkout@'));
     expect($checkout['with']['ref'])->toBe('${{ env.SHA }}')
         ->and($checkout['with']['fetch-depth'])->toBe(0);
-});
-
-expect()->extend('toBeReadableAny', function () {
-    expect(file_exists($this->value))->toBeTrue("{$this->value} does not exist");
-
-    return $this;
 });

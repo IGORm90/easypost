@@ -1,0 +1,193 @@
+name: Release
+
+# Two independent things happen here, on two different triggers:
+#
+#   push to main        -> `images`: build the app and web images and push them to GHCR,
+#                          tagged with the commit SHA. Nothing is deployed.
+#   manual dispatch     -> `deploy`: ship one commit to the production host over SSH.
+#
+# Building on every push and deploying only on a click is deliberate (DEPLOY.md,
+# "Принятые решения"): without a staging environment a broken commit must not reach
+# production by merely being merged. Auto-deploy can come later, after several manual
+# releases, by adding `workflow_run` here. tests/Unit/Architecture/ReleaseWorkflowTest.php
+# pins what follows.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character commit SHA to deploy (default - the commit this workflow is run on)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # GHCR refuses upper case in an image name and this owner has some, so
+      # `ghcr.io/${{ github.repository }}` would be an invalid reference.
+      - name: Name the images
+        id: names
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runner is amd64, like the VPS. An image built on a developer's Mac is arm64
+      # and would not start on the server. The `app` and `web` targets share every stage
+      # up to `app`, so the second build is served from the cache of the first.
+      - name: Build and push the app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/production/Dockerfile
+          target: app
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ steps.names.outputs.repo }}:${{ github.sha }}
+          # Links the package to this repository, which is what lets this repository's
+          # own workflow token read it back (the deploy job lends it to the server).
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+
+      - name: Build and push the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/production/Dockerfile
+          target: web
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ steps.names.outputs.repo }}-web:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Required reviewers on this environment make a deploy wait for a human (where the
+    # plan allows it), and the SSH secrets below live on the environment, so no other job
+    # can read them.
+    environment: production
+    # Never two at once, and never cancelled half way: cancelling in the middle of a
+    # migration is how a database is left between two versions.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    # Everything user-controlled or secret reaches the shell as an environment variable,
+    # never as `${{ }}` pasted into a script: that is expanded before the shell runs, so
+    # a secret would sit in the script text and a crafted `sha` input would be executed.
+    env:
+      SHA: ${{ inputs.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Validate the SHA
+        run: |
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "not a full commit SHA: $SHA" >&2
+            exit 1
+          fi
+
+      # The commit being deployed, not whatever main is by now, and the whole history,
+      # so the next step can ask whether it is on main.
+      - name: Check out the commit being deployed
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      # Run from a branch, "deploy this SHA" would otherwise accept a commit from an
+      # unmerged pull request.
+      - name: Require the SHA to be on main
+        run: |
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "$SHA is not on main; refusing to deploy it" >&2
+            exit 1
+          fi
+
+      - name: Require a green CI run for the SHA
+        run: |
+          passed="$(gh run list --workflow ci.yml --commit "$SHA" --status success --json conclusion --jq length)"
+          if [ "${passed:-0}" -lt 1 ]; then
+            echo "ci.yml has no successful run for $SHA; refusing to deploy it" >&2
+            exit 1
+          fi
+
+      # The server's host key is a secret recorded once, from the server itself
+      # (`ssh-keyscan` run by hand and pasted into DEPLOY_KNOWN_HOSTS), and is checked
+      # strictly here: this key can run commands as the deploy user.
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CONFIG
+          Host production
+            HostName ${DEPLOY_HOST}
+            User ${DEPLOY_USER}
+            IdentityFile ~/.ssh/id_ed25519
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+          CONFIG
+
+      # This run's token reads the package (it is linked to the repository by the image
+      # label) and expires when the job ends, so no long-lived registry credential has
+      # to live on the server.
+      - name: Log the server in to GHCR with this run's token
+        run: |
+          # Expanded here on purpose: the actor name is the runner's own, not user input.
+          # shellcheck disable=SC2029
+          printf '%s' "$GH_TOKEN" | ssh production "docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin"
+
+      # The files the stack reads from the host go with the release, from the same commit
+      # as the image. Otherwise a deploy starts the new image on the previous
+      # compose file and proxy configuration, and rolling the tag back would not bring the
+      # old ones back. nginx and php configuration are inside the images and need no shipping.
+      - name: Ship the compose file, proxy config and scripts of this commit
+        run: |
+          rsync -aR \
+            docker/compose.production.yaml \
+            docker/caddy \
+            docker/minio \
+            scripts \
+            production:/opt/easypost/
+
+      - name: Deploy the release
+        run: |
+          # $SHA is expanded here on purpose, and is safe to: the first step accepted
+          # nothing but 40 hex characters.
+          # shellcheck disable=SC2029
+          ssh production "/opt/easypost/scripts/deploy.sh $SHA"
