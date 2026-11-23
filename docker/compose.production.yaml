@@ -48,6 +48,7 @@ services:
     environment:
       APP_HOST: ${APP_HOST:?set APP_HOST in .env}
       MEDIA_HOST: ${MEDIA_HOST:?set MEDIA_HOST in .env}
+      LANDING_HOST: ${LANDING_HOST:?set LANDING_HOST in .env}
       # Empty in production. A rehearsal sets `local_certs` (see the Caddyfile).
       CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
     volumes:

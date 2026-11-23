@@ -27,7 +27,11 @@ const { t } = useI18n();
 const auth = useAuthStore();
 
 const signedIn = computed(() => auth.user !== null);
-const ctaTarget = computed(() => (signedIn.value ? { name: 'home' } : { name: 'register' }));
+// Plain paths, not router targets: in production this page is served from its
+// own host, and a client-side route to /login would render the form there, on a
+// host with no session. A real navigation reaches Caddy, which sends it to the
+// app host (docker/caddy/Caddyfile). Same-host in development, where it just works.
+const ctaHref = computed(() => (signedIn.value ? '/calendar' : '/register'));
 const year = new Date().getFullYear();
 
 const SECTIONS = ['features', 'how', 'statuses', 'teams'] as const;
@@ -155,15 +159,15 @@ const PRIMARY_LINK =
                 </nav>
                 <div class="flex items-center gap-2">
                     <template v-if="signedIn">
-                        <RouterLink :to="{ name: 'home' }" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
+                        <a href="/calendar" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
                             {{ t('landing.nav.openApp') }}
-                        </RouterLink>
+                        </a>
                     </template>
                     <template v-else>
-                        <RouterLink :to="{ name: 'login' }" class="px-3.5 py-3 text-sm font-medium text-muted hover:text-text">{{ t('landing.nav.login') }}</RouterLink>
-                        <RouterLink :to="{ name: 'register' }" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
+                        <a href="/login" class="px-3.5 py-3 text-sm font-medium text-muted hover:text-text">{{ t('landing.nav.login') }}</a>
+                        <a href="/register" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
                             {{ t('landing.nav.signup') }}
-                        </RouterLink>
+                        </a>
                     </template>
                 </div>
             </div>
@@ -182,9 +186,9 @@ const PRIMARY_LINK =
                     </h1>
                     <p class="max-w-[640px] text-[19px] leading-[1.55] text-muted">{{ t('landing.hero.lead') }}</p>
                     <div class="mt-2 flex flex-wrap justify-center gap-3">
-                        <RouterLink data-test="hero-cta" :to="ctaTarget" :class="PRIMARY_LINK" class="px-[22px] py-3.5">
+                        <a data-test="hero-cta" :href="ctaHref" :class="PRIMARY_LINK" class="px-[22px] py-3.5">
                             {{ signedIn ? t('landing.hero.ctaApp') : t('landing.hero.cta') }}
-                        </RouterLink>
+                        </a>
                         <a href="#how" class="rounded-xl border border-border-strong bg-surface px-[22px] py-[13px] text-base font-semibold text-text hover:bg-surface-2">
                             {{ t('landing.hero.secondary') }}
                         </a>
@@ -323,9 +327,9 @@ const PRIMARY_LINK =
                         <h2 class="text-[length:clamp(28px,3.4vw,40px)] font-bold leading-[1.15] tracking-[-0.02em] text-on-nav">{{ t('landing.cta.title') }}</h2>
                         <p class="mt-3 text-[17px] leading-[1.55] text-nav-text">{{ t('landing.cta.body') }}</p>
                     </div>
-                    <RouterLink data-test="final-cta" :to="ctaTarget" :class="PRIMARY_LINK" class="px-[26px] py-[15px] focus-visible:ring-offset-nav">
+                    <a data-test="final-cta" :href="ctaHref" :class="PRIMARY_LINK" class="px-[26px] py-[15px] focus-visible:ring-offset-nav">
                         {{ signedIn ? t('landing.cta.buttonApp') : t('landing.cta.button') }}
-                    </RouterLink>
+                    </a>
                 </div>
             </section>
         </main>

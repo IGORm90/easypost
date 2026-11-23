@@ -499,3 +499,42 @@ it('proxies the app host to nginx and the media host to MinIO objects only', fun
         ->and($caddy)->toContain('/media/')
         ->and($caddy)->not->toContain('minio:9001');
 });
+
+it('serves the landing page on its own host and sends everything else to the app host', function () {
+    $caddy = productionFile('docker/caddy/Caddyfile');
+
+    // The landing page is a route of the same SPA, so it opens on any host that
+    // reaches nginx. The landing host must answer ONLY what the page itself
+    // needs (`/`, the built assets, favicon, robots.txt). Everything else is
+    // sent to the app host: the session cookie and Sanctum's stateful domain
+    // belong to the app host alone, so a login form served from the landing
+    // host would load and then fail on every API call.
+    expect($caddy)->toContain('{$LANDING_HOST}')
+        ->and($caddy)->toContain('redir https://{$APP_HOST}{uri}')
+        ->and($caddy)->toContain('/build/*')
+        // The page asks /api/auth/me who is signed in. A redirect to another
+        // origin would show up as a CORS error in every visitor's console; a
+        // plain 401 is the endpoint's own "not signed in" answer.
+        ->and($caddy)->toMatch('/handle\s+\/api\/\*\s*\{\s*respond\s+""\s+401/');
+});
+
+it('opens the app root in the calendar instead of the landing page', function () {
+    $caddy = productionFile('docker/caddy/Caddyfile');
+
+    // `/` of the app host is where OAuth returns and where bookmarks point. The
+    // landing page lives on its own host now; a signed-in member must not see
+    // it as a signed-out visitor (the landing host has no session).
+    expect($caddy)->toMatch('/redir\s+@root\s+\/calendar/');
+});
+
+it('redirects www to the landing host without a second certificate dance for the app', function () {
+    $caddy = productionFile('docker/caddy/Caddyfile');
+
+    expect($caddy)->toContain('www.{$LANDING_HOST}')
+        ->and($caddy)->toContain('redir https://{$LANDING_HOST}{uri}');
+});
+
+it('requires LANDING_HOST in compose and carries it in the env template', function () {
+    expect(productionServices()['caddy']['environment']['LANDING_HOST'])->toContain('LANDING_HOST:?')
+        ->and(productionFile('.env.production.example'))->toMatch('/^LANDING_HOST=/m');
+});

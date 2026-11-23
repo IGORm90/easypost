@@ -3,7 +3,7 @@
 # is why it must be reachable on 80 as well as 443 and why caddy-data is a
 # named volume: losing it means re-issuing, and Let's Encrypt rate-limits that.
 #
-# APP_HOST and MEDIA_HOST come from the container environment
+# APP_HOST, MEDIA_HOST and LANDING_HOST come from the container environment
 # (docker/compose.production.yaml). Plain HTTP is redirected to HTTPS
 # automatically for every site below.
 #
@@ -16,6 +16,12 @@
 }
 
 {$APP_HOST} {
+	# The landing page owns `/` of the landing host. Here `/` is where OAuth
+	# returns and where bookmarks point: open the app, which sends a signed-out
+	# visitor on to /login by itself.
+	@root path /
+	redir @root /calendar 302
+
 	# The same 108 MiB that nginx (client_max_body_size) and php.ini
 	# (post_max_size) accept: a 100 MB file plus multipart framing. If Caddy's
 	# ceiling were lower the user would get a bare 413 from the proxy before
@@ -51,4 +57,36 @@
 	handle {
 		respond "Not found" 404
 	}
+}
+
+# The landing page is a route of the same SPA, so nginx would serve it on any host
+# that reaches it. This host answers ONLY what the page itself needs and sends
+# every other path to the app host, because the session cookie and Sanctum's
+# stateful domain belong to the app host alone: a login form served from here
+# would load and then fail on every API call.
+{$LANDING_HOST} {
+	encode zstd gzip
+
+	@page {
+		path / /build/* /favicon.ico /robots.txt
+	}
+
+	handle @page {
+		reverse_proxy nginx:80
+	}
+
+	# The page asks /api/auth/me who is signed in. A redirect to another origin
+	# would be a CORS error in every visitor's console; a plain 401 is that
+	# endpoint's own "not signed in" answer and is handled as such.
+	handle /api/* {
+		respond "" 401
+	}
+
+	handle {
+		redir https://{$APP_HOST}{uri} 308
+	}
+}
+
+www.{$LANDING_HOST} {
+	redir https://{$LANDING_HOST}{uri} 308
 }

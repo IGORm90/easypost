@@ -26,13 +26,12 @@ function mountLanding({ signedIn = false } = {}) {
         };
     }
 
-    return mount(Landing, {
-        global: {
-            stubs: {
-                RouterLink: { props: ['to'], template: '<a :data-route="to.name"><slot /></a>' },
-            },
-        },
-    });
+    // No router is installed and none is stubbed: the landing page must not
+    // depend on one. In production it is served from its own host, where a
+    // client-side route to /login would render the form on a host that has no
+    // session. Its calls to action are plain links, which Caddy sends on to the
+    // app host.
+    return mount(Landing);
 }
 
 /** color.md §3.1 counts a resting tint, not the focus ring. */
@@ -57,24 +56,24 @@ it('offers a signed-out visitor sign-in and sign-up, and sends the main call to 
     const w = mountLanding();
 
     const header = w.get('header');
-    expect(header.find('[data-route="login"]').exists()).toBe(true);
-    expect(header.find('[data-route="register"]').exists()).toBe(true);
-    expect(header.find('[data-route="home"]').exists()).toBe(false);
+    expect(header.find('a[href="/login"]').exists()).toBe(true);
+    expect(header.find('a[href="/register"]').exists()).toBe(true);
+    expect(header.find('a[href="/calendar"]').exists()).toBe(false);
 
-    expect(w.get('[data-test="hero-cta"]').attributes('data-route')).toBe('register');
-    expect(w.get('[data-test="final-cta"]').attributes('data-route')).toBe('register');
+    expect(w.get('[data-test="hero-cta"]').attributes('href')).toBe('/register');
+    expect(w.get('[data-test="final-cta"]').attributes('href')).toBe('/register');
 });
 
 it('sends a signed-in member to their calendar instead of the auth forms', () => {
     const w = mountLanding({ signedIn: true });
 
     const header = w.get('header');
-    expect(header.find('[data-route="home"]').exists()).toBe(true);
-    expect(header.find('[data-route="login"]').exists()).toBe(false);
-    expect(header.find('[data-route="register"]').exists()).toBe(false);
+    expect(header.find('a[href="/calendar"]').exists()).toBe(true);
+    expect(header.find('a[href="/login"]').exists()).toBe(false);
+    expect(header.find('a[href="/register"]').exists()).toBe(false);
 
-    expect(w.get('[data-test="hero-cta"]').attributes('data-route')).toBe('home');
-    expect(w.get('[data-test="final-cta"]').attributes('data-route')).toBe('home');
+    expect(w.get('[data-test="hero-cta"]').attributes('href')).toBe('/calendar');
+    expect(w.get('[data-test="final-cta"]').attributes('href')).toBe('/calendar');
 });
 
 it('keeps the header out of the primary budget so the hero call to action is the one blue element on screen', () => {
