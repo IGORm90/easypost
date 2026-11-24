@@ -46,3 +46,11 @@ it('builds the frontend before the backend suite, because public/build is not in
     // failed on the first run for exactly this reason.
     expect(ciStepIndex('npm run build'))->toBeLessThan(ciStepIndex('./vendor/bin/pest'));
 });
+
+it('migrates the test database before the backend suite, because tests/Unit relies on an existing schema', function () {
+    // tests/Unit runs without RefreshDatabase on purpose (see tests/Pest.php): those tests insert
+    // their own rows and clean up after themselves, and they expect the tables to be there. A
+    // developer's database always has them from `make setup`; CI starts empty and, with migrations
+    // only AFTER Pest, 124 tests failed with `relation "users" does not exist`.
+    expect(ciStepIndex('php artisan migrate --force'))->toBeLessThan(ciStepIndex('./vendor/bin/pest'));
+});

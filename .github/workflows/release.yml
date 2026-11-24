@@ -125,6 +125,13 @@ jobs:
       - name: Build frontend assets
         run: npm run build
 
+      # Before Pest on purpose: tests/Unit runs without RefreshDatabase (tests/Pest.php) and
+      # expects the schema to exist already. A developer's database has it from `make setup`;
+      # this one starts empty, and without this step ~124 unit tests fail with
+      # `relation "users" does not exist`.
+      - name: Migrate the test database
+        run: php artisan migrate --force
+
       - name: Run tests (Pest)
         run: ./vendor/bin/pest
 
