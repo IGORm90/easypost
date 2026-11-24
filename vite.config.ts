@@ -4,10 +4,14 @@ import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
     plugins: [
-        laravel({
+        // Not under Vitest: vitest.config.ts merges this file, and laravel-vite-plugin
+        // throws "You should not run the Vite HMR server in CI environments" while Vitest
+        // creates its server, which kills the whole frontend suite whenever CI=true. The
+        // plugin only writes public/hot and the build manifest; no spec needs either.
+        ...(process.env.VITEST ? [] : [laravel({
             input: ['resources/css/app.css', 'resources/js/app.ts'],
             refresh: true,
-        }),
+        })]),
         vue({
             template: {
                 transformAssetUrls: {

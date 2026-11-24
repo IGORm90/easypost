@@ -28,6 +28,16 @@ function ciStepIndex(string $needle): int
     throw new RuntimeException("no ci.yml step runs «{$needle}»");
 }
 
+it('keeps laravel-vite-plugin out of the Vitest run, which refuses to start under CI', function () {
+    // vitest.config.ts merges vite.config.ts. laravel-vite-plugin throws "You should not run
+    // the Vite HMR server in CI environments" while Vitest creates its server, and CI sets
+    // CI=true. The plugin only writes public/hot and the build manifest, which no spec needs.
+    // (Behaviour checked by hand: `CI=true npx vitest run`; this pins the guard that fixes it.)
+    $config = (string) file_get_contents(dirname(__DIR__, 3).'/vite.config.ts');
+
+    expect($config)->toMatch('/process\.env\.VITEST\s*\?\s*\[\]\s*:\s*\[\s*laravel\(/');
+});
+
 it('builds the frontend before the backend suite, because public/build is not in the repository', function () {
     // Every test that renders resources/views/app.blade.php calls @vite, which throws
     // "Vite manifest not found" when public/build/manifest.json is missing. A developer
