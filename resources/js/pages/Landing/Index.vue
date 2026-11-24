@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../../stores/auth';
+import { appUrl } from '../../utils/appOrigin';
 
 /**
  * The public landing page at `/` — design variant A («Кобальт —
@@ -31,7 +32,12 @@ const signedIn = computed(() => auth.user !== null);
 // own host, and a client-side route to /login would render the form there, on a
 // host with no session. A real navigation reaches Caddy, which sends it to the
 // app host (docker/caddy/Caddyfile). Same-host in development, where it just works.
-const ctaHref = computed(() => (signedIn.value ? '/calendar' : '/register'));
+//
+// `appOrigin` is the app host when this page is served from another one (it is
+// the same host that answers /api/auth/me for `signedIn`), and '' otherwise, so
+// the links point straight at the app instead of taking Caddy's redirect hop.
+const appOrigin = appUrl();
+const ctaHref = computed(() => `${appOrigin}${signedIn.value ? '/calendar' : '/register'}`);
 const year = new Date().getFullYear();
 
 const SECTIONS = ['features', 'how', 'statuses', 'teams'] as const;
@@ -159,13 +165,13 @@ const PRIMARY_LINK =
                 </nav>
                 <div class="flex items-center gap-2">
                     <template v-if="signedIn">
-                        <a href="/calendar" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
+                        <a :href="`${appOrigin}/calendar`" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
                             {{ t('landing.nav.openApp') }}
                         </a>
                     </template>
                     <template v-else>
-                        <a href="/login" class="px-3.5 py-3 text-sm font-medium text-muted hover:text-text">{{ t('landing.nav.login') }}</a>
-                        <a href="/register" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
+                        <a :href="`${appOrigin}/login`" class="px-3.5 py-3 text-sm font-medium text-muted hover:text-text">{{ t('landing.nav.login') }}</a>
+                        <a :href="`${appOrigin}/register`" class="rounded-xl border border-border-strong bg-surface px-4 py-[11px] text-sm font-semibold text-text hover:bg-surface-2">
                             {{ t('landing.nav.signup') }}
                         </a>
                     </template>

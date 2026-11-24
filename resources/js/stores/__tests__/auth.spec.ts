@@ -195,3 +195,33 @@ it('drops them when /auth/me itself fails', async () => {
   expect(auth.isSuperadmin).toBe(false)
   expect(auth.impersonator).toBeNull()
 })
+
+// The landing page is served from its own host, where the session cookie does
+// not exist. fetchMe() must ask the app host (the `app-url` meta), or a member
+// who is signed in sees "Sign in" on the landing page forever.
+it('fetchMe() asks the app host when this page is served from another origin', async () => {
+  const meta = document.createElement('meta')
+  meta.name = 'app-url'
+  meta.content = 'https://app.example.com'
+  document.head.appendChild(meta)
+
+  try {
+    const { useAuthStore } = await import('../auth')
+    get.mockResolvedValueOnce({ data: { user: null, organizations: [] } })
+
+    await useAuthStore().fetchMe()
+
+    expect(get).toHaveBeenCalledWith('/auth/me', { baseURL: 'https://app.example.com/api' })
+  } finally {
+    meta.remove()
+  }
+})
+
+it('fetchMe() stays on the relative API when the app is this origin', async () => {
+  const { useAuthStore } = await import('../auth')
+  get.mockResolvedValueOnce({ data: { user: null, organizations: [] } })
+
+  await useAuthStore().fetchMe()
+
+  expect(get).toHaveBeenCalledWith('/auth/me', { baseURL: '/api' })
+})

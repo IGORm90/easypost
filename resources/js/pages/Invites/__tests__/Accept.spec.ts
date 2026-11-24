@@ -63,7 +63,7 @@ it('refreshes the session membership list after accepting, so the new organizati
     await flushPromises();
 
     expect(post).toHaveBeenCalledWith('/invites/the-token/accept');
-    expect(get).toHaveBeenCalledWith('/auth/me');
+    expect(get).toHaveBeenCalledWith('/auth/me', expect.anything());
 
     const { useAuthStore } = await import('../../../stores/auth');
     const { useOrganizationStore } = await import('../../../stores/organization');

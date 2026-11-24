@@ -110,7 +110,7 @@ it('switchTo() refreshes the auth store (dependent data) so organizations/user r
   const orgStore = useOrganizationStore()
   await orgStore.switchTo('org-a')
 
-  expect(get).toHaveBeenCalledWith('/auth/me')
+  expect(get).toHaveBeenCalledWith('/auth/me', expect.anything())
   const authStore = useAuthStore()
   expect(authStore.organizations).toEqual([{ id: 'org-a' }])
 })

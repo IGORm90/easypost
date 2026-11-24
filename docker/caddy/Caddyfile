@@ -75,9 +75,11 @@
 		reverse_proxy nginx:80
 	}
 
-	# The page asks /api/auth/me who is signed in. A redirect to another origin
-	# would be a CORS error in every visitor's console; a plain 401 is that
-	# endpoint's own "not signed in" answer and is handled as such.
+	# The page does NOT ask this host who is signed in: it calls /api/auth/me on
+	# the app host (CORS with credentials, config/cors.php), because the session
+	# cookie exists there only. Anything that still reaches /api here gets a plain
+	# 401, the endpoint's own "not signed in" answer, rather than a redirect to
+	# another origin (a CORS error in every visitor's console).
 	handle /api/* {
 		respond "" 401
 	}

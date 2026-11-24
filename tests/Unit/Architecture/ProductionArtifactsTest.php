@@ -512,9 +512,9 @@ it('serves the landing page on its own host and sends everything else to the app
     expect($caddy)->toContain('{$LANDING_HOST}')
         ->and($caddy)->toContain('redir https://{$APP_HOST}{uri}')
         ->and($caddy)->toContain('/build/*')
-        // The page asks /api/auth/me who is signed in. A redirect to another
-        // origin would show up as a CORS error in every visitor's console; a
-        // plain 401 is the endpoint's own "not signed in" answer.
+        // The page asks the APP host who is signed in, so nothing legitimate
+        // reaches /api here. A stray call gets the endpoint's own "not signed
+        // in" answer, not a redirect (a CORS error in the visitor's console).
         ->and($caddy)->toMatch('/handle\s+\/api\/\*\s*\{\s*respond\s+""\s+401/');
 });
 
@@ -537,4 +537,16 @@ it('redirects www to the landing host without a second certificate dance for the
 it('requires LANDING_HOST in compose and carries it in the env template', function () {
     expect(productionServices()['caddy']['environment']['LANDING_HOST'])->toContain('LANDING_HOST:?')
         ->and(productionFile('.env.production.example'))->toMatch('/^LANDING_HOST=/m');
+});
+
+it('lets the landing page ask the app host who is signed in', function () {
+    $env = productionFile('.env.production.example');
+
+    // The session cookie exists on the app host only, so the landing page calls
+    // /api/auth/me THERE: a credentialed cross-origin GET. It needs the landing
+    // origin both in CORS (exact origin, with Allow-Credentials) and in Sanctum's
+    // stateful domains (or the session is never started and /me answers 401).
+    // Forget either and every visitor sees "Sign in", whatever their session.
+    expect($env)->toMatch('/^CORS_ALLOWED_ORIGINS=https:\/\/\S+/m')
+        ->and($env)->toMatch('/^SANCTUM_STATEFUL_DOMAINS=app\.example\.com,example\.com$/m');
 });

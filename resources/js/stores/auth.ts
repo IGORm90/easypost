@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api/client';
+import { appApiBase } from '../utils/appOrigin';
 import { applyUserLocale } from '../i18n';
 import router from '../router';
 
@@ -131,12 +132,15 @@ export const useAuthStore = defineStore('auth', {
          */
         async fetchMe(): Promise<void> {
             try {
+                // The landing page is served from its own host, where the
+                // session cookie does not exist; ask the app host instead
+                // (a no-op everywhere the app is its own origin).
                 const { data } = await api.get<{
                     user: AuthUser;
                     organizations: AuthOrganization[];
                     is_superadmin: boolean;
                     impersonator: Impersonator | null;
-                }>('/auth/me');
+                }>('/auth/me', { baseURL: appApiBase() });
                 this.user = data.user;
                 this.organizations = data.organizations;
                 this.isSuperadmin = data.is_superadmin;
