@@ -71,6 +71,18 @@ it('deploys in the only safe order: pull, backup, quiesce, migrate, switch, smok
     expect($positions)->toBe($sorted, 'deploy.sh steps are out of order: '.implode(' < ', $order));
 });
 
+it('takes a restore point only when backups are configured, and says loudly when it does not', function () {
+    $code = scriptCode('deploy.sh');
+
+    // Backups are opt-in by decision: until restic.env exists there is no repository to back up
+    // to, and a release must not be blocked on one. Once it exists the backup is mandatory again:
+    // `set -e` still aborts the deploy if backup.sh fails.
+    expect($code)->toMatch('/if \[ -r "\$\{EASYPOST_RESTIC_ENV:-\$EASYPOST_DIR\/restic\.env\}" \]; then\s+"\$SCRIPT_DIR\/backup\.sh"\s+else/')
+        ->and($code)->toContain('NO BACKUP')
+        // The same file backup.sh itself reads, so the two can never disagree about "configured".
+        ->and(scriptCode('backup.sh'))->toContain('${EASYPOST_RESTIC_ENV:-$EASYPOST_DIR/restic.env}');
+});
+
 it('stops the scheduler before horizon, so nothing is dispatched while horizon drains', function () {
     $code = scriptCode('deploy.sh');
 

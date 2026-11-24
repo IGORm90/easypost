@@ -29,8 +29,16 @@ echo "deploying $TAG (previous: $PREV)"
 # the registry this fails HERE, with nothing stopped yet.
 dc pull --policy missing
 
-# A restore point before the schema moves.
-"$SCRIPT_DIR/backup.sh"
+# A restore point before the schema moves, once backups are configured (restic.env, the same
+# file backup.sh reads). Without it there is no repository to back up to, and by decision a
+# release is not blocked on one; the warning is loud so that is never an accident. Once the file
+# exists the backup is mandatory again: `set -e` aborts the deploy if backup.sh fails.
+if [ -r "${EASYPOST_RESTIC_ENV:-$EASYPOST_DIR/restic.env}" ]; then
+    "$SCRIPT_DIR/backup.sh"
+else
+    echo "WARNING: NO BACKUP taken before this release: no restic.env, backups are not configured." >&2
+    echo "         If the migration goes wrong there is no restore point. See DEPLOY_RUNBOOK.md, step 11." >&2
+fi
 
 # Maintenance window: the OLD php answers 503 until the container is replaced
 # below, which lifts it. `|| true` because on a first install there is no php yet.
