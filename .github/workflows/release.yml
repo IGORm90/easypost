@@ -8,19 +8,16 @@ name: Release
 #
 # Building on every push and deploying only on a click is deliberate (DEPLOY.md,
 # "Принятые решения"): without a staging environment a broken commit must not reach
-# production by merely being merged. Auto-deploy can come later, after several manual
-# releases, by adding `workflow_run` here. tests/Unit/Architecture/ReleaseWorkflowTest.php
+# production by merely being merged. A deploy takes no input: it ships the commit the run
+# was started on, i.e. the head of the branch picked in the "Run workflow" dialog. Auto-deploy
+# can come later, after several manual releases, by adding `workflow_run` here.
+# tests/Unit/Architecture/ReleaseWorkflowTest.php
 # pins what follows.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      sha:
-        description: Full 40-character commit SHA to deploy (default - the commit this workflow is run on)
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -105,7 +102,7 @@ jobs:
     # never as `${{ }}` pasted into a script: that is expanded before the shell runs, so
     # a secret would sit in the script text and a crafted `sha` input would be executed.
     env:
-      SHA: ${{ inputs.sha || github.sha }}
+      SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}

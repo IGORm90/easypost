@@ -89,7 +89,15 @@ it('runs on a push to main and on a manual dispatch, and never on a pull request
         // A PR from a fork must not be able to reach the registry or the server.
         ->and($triggers)->not->toHaveKey('pull_request')
         ->and($triggers)->not->toHaveKey('pull_request_target')
-        ->and($triggers['workflow_dispatch']['inputs']['sha']['required'])->toBeFalse();
+        // A deploy takes no input: nobody types a SHA, and nothing user-supplied can steer it.
+        ->and($triggers['workflow_dispatch'])->toBeNull();
+});
+
+it('deploys the commit the workflow was started on, not a typed one', function () {
+    $env = releaseJob('deploy')['env'];
+
+    expect($env['SHA'])->toBe('${{ github.sha }}')
+        ->and(releaseCode())->not->toContain('inputs.');
 });
 
 it('builds on a push and deploys on a dispatch, never both from one event', function () {
