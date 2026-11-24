@@ -1,18 +1,21 @@
 name: Release
 
-# Two independent things happen here, on two different triggers:
+# One workflow, three jobs, two triggers:
 #
-#   push to main        -> `images`: build the app and web images and push them to GHCR,
-#                          tagged with the commit SHA. Nothing is deployed.
-#   manual dispatch     -> `deploy`: ship one commit to the production host over SSH.
+#   push to main        -> `ci` runs the checks (style, static analysis, backend and frontend
+#                          tests, migrations); only if they pass, `images` builds the app and
+#                          web images and pushes them to GHCR, tagged with the commit SHA.
+#                          Nothing is deployed.
+#   manual dispatch     -> `deploy`: ship one commit to the production host over SSH. It
+#                          accepts a commit only if its push run above is green.
 #
 # Building on every push and deploying only on a click is deliberate (DEPLOY.md,
 # "Принятые решения"): without a staging environment a broken commit must not reach
 # production by merely being merged. A deploy takes no input: it ships the commit the run
 # was started on, i.e. the head of the branch picked in the "Run workflow" dialog. Auto-deploy
 # can come later, after several manual releases, by adding `workflow_run` here.
-# tests/Unit/Architecture/ReleaseWorkflowTest.php
-# pins what follows.
+# There is no separate ci.yml and no check on pull requests, by decision: work lands on
+# main directly. tests/Unit/Architecture/ReleaseWorkflowTest.php pins what follows.
 
 on:
   push:
@@ -23,8 +26,123 @@ permissions:
   contents: read
 
 jobs:
+  # The checks that used to be ci.yml, now the first job here: one workflow, one run per push.
+  # `images` waits for it, so a red commit never leaves an image in the registry, and a deploy
+  # accepts a commit only if this push run of Release is green (see the deploy job below).
+  # Inherits the read-only workflow permissions: it runs the repository's own code and
+  # must not be able to publish anything.
+  ci:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          # Tests run against their own database (see phpunit.xml DB_DATABASE),
+          # matching the app_test database provisioned locally by
+          # docker/postgres/init-test-db.sql — no shared "app" data to protect
+          # in CI's ephemeral service container, so it's created directly.
+          POSTGRES_DB: app_test
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: app_test
+      DB_USERNAME: app
+      DB_PASSWORD: secret
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql
+          coverage: none
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Generate application key
+        run: php artisan key:generate
+
+      - name: Check code style (Pint)
+        run: ./vendor/bin/pint --test
+
+      - name: Static analysis (PHPStan)
+        # -d memory_limit: PHPStan needs more than PHP's 128M default to
+        # analyse this codebase and dies with an out-of-memory fatal
+        # rather than a finding. Set here (and documented in README) so a
+        # contributor running it locally hits the same ceiling CI does.
+        run: php -d memory_limit=1G ./vendor/bin/phpstan analyse
+
+      # Before Pest on purpose: public/build is gitignored, and every test that renders
+      # the SPA shell (@vite in app.blade.php) throws "Vite manifest not found" without
+      # it. A developer's machine always has a build from earlier; a fresh checkout does not.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Typecheck frontend (vue-tsc)
+        run: npm run typecheck
+
+      - name: Run frontend tests (Vitest)
+        run: npx vitest run
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Run tests (Pest)
+        run: ./vendor/bin/pest
+
+      # Every one of the 25 migrations defines a down(), and until this
+      # step nothing ever ran one: the suite uses RefreshDatabase, which
+      # is migrate:fresh, and no CI job rolled back. A down() that has
+      # never executed is not a rollback path, it is an untested
+      # assertion that one exists — and the first time it matters is the
+      # worst time to find out. Final review, batch 4.
+      - name: Migrations roll back and re-apply
+        run: |
+          php artisan migrate --force
+          php artisan migrate:rollback --step=100 --force
+          php artisan migrate --force
+
   images:
     if: github.event_name == 'push'
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -133,11 +251,11 @@ jobs:
             exit 1
           fi
 
-      - name: Require a green CI run for the SHA
+      - name: Require a green push run (checks and images) for the SHA
         run: |
-          passed="$(gh run list --workflow ci.yml --commit "$SHA" --status success --json conclusion --jq length)"
+          passed="$(gh run list --workflow release.yml --event push --commit "$SHA" --status success --json conclusion --jq length)"
           if [ "${passed:-0}" -lt 1 ]; then
-            echo "ci.yml has no successful run for $SHA; refusing to deploy it" >&2
+            echo "release.yml has no successful push run (checks + images) for $SHA; refusing to deploy it" >&2
             exit 1
           fi
 

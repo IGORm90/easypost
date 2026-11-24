@@ -3,16 +3,17 @@
 use Symfony\Component\Yaml\Yaml;
 
 /*
- * .github/workflows/ci.yml is the gate a release waits for (release.yml refuses a commit
- * without a green run), so a mistake in it blocks every deploy. It cannot be run from a
- * test; what can be pinned is the order of its steps.
+ * The `ci` job of .github/workflows/release.yml is the gate a release waits for (`images`
+ * needs it, and a deploy refuses a commit whose push run is not green), so a mistake in
+ * it blocks every deploy. It cannot be run from a test; what can be pinned is the order
+ * of its steps.
  */
 
 /** @return list<string> the `run:` command of every step, in order ('' for a `uses:` step) */
 function ciRunCommands(): array
 {
     /** @var array{jobs: array{ci: array{steps: list<array<string, mixed>>}}} $workflow */
-    $workflow = Yaml::parseFile(dirname(__DIR__, 3).'/.github/workflows/ci.yml');
+    $workflow = Yaml::parseFile(dirname(__DIR__, 3).'/.github/workflows/release.yml');
 
     return array_map(fn (array $step) => (string) ($step['run'] ?? ''), $workflow['jobs']['ci']['steps']);
 }
@@ -25,7 +26,7 @@ function ciStepIndex(string $needle): int
         }
     }
 
-    throw new RuntimeException("no ci.yml step runs «{$needle}»");
+    throw new RuntimeException("no release.yml ci step runs «{$needle}»");
 }
 
 it('keeps laravel-vite-plugin out of the Vitest run, which refuses to start under CI', function () {

@@ -195,8 +195,11 @@ covered, the library invoking the callbacks is not), `MvpFlowTest` runs on the `
 
 ## Gates
 
-`.github/workflows/ci.yml` runs on pushes to `main` and on every PR. This order is also the
-pre-commit checklist — all of it must pass before a commit lands:
+The `ci` job of `.github/workflows/release.yml` runs these on pushes to `main` (there is no
+separate `ci.yml` and no check on pull requests); the `images` job builds only after it passes, and
+a deploy accepts only a commit whose push run of Release is green. The CI job builds the frontend
+*before* Pest, because `public/build` is gitignored and the SPA-shell tests need its manifest. This
+order is also the pre-commit checklist — all of it must pass before a commit lands:
 
 ```bash
 ./vendor/bin/pint --test                              # style

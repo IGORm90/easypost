@@ -100,8 +100,11 @@ it('deploys the commit the workflow was started on, not a typed one', function (
         ->and(releaseCode())->not->toContain('inputs.');
 });
 
-it('builds on a push and deploys on a dispatch, never both from one event', function () {
-    expect(releaseJob('images')['if'])->toBe("github.event_name == 'push'")
+it('checks and builds on a push and deploys on a dispatch, never both from one event', function () {
+    expect(releaseJob('ci')['if'])->toBe("github.event_name == 'push'")
+        ->and(releaseJob('images')['if'])->toBe("github.event_name == 'push'")
+        // Images are built only for a commit whose checks passed: a red commit leaves nothing in the registry.
+        ->and(releaseJob('images')['needs'])->toBe('ci')
         ->and(releaseJob('deploy')['if'])->toBe("github.event_name == 'workflow_dispatch'")
         // A deploy must not start by building: it ships an image a green CI has already seen.
         ->and(releaseJob('deploy'))->not->toHaveKey('needs');
@@ -111,6 +114,8 @@ it('builds on a push and deploys on a dispatch, never both from one event', func
 
 it('grants nothing by default and only what each job needs', function () {
     expect(releaseWorkflow()['permissions'])->toBe(['contents' => 'read'])
+        // The checks run the repository's own code: they get the read-only default and cannot publish anything.
+        ->and(releaseJob('ci'))->not->toHaveKey('permissions')
         ->and(releaseJob('images')['permissions'])->toBe(['contents' => 'read', 'packages' => 'write'])
         // The deploy job reads CI results and lends a short-lived read token to the
         // server's `docker pull`; it cannot publish a package.
@@ -118,7 +123,7 @@ it('grants nothing by default and only what each job needs', function () {
 });
 
 it('pins every action to a major version, never a moving branch', function () {
-    foreach (['images', 'deploy'] as $job) {
+    foreach (['ci', 'images', 'deploy'] as $job) {
         foreach (releaseSteps($job) as $step) {
             if (isset($step['uses'])) {
                 expect((string) $step['uses'])->toMatch('/@v\d+$/');
@@ -129,7 +134,7 @@ it('pins every action to a major version, never a moving branch', function () {
 
 it('bounds both jobs in time', function (string $job) {
     expect(releaseJob($job)['timeout-minutes'])->toBeInt()->toBeLessThanOrEqual(60);
-})->with(['images', 'deploy']);
+})->with(['ci', 'images', 'deploy']);
 
 // ------------------------------------------------------------------ images
 
@@ -167,10 +172,10 @@ it('lowercases the image name, because GHCR refuses upper case and the owner has
 
 // ------------------------------------------------------------------ deploy
 
-it('guards a deploy in this order: valid sha, on main, green CI, then touches the server', function () {
+it('guards a deploy in this order: valid sha, on main, green push run, then touches the server', function () {
     $names = releaseStepNames('deploy');
 
-    $order = ['Validate the SHA', 'Check out', 'Require the SHA to be on main', 'Require a green CI', 'Set up SSH', 'Log the server in', 'Ship', 'Deploy'];
+    $order = ['Validate the SHA', 'Check out', 'Require the SHA to be on main', 'Require a green push run', 'Set up SSH', 'Log the server in', 'Ship', 'Deploy'];
     $positions = [];
 
     foreach ($order as $prefix) {
@@ -198,20 +203,23 @@ it('accepts only a full 40-character commit SHA', function () {
     expect(releaseCode())->toContain('^[0-9a-f]{40}$');
 });
 
-it('deploys only a commit that is on main and that the CI workflow passed', function () {
+it('deploys only a commit that is on main and whose push run of this workflow passed', function () {
     $text = releaseCode();
 
+    // A green push run of Release means its `ci` job passed AND `images` built the images, which is
+    // exactly what a deploy needs. The dispatch run itself is excluded by --event push.
     expect($text)->toContain('git merge-base --is-ancestor')
         ->and($text)->toContain('origin/main')
-        ->and($text)->toContain('gh run list --workflow ci.yml')
+        ->and($text)->toContain('gh run list --workflow release.yml')
+        ->and($text)->toContain('--event push')
         ->and($text)->toContain('--status success');
 
-    // ...and that workflow exists and runs for pushes to main, otherwise the check would wait for ever.
-    expect(workflowTriggers('ci.yml')['push']['branches'])->toBe(['main']);
+    // One workflow, not two: a second file that runs on push would bring back a double run on every push.
+    expect(workflowPath('ci.yml'))->not->toBeFile();
 });
 
 it('never puts a secret or user input into a shell script, only into the environment', function () {
-    foreach (['images', 'deploy'] as $job) {
+    foreach (['ci', 'images', 'deploy'] as $job) {
         foreach (releaseSteps($job) as $step) {
             if (isset($step['run'])) {
                 // `${{ }}` is expanded BEFORE the shell sees it: a secret would land in the script text
